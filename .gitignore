@@ -1,0 +1,70 @@
+# ===== Python =====
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+.eggs/
+dist/
+build/
+.venv/
+venv/
+env/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# ===== Node / Frontend =====
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+.vite/
+dist/
+build/
+.eslintcache
+
+# ===== Environment / Secrets =====
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# ===== IDE / OS =====
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ===== AI / ML artifacts (do not commit large binaries) =====
+ai-engine/weights/*
+!ai-engine/weights/.gitkeep
+ai-engine/datasets/*
+!ai-engine/datasets/.gitkeep
+models/*
+!models/.gitkeep
+datasets/*
+!datasets/.gitkeep
+*.pt
+*.onnx
+*.h5
+*.pb
+*.tflite
+*.weights
+
+# ===== Storage / Logs =====
+storage/*
+!storage/.gitkeep
+logs/
+*.log
+
+# ===== Docker =====
+*.pid

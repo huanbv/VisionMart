@@ -1,0 +1,36 @@
+version: "3.9"
+
+# VisionMart - Smart Retail AI Platform
+# Service placeholders only. Implementation will be added in later stages.
+
+services:
+  frontend:
+    # React + Vite + TypeScript application
+    image: visionmart-frontend:placeholder
+
+  backend:
+    # FastAPI application (REST + WebSocket)
+    image: visionmart-backend:placeholder
+
+  postgres:
+    # PostgreSQL database
+    image: postgres:placeholder
+
+  redis:
+    # Redis cache + Celery broker
+    image: redis:placeholder
+
+  minio:
+    # MinIO object storage (S3 compatible)
+    image: minio/minio:placeholder
+
+  nginx:
+    # Reverse proxy / TLS termination
+    image: nginx:placeholder
+
+  ai-engine:
+    # Computer Vision pipeline (YOLOv8 + ByteTrack + ONNX Runtime)
+    image: visionmart-ai-engine:placeholder
+
+networks: {}
+volumes: {}
