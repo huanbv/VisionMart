@@ -11,7 +11,7 @@ from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import async_engine_from_config
 
 from app.config.settings import get_settings
-from app.database.base import Base  # noqa: F401  (import to register models)
+from app.models import Base  # noqa: F401  (imports every module's models)
 
 config = context.config
 

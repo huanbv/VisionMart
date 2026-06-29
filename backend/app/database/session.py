@@ -1,4 +1,4 @@
-"""Async SQLAlchemy engine + session factory."""
+"""Async SQLAlchemy engine + session factory with tuned connection pool."""
 
 from __future__ import annotations
 
@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import (
     async_sessionmaker,
     create_async_engine,
 )
+from sqlalchemy.pool import AsyncAdaptedQueuePool
 
 from app.config.settings import get_settings
 
@@ -19,6 +20,11 @@ engine = create_async_engine(
     echo=False,
     future=True,
     pool_pre_ping=True,
+    poolclass=AsyncAdaptedQueuePool,
+    pool_size=10,
+    max_overflow=20,
+    pool_recycle=1800,
+    pool_timeout=30,
 )
 
 SessionLocal: async_sessionmaker[AsyncSession] = async_sessionmaker(
@@ -30,7 +36,7 @@ SessionLocal: async_sessionmaker[AsyncSession] = async_sessionmaker(
 
 
 async def get_session() -> AsyncIterator[AsyncSession]:
-    """FastAPI dependency that yields a transactional async session."""
+    """FastAPI dependency that yields an async session and rolls back on error."""
     async with SessionLocal() as session:
         try:
             yield session

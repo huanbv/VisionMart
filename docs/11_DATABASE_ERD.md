@@ -17,9 +17,10 @@
 
 ## Revision History
 
-| Version | Date       | Author | Description                |
-| ------- | ---------- | ------ | -------------------------- |
-| 0.1.0   | YYYY-MM-DD | TODO   | Initial template created.  |
+| Version | Date       | Author | Description                                |
+| ------- | ---------- | ------ | ------------------------------------------ |
+| 0.1.0   | YYYY-MM-DD | TODO   | Initial template created.                  |
+| 0.2.0   | Sprint 02  | TODO   | Initial ERD skeleton added (placeholders). |
 
 ## Table of Contents
 
@@ -40,6 +41,37 @@
 ## Overview
 
 > TODO - High-level summary of the topic addressed by this document.
+
+### Sprint 02 — High-level ERD skeleton (placeholder)
+
+```mermaid
+erDiagram
+    ORGANIZATION ||--o{ BRANCH : has
+    ORGANIZATION ||--o{ USER : has
+    ORGANIZATION ||--o{ ROLE : defines
+    ROLE }o--o{ PERMISSION : grants
+    USER }o--o{ ROLE : assigned
+    BRANCH ||--o{ EMPLOYEE : employs
+    USER ||--o| EMPLOYEE : may_link_to
+    BRANCH ||--o{ CAMERA : hosts
+    ORGANIZATION ||--o{ PRODUCT : owns
+    PRODUCT }o--|| CATEGORY : in
+    PRODUCT ||--o{ INVENTORY : tracked_in
+    BRANCH ||--o{ INVENTORY : holds
+    ORGANIZATION ||--o{ CUSTOMER : has
+    CUSTOMER ||--o{ SHOPPING_CART : owns
+    SHOPPING_CART ||--o| ORDER : converts_to
+    ORDER ||--o{ ORDER_ITEM : contains
+    ORDER_ITEM }o--|| PRODUCT : refers
+    EMPLOYEE ||--o{ ORDER : processed
+    ORGANIZATION ||--o{ NOTIFICATION : targets
+    USER ||--o{ NOTIFICATION : receives
+    ORGANIZATION ||--o{ AUDIT_LOG : recorded
+    USER ||--o{ AUDIT_LOG : actor
+```
+
+> The diagram above is a placeholder. Cardinalities, attributes, and constraint
+> details will be filled in during the data-model documentation sprint.
 
 ## Definitions
 

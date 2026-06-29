@@ -17,9 +17,10 @@
 
 ## Revision History
 
-| Version | Date       | Author | Description                |
-| ------- | ---------- | ------ | -------------------------- |
-| 0.1.0   | YYYY-MM-DD | TODO   | Initial template created.  |
+| Version | Date       | Author | Description                                |
+| ------- | ---------- | ------ | ------------------------------------------ |
+| 0.1.0   | YYYY-MM-DD | TODO   | Initial template created.                  |
+| 0.2.0   | Sprint 02  | TODO   | Initial entity list added (placeholders).  |
 
 ## Table of Contents
 
@@ -40,6 +41,34 @@
 ## Overview
 
 > TODO - High-level summary of the topic addressed by this document.
+
+### Sprint 02 — Foundation entities (placeholders)
+
+The following aggregates exist as bare ORM models with no business logic. Each
+row references the implementing module under `backend/app/modules/<module>/`.
+Detailed schemas, indexes, and constraints will be documented in later sprints.
+
+| Bounded Context | Entity            | Module                |
+| --------------- | ----------------- | --------------------- |
+| Tenancy         | Organization      | `tenancy`             |
+| Tenancy         | Branch            | `tenancy`             |
+| Tenancy         | SystemSetting     | `tenancy`             |
+| Identity        | User              | `identity`            |
+| Identity        | Role              | `identity`            |
+| Identity        | Permission        | `identity`            |
+| Identity        | UserRole (M2M)    | `identity`            |
+| Identity        | RolePermission    | `identity`            |
+| Customer        | Customer          | `customer`            |
+| Employee        | Employee          | `employee`            |
+| Camera          | Camera            | `camera`              |
+| Catalog         | Category          | `catalog`             |
+| Catalog         | Product           | `catalog`             |
+| Inventory       | Inventory         | `inventory`           |
+| Sales           | ShoppingCart      | `sales`               |
+| Sales           | Order             | `sales`               |
+| Sales           | OrderItem         | `sales`               |
+| Notification    | Notification      | `notification`        |
+| Audit           | AuditLog          | `audit` (append-only) |
 
 ## Definitions
 
