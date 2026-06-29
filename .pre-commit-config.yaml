@@ -12,6 +12,7 @@ repos:
         args: ["--maxkb=2048"]
       - id: mixed-line-ending
         args: ["--fix=lf"]
+      - id: detect-private-key
 
   - repo: https://github.com/psf/black
     rev: 24.10.0
@@ -34,17 +35,21 @@ repos:
         files: ^(backend|ai-engine)/
         args: ["--fix"]
 
-  - repo: https://github.com/pre-commit/mirrors-prettier
-    rev: v3.1.0
+  # Frontend tooling is run as local hooks so we always use the version pinned
+  # in frontend/package.json. The deprecated mirrors-eslint/mirrors-prettier
+  # repos drift out of sync with project deps.
+  - repo: local
     hooks:
       - id: prettier
+        name: prettier (frontend)
+        language: system
+        entry: bash -c 'cd frontend && npx --no-install prettier --check "$@"' --
         files: ^frontend/.*\.(ts|tsx|js|jsx|json|css|md|yml|yaml)$
+        pass_filenames: true
 
-  - repo: https://github.com/pre-commit/mirrors-eslint
-    rev: v9.13.0
-    hooks:
       - id: eslint
+        name: eslint (frontend)
+        language: system
+        entry: bash -c 'cd frontend && npx --no-install eslint "$@"' --
         files: ^frontend/.*\.(ts|tsx|js|jsx)$
-        additional_dependencies:
-          - eslint@9.13.0
-          - typescript@5.6.0
+        pass_filenames: true

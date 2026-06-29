@@ -11,6 +11,9 @@ x-logging: &default-logging
     max-size: "10m"
     max-file: "3"
 
+x-restart: &default-restart
+  restart: unless-stopped
+
 services:
   # ----------------------------------------------------------
   # Data services
@@ -18,6 +21,7 @@ services:
   postgres:
     image: postgres:16-alpine
     container_name: visionmart-postgres
+    <<: *default-restart
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-visionmart}
       POSTGRES_USER: ${POSTGRES_USER:-visionmart}
@@ -38,6 +42,7 @@ services:
   redis:
     image: redis:7-alpine
     container_name: visionmart-redis
+    <<: *default-restart
     command: ["redis-server", "--appendonly", "yes"]
     volumes:
       - redis_data:/data
@@ -54,6 +59,7 @@ services:
   minio:
     image: minio/minio:RELEASE.2024-10-13T13-34-11Z
     container_name: visionmart-minio
+    <<: *default-restart
     command: server /data --console-address ":9001"
     environment:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER:-visionmart}
@@ -78,8 +84,10 @@ services:
     build:
       context: ./backend
       dockerfile: Dockerfile
+      target: dev
     image: visionmart/backend:dev
     container_name: visionmart-backend
+    <<: *default-restart
     env_file: .env
     depends_on:
       postgres: { condition: service_healthy }
@@ -90,6 +98,12 @@ services:
     ports:
       - "${BACKEND_PORT:-8000}:8000"
     command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
     networks: [visionmart-net]
     logging: *default-logging
 
@@ -97,8 +111,10 @@ services:
     build:
       context: ./backend
       dockerfile: Dockerfile
+      target: dev
     image: visionmart/backend:dev
     container_name: visionmart-celery-worker
+    <<: *default-restart
     env_file: .env
     depends_on:
       redis:    { condition: service_healthy }
@@ -115,6 +131,7 @@ services:
       dockerfile: Dockerfile
     image: visionmart/ai-engine:dev
     container_name: visionmart-ai-engine
+    <<: *default-restart
     env_file: .env
     volumes:
       - ./ai-engine:/app
@@ -122,6 +139,12 @@ services:
     ports:
       - "${AI_ENGINE_PORT:-8100}:8100"
     command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8100", "--reload"]
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8100/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
     networks: [visionmart-net]
     logging: *default-logging
 
@@ -132,6 +155,7 @@ services:
       target: dev
     image: visionmart/frontend:dev
     container_name: visionmart-frontend
+    <<: *default-restart
     env_file: .env
     volumes:
       - ./frontend:/app
@@ -145,10 +169,11 @@ services:
   nginx:
     image: nginx:1.27-alpine
     container_name: visionmart-nginx
+    <<: *default-restart
     depends_on:
-      - backend
-      - frontend
-      - ai-engine
+      backend:   { condition: service_started }
+      frontend:  { condition: service_started }
+      ai-engine: { condition: service_started }
     volumes:
       - ./docker/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
       - ./docker/nginx/conf.d:/etc/nginx/conf.d:ro

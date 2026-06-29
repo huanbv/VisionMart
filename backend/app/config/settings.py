@@ -5,8 +5,12 @@ from __future__ import annotations
 from functools import lru_cache
 from typing import Literal
 
-from pydantic import Field
+from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+_INSECURE_SECRETS: frozenset[str] = frozenset(
+    {"change-me", "change-me-please-generate-a-strong-secret", "secret", ""}
+)
 
 
 class Settings(BaseSettings):
@@ -61,6 +65,17 @@ class Settings(BaseSettings):
     @property
     def is_production(self) -> bool:
         return self.APP_ENV == "production"
+
+    @model_validator(mode="after")
+    def _validate_production_safety(self) -> "Settings":
+        if self.is_production:
+            if self.BACKEND_SECRET_KEY.strip().lower() in _INSECURE_SECRETS:
+                raise ValueError(
+                    "BACKEND_SECRET_KEY must be set to a strong, non-default value in production."
+                )
+            if self.APP_DEBUG:
+                raise ValueError("APP_DEBUG must be false in production.")
+        return self
 
 
 @lru_cache(maxsize=1)
