@@ -1,8 +1,8 @@
-﻿# Product Requirements Document (PRD)
+﻿# Queue Detection
 
 > **Project:** VisionMart - Enterprise AI Smart Retail Platform
 > **Domain:** https://visionmart.thehuan.com
-> **Document:** 01_PRD.md
+> **Document:** 30_QUEUE_DETECTION.md
 > **Status:** Draft - Template
 
 ---

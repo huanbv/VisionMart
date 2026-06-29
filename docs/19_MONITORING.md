@@ -1,8 +1,8 @@
-﻿# Product Requirements Document (PRD)
+﻿# Monitoring and Observability
 
 > **Project:** VisionMart - Enterprise AI Smart Retail Platform
 > **Domain:** https://visionmart.thehuan.com
-> **Document:** 01_PRD.md
+> **Document:** 19_MONITORING.md
 > **Status:** Draft - Template
 
 ---

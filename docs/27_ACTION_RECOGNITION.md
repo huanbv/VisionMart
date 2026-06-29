@@ -1,8 +1,8 @@
-﻿# Product Requirements Document (PRD)
+﻿# Action Recognition
 
 > **Project:** VisionMart - Enterprise AI Smart Retail Platform
 > **Domain:** https://visionmart.thehuan.com
-> **Document:** 01_PRD.md
+> **Document:** 27_ACTION_RECOGNITION.md
 > **Status:** Draft - Template
 
 ---

@@ -1,8 +1,8 @@
-﻿# Product Requirements Document (PRD)
+﻿# Multi-Camera Coordination
 
 > **Project:** VisionMart - Enterprise AI Smart Retail Platform
 > **Domain:** https://visionmart.thehuan.com
-> **Document:** 01_PRD.md
+> **Document:** 35_MULTI_CAMERA.md
 > **Status:** Draft - Template
 
 ---

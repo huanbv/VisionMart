@@ -1,8 +1,8 @@
-﻿# Product Requirements Document (PRD)
+﻿# Staff Analytics
 
 > **Project:** VisionMart - Enterprise AI Smart Retail Platform
 > **Domain:** https://visionmart.thehuan.com
-> **Document:** 01_PRD.md
+> **Document:** 33_STAFF_ANALYTICS.md
 > **Status:** Draft - Template
 
 ---

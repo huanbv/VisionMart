@@ -1,8 +1,8 @@
-﻿# Product Requirements Document (PRD)
+﻿# Camera Manager
 
 > **Project:** VisionMart - Enterprise AI Smart Retail Platform
 > **Domain:** https://visionmart.thehuan.com
-> **Document:** 01_PRD.md
+> **Document:** 21_CAMERA_MANAGER.md
 > **Status:** Draft - Template
 
 ---

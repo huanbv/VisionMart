@@ -1,8 +1,8 @@
-﻿# Product Requirements Document (PRD)
+﻿# Theft Detection
 
 > **Project:** VisionMart - Enterprise AI Smart Retail Platform
 > **Domain:** https://visionmart.thehuan.com
-> **Document:** 01_PRD.md
+> **Document:** 31_THEFT_DETECTION.md
 > **Status:** Draft - Template
 
 ---

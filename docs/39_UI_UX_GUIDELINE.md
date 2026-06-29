@@ -1,8 +1,8 @@
-﻿# Product Requirements Document (PRD)
+﻿# UI/UX Guideline
 
 > **Project:** VisionMart - Enterprise AI Smart Retail Platform
 > **Domain:** https://visionmart.thehuan.com
-> **Document:** 01_PRD.md
+> **Document:** 39_UI_UX_GUIDELINE.md
 > **Status:** Draft - Template
 
 ---

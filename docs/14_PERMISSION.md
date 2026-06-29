@@ -1,8 +1,8 @@
-﻿# Product Requirements Document (PRD)
+﻿# Permission and Authorization
 
 > **Project:** VisionMart - Enterprise AI Smart Retail Platform
 > **Domain:** https://visionmart.thehuan.com
-> **Document:** 01_PRD.md
+> **Document:** 14_PERMISSION.md
 > **Status:** Draft - Template
 
 ---

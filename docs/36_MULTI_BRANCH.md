@@ -1,8 +1,8 @@
-﻿# Product Requirements Document (PRD)
+﻿# Multi-Branch Operations
 
 > **Project:** VisionMart - Enterprise AI Smart Retail Platform
 > **Domain:** https://visionmart.thehuan.com
-> **Document:** 01_PRD.md
+> **Document:** 36_MULTI_BRANCH.md
 > **Status:** Draft - Template
 
 ---

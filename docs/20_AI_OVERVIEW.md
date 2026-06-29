@@ -1,8 +1,8 @@
-﻿# Product Requirements Document (PRD)
+﻿# AI Overview
 
 > **Project:** VisionMart - Enterprise AI Smart Retail Platform
 > **Domain:** https://visionmart.thehuan.com
-> **Document:** 01_PRD.md
+> **Document:** 20_AI_OVERVIEW.md
 > **Status:** Draft - Template
 
 ---

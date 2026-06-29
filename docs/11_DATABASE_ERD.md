@@ -1,8 +1,8 @@
-﻿# Product Requirements Document (PRD)
+﻿# Database ERD
 
 > **Project:** VisionMart - Enterprise AI Smart Retail Platform
 > **Domain:** https://visionmart.thehuan.com
-> **Document:** 01_PRD.md
+> **Document:** 11_DATABASE_ERD.md
 > **Status:** Draft - Template
 
 ---

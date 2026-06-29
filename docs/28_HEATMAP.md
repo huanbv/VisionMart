@@ -1,8 +1,8 @@
-﻿# Product Requirements Document (PRD)
+﻿# Heatmap Analytics
 
 > **Project:** VisionMart - Enterprise AI Smart Retail Platform
 > **Domain:** https://visionmart.thehuan.com
-> **Document:** 01_PRD.md
+> **Document:** 28_HEATMAP.md
 > **Status:** Draft - Template
 
 ---

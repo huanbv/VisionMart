@@ -1,8 +1,8 @@
-﻿# Product Requirements Document (PRD)
+﻿# Test Plan
 
 > **Project:** VisionMart - Enterprise AI Smart Retail Platform
 > **Domain:** https://visionmart.thehuan.com
-> **Document:** 01_PRD.md
+> **Document:** 40_TEST_PLAN.md
 > **Status:** Draft - Template
 
 ---

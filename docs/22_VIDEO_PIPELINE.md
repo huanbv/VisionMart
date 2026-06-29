@@ -1,8 +1,8 @@
-﻿# Product Requirements Document (PRD)
+﻿# Video Pipeline
 
 > **Project:** VisionMart - Enterprise AI Smart Retail Platform
 > **Domain:** https://visionmart.thehuan.com
-> **Document:** 01_PRD.md
+> **Document:** 22_VIDEO_PIPELINE.md
 > **Status:** Draft - Template
 
 ---

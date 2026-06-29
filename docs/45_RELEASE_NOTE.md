@@ -1,8 +1,8 @@
-﻿# Product Requirements Document (PRD)
+﻿# Release Notes
 
 > **Project:** VisionMart - Enterprise AI Smart Retail Platform
 > **Domain:** https://visionmart.thehuan.com
-> **Document:** 01_PRD.md
+> **Document:** 45_RELEASE_NOTE.md
 > **Status:** Draft - Template
 
 ---
