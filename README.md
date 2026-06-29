@@ -1,256 +1,189 @@
 # VisionMart
 
-> AI-powered Smart Retail Platform using Computer Vision.
+> Enterprise AI Smart Retail Platform powered by Computer Vision.
 
 **Domain:** [visionmart.thehuan.com](https://visionmart.thehuan.com/)
-**Version:** 0.1.0 (Scaffold)
+**Version:** `0.1.0` — Sprint 01 (Foundation)
 **License:** See [LICENSE](LICENSE)
 
 ---
 
-## 1. Project Description
+## 1. Project Overview
 
-VisionMart is an enterprise-grade **Smart Retail AI Platform** that leverages Computer Vision and real-time analytics to transform physical retail operations.
+VisionMart is a production-grade Smart Retail AI platform that combines real-time computer vision, distributed services, and a unified operator dashboard to transform brick-and-mortar retail.
 
-The platform is designed to:
+Sprint 01 delivers the **architectural foundation** only — no business features, APIs, authentication, database tables, AI models, or frontend pages are implemented yet.
 
-- Detect customers entering and moving through the store.
-- Recognize products on shelves and in customer hands.
-- Track shopping activities and virtual cart interactions.
-- Analyze customer behavior (dwell time, heatmaps, traffic flow).
-- Manage inventory levels in real time.
-- Provide store managers with a live, data-driven dashboard.
+## 2. Vision
 
-The MVP is built as a modular foundation that will evolve into a full **Enterprise Smart Retail AI Platform** supporting multi-store deployments, edge inference, and SaaS-grade tenancy.
+Become the leading enterprise Smart Retail AI Platform across multi-camera, multi-branch retail operations, with capabilities including:
 
----
+- AI Product Detection & Customer Tracking
+- Smart Cart, Inventory AI, Queue & Theft Detection
+- Heatmap, Customer Analytics, Staff Analytics
+- Notification Center, REST API, WebSocket, MQTT
+- Multi-branch operations and future mobile companion app
 
-## 2. Architecture Overview
+## 3. Architecture
 
-VisionMart follows **Clean Architecture**, **SOLID principles**, and **Domain Driven Design**, with a clear separation between business logic and infrastructure.
+VisionMart applies **Clean Architecture**, **Domain Driven Design (DDD)**, and a **Modular Monolith** pattern for the MVP — designed so the AI Engine can later be **extracted into a standalone service without changing the public API**.
 
-High-level components:
+```
+                       ┌──────────────────────────┐
+                       │   Nginx (Reverse Proxy)  │
+                       └────┬───────────────┬─────┘
+                            │               │
+                  ┌─────────▼──┐       ┌────▼─────────┐
+                  │  Frontend  │       │   Backend    │
+                  │ React/Vite │       │   FastAPI    │
+                  └────────────┘       └──┬────────┬──┘
+                                          │        │
+                                ┌─────────▼─┐  ┌───▼────────┐
+                                │ AI Engine │  │  Celery    │
+                                │  FastAPI  │  │  Workers   │
+                                └─────────┬─┘  └───┬────────┘
+                                          │        │
+                ┌─────────────────────────┴────────┴─────────┐
+                │                                            │
+        ┌───────▼─────┐  ┌──────────────┐  ┌──────────────┐  │
+        │ PostgreSQL  │  │    Redis     │  │    MinIO     │  │
+        └─────────────┘  └──────────────┘  └──────────────┘  │
+                                                             │
+                          Future: MQTT Broker / Edge Nodes ──┘
+```
 
-| Layer            | Responsibility                                                       |
-| ---------------- | -------------------------------------------------------------------- |
-| **Frontend**     | Operator dashboard, analytics UI, real-time monitoring               |
-| **Backend API**  | Business logic, REST + WebSocket APIs, authentication, orchestration |
-| **AI Engine**    | Computer Vision pipeline (detection, tracking, recognition)          |
-| **Workers**      | Asynchronous jobs (Celery) for analytics and batch processing        |
-| **Data Stores**  | PostgreSQL (relational), Redis (cache/queue), MinIO (objects/media)  |
-| **Edge / Proxy** | Nginx reverse proxy, TLS termination, routing                        |
+Principles applied:
 
-Communication patterns:
+- Clean Architecture (api → service → repository → model)
+- SOLID + Repository + Service Layer + Dependency Injection
+- Event-Driven ready (internal event bus interface, future broker)
+- Async-first I/O (`asyncpg`, `httpx`, `asyncio`)
 
-- **REST** for synchronous client/server operations.
-- **WebSocket** for real-time dashboard updates and events.
-- **Message Queue (Redis + Celery)** for asynchronous AI/analytics pipelines.
-- **Object Storage (MinIO)** for frames, snapshots, exports, and model artifacts.
+## 4. Technology Stack
 
-The entire system is **containerized via Docker** and orchestrated via **Docker Compose**, ready for migration to Kubernetes in future cloud deployments.
+| Layer        | Stack                                                        |
+| ------------ | ------------------------------------------------------------ |
+| Backend      | Python 3.12, FastAPI, SQLAlchemy 2.x, Alembic, Pydantic v2   |
+| Async        | Celery, Redis                                                |
+| Database     | PostgreSQL 16                                                |
+| Object Store | MinIO (S3-compatible)                                        |
+| Frontend     | React 18, TypeScript, Vite, Tailwind CSS, Ant Design         |
+| Data Layer   | React Query, React Router                                    |
+| AI Engine    | Python, OpenCV, Ultralytics YOLOv8, ByteTrack, ONNX Runtime  |
+| Infra        | Docker, Docker Compose, Nginx, Ubuntu 24.04 LTS              |
+| CI/CD        | GitHub Actions                                               |
 
----
-
-## 3. Technology Stack
-
-### Backend
-- Python 3.12
-- FastAPI
-- SQLAlchemy 2.x
-- Alembic
-- PostgreSQL
-- Redis
-- Celery
-- JWT Authentication
-- WebSocket
-- Pydantic V2
-
-### AI
-- Python
-- OpenCV
-- Ultralytics YOLOv8
-- ByteTrack
-- ONNX Runtime
-
-### Frontend
-- React
-- TypeScript
-- Vite
-- TailwindCSS
-- Ant Design
-- React Query
-- React Router
-
-### Infrastructure
-- Docker
-- Docker Compose
-- Nginx
-- Ubuntu Server
-- GitHub Actions
-
-### Storage
-- MinIO
-
----
-
-## 4. Folder Structure
+## 5. Folder Structure
 
 ```
 VisionMart/
-├── backend/                 # FastAPI service (Clean Architecture)
-│   ├── app/
-│   │   ├── api/             # API entry points
-│   │   ├── core/            # Core domain logic, base classes
-│   │   ├── config/          # App configuration
-│   │   ├── database/        # DB session, engine, migrations glue
-│   │   ├── models/          # SQLAlchemy ORM models
-│   │   ├── schemas/         # Pydantic v2 schemas (DTOs)
-│   │   ├── repositories/    # Data access layer
-│   │   ├── services/        # Business / use-case layer
-│   │   ├── dependencies/    # DI providers
-│   │   ├── middleware/      # FastAPI middleware
-│   │   ├── routers/         # API routers
-│   │   ├── utils/           # Helpers
-│   │   └── workers/         # Celery tasks
-│   ├── tests/
-│   ├── main.py
-│   ├── requirements.txt
-│   └── Dockerfile
-│
-├── frontend/                # React + Vite + TS dashboard
-│   ├── src/
-│   │   ├── assets/
-│   │   ├── components/
-│   │   ├── layouts/
-│   │   ├── pages/
-│   │   ├── routes/
-│   │   ├── hooks/
-│   │   ├── contexts/
-│   │   ├── services/
-│   │   ├── api/
-│   │   ├── stores/
-│   │   ├── types/
-│   │   ├── utils/
-│   │   └── styles/
-│   ├── public/
-│   ├── package.json
-│   ├── vite.config.ts
-│   └── Dockerfile
-│
-├── ai-engine/               # Computer Vision pipeline
-│   ├── detection/           # YOLOv8 detection
-│   ├── tracking/            # ByteTrack
-│   ├── recognition/         # Product / customer recognition
-│   ├── cart/                # Virtual cart logic
-│   ├── heatmap/             # Heatmap generation
-│   ├── analytics/           # Behavior analytics
-│   ├── inventory/           # Shelf / stock vision
-│   ├── models/              # Model definitions
-│   ├── weights/             # Trained weights (gitignored)
-│   ├── datasets/            # Local datasets (gitignored)
-│   ├── services/            # AI service interfaces
-│   ├── utils/
-│   ├── main.py
-│   ├── requirements.txt
-│   └── Dockerfile
-│
-├── docs/                    # Project documentation
-│   ├── 00_PROJECT_OVERVIEW.md
-│   ├── 01_PRD.md
-│   ├── 02_SOFTWARE_ARCHITECTURE.md
-│   ├── 03_TECH_STACK.md
-│   ├── 04_FOLDER_STRUCTURE.md
-│   ├── 05_DEVELOPMENT_ROADMAP.md
-│   ├── 06_CODING_STANDARD.md
-│   ├── 07_DEPLOYMENT_PLAN.md
-│   ├── 08_SECURITY_GUIDELINE.md
-│   └── 09_DEV_ENVIRONMENT.md
-│
-├── docker/                  # Dockerfiles, build assets
-├── deployment/              # Nginx, systemd, deploy scripts
-├── datasets/                # Shared datasets
-├── models/                  # Shared model artifacts
-├── storage/                 # Local storage mount (dev)
-├── scripts/                 # Maintenance / automation scripts
-├── tests/                   # Cross-module integration tests
-├── .github/                 # GitHub Actions workflows
-│
+├── backend/            # FastAPI modular monolith (Clean Architecture)
+├── frontend/           # React + Vite + TypeScript SPA
+├── ai-engine/          # Computer Vision service (separable)
+├── docker/             # Dockerfiles & service configs (nginx, postgres)
+├── deployment/         # Production deployment assets
+├── docs/               # Architecture and design documentation
+├── scripts/            # Developer utility scripts
+├── datasets/           # (gitignored) Local datasets
+├── models/             # (gitignored) Trained model weights
+├── storage/            # (gitignored) Local object storage mount
+├── tests/              # Cross-module integration tests
+├── .github/workflows/  # CI/CD pipelines
 ├── docker-compose.yml
-├── README.md
-└── LICENSE
+├── Makefile
+├── .editorconfig
+├── .pre-commit-config.yaml
+├── .env.example
+└── README.md
 ```
 
----
+See `backend/`, `frontend/`, and `ai-engine/` for per-service layouts.
 
-## 5. Development Roadmap
+## 6. Local Development
 
-The platform is built incrementally. Each phase produces a verifiable, production-grade increment.
+### Prerequisites
 
-| Phase | Milestone                          | Scope                                                                  |
-| ----- | ---------------------------------- | ---------------------------------------------------------------------- |
-| 0     | **Project Scaffold**               | Folder structure, empty modules, README, docker-compose placeholders   |
-| 1     | **Core Backend Foundation**        | FastAPI app, config, DB, migrations, auth (JWT), base DI               |
-| 2     | **Domain Models & Repositories**   | Users, stores, products, cameras, inventory entities                   |
-| 3     | **AI Engine Core**                 | YOLOv8 detection + ByteTrack tracking pipeline                         |
-| 4     | **Recognition & Cart Logic**       | Product recognition, virtual cart, event publishing                    |
-| 5     | **Real-time Dashboard**            | React dashboard, WebSocket live feeds, KPIs                            |
-| 6     | **Analytics & Heatmaps**           | Behavior analytics, heatmap generation, reporting                      |
-| 7     | **Inventory Intelligence**         | Shelf monitoring, stock-out detection, alerts                          |
-| 8     | **DevOps & CI/CD**                 | GitHub Actions, image registry, staging deploy                         |
-| 9     | **Production Hardening**           | Security, observability, performance, backup strategy                  |
-| 10    | **Enterprise Evolution**           | Multi-tenant, multi-store, edge inference, SaaS billing                |
+- Docker + Docker Compose v2
+- Git
+- Node.js 20+ (optional, for native frontend dev)
+- Python 3.12+ (optional, for native backend dev)
+- `make` (Windows: via Git Bash, WSL, or Chocolatey)
 
----
+### First-time setup
 
-## 6. Version
-
-**Current Version:** `0.1.0` — Initial scaffold (no business logic implemented yet).
-
-Versioning follows [Semantic Versioning 2.0.0](https://semver.org/).
-
----
-
-## 7. License
-
-This project is distributed under the terms described in the [LICENSE](LICENSE) file. All rights reserved by the project author unless otherwise stated.
-
----
-
-## 8. Contributing
-
-VisionMart is an enterprise-grade project. Contributions must follow strict quality standards.
-
-### Workflow
-
-1. **Fork & branch** from `main` using the convention:
-   - `feature/<short-description>`
-   - `fix/<short-description>`
-   - `chore/<short-description>`
-2. **Write clean code** — follow SOLID, Clean Architecture, and the project's coding standards (see `docs/06_CODING_STANDARD.md`).
-3. **Add tests** for any new business logic.
-4. **Run linters and tests locally** before opening a PR.
-5. **Open a Pull Request** with a clear description, linked issues, and screenshots/recordings if UI-related.
-6. **Code Review** — at least one approval is required before merge.
-
-### Commit Convention
-
-Use **Conventional Commits** in English:
-
-```
-feat(backend): add JWT authentication service
-fix(ai-engine): correct ByteTrack ID switch on occlusion
-docs(readme): update roadmap section
-chore(docker): bump postgres image version
+```bash
+git clone https://github.com/huanbv/VisionMart.git
+cd VisionMart
+cp .env.example .env
+make setup
 ```
 
-### Code Style
+### Run the full stack
 
-- All code, comments, identifiers, and commit messages must be in **English**.
-- No business logic in controllers/routers — delegate to services.
-- No direct DB access in services — go through repositories.
-- Always use Dependency Injection.
-- Always separate domain from infrastructure.
+```bash
+make up          # docker compose up -d
+make logs        # tail logs
+make down        # stop everything
+```
+
+### Service URLs (local)
+
+| Service       | URL                                |
+| ------------- | ---------------------------------- |
+| Frontend      | http://localhost:3000              |
+| Backend API   | http://localhost:8000/docs         |
+| AI Engine     | http://localhost:8100/health       |
+| MinIO Console | http://localhost:9001              |
+| PostgreSQL    | localhost:5432                     |
+| Redis         | localhost:6379                     |
+
+## 7. Docker Commands
+
+| Command               | Description                          |
+| --------------------- | ------------------------------------ |
+| `make build`          | Build all images                     |
+| `make up`             | Start all services in background     |
+| `make down`           | Stop and remove all services         |
+| `make restart`        | Restart all services                 |
+| `make logs`           | Tail logs for all services           |
+| `make ps`             | List running services                |
+| `make backend-shell`  | Open shell in backend container      |
+| `make frontend-shell` | Open shell in frontend container     |
+| `make ai-shell`       | Open shell in ai-engine container    |
+| `make lint`           | Run linters across the monorepo      |
+| `make format`         | Auto-format the monorepo             |
+| `make test`           | Run all tests                        |
+
+## 8. Versioning Strategy
+
+VisionMart follows [Semantic Versioning 2.0.0](https://semver.org/).
+
+- **MAJOR** — breaking public API/contract changes.
+- **MINOR** — backward-compatible features.
+- **PATCH** — backward-compatible fixes.
+- **Pre-release** — `-alpha.N`, `-beta.N`, `-rc.N`.
+
+Git workflow: **trunk-based** with short-lived feature branches → PR → squash merge into `main`. Releases are cut from `main` with annotated tags (`v0.1.0`).
+
+## 9. Roadmap
+
+| Sprint | Theme                                |
+| ------ | ------------------------------------ |
+| 01     | Foundation: architecture, infra, DX  |
+| 02     | Core domain, auth, RBAC, DB schema   |
+| 03     | Camera Manager, Video Pipeline       |
+| 04     | Object Detection + Tracking          |
+| 05     | Product Recognition + Cart Engine    |
+| 06     | Real-time Dashboard + WebSocket      |
+| 07     | Analytics: Heatmap, Customer, Staff  |
+| 08     | Inventory AI + Queue/Theft Detection |
+| 09     | Multi-branch + Notifications + MQTT  |
+| 10     | Hardening, CI/CD, GPU deployment     |
+
+## 10. License
+
+This project is distributed under the terms described in [LICENSE](LICENSE).
 
 ---
 
-_Last updated: scaffold phase — awaiting next implementation instruction._
+_For detailed design documents see [docs/](docs/)._

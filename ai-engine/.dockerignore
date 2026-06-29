@@ -1,0 +1,12 @@
+__pycache__
+*.pyc
+.venv
+.git
+.env
+.env.*
+!.env.example
+.pytest_cache
+.ruff_cache
+.mypy_cache
+weights
+datasets

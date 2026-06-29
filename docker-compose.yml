@@ -1,36 +1,169 @@
-version: "3.9"
+# =============================================================
+# VisionMart - Local development stack
+# Production overrides should live in docker-compose.prod.yml
+# =============================================================
 
-# VisionMart - Smart Retail AI Platform
-# Service placeholders only. Implementation will be added in later stages.
+name: visionmart
+
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
 
 services:
-  frontend:
-    # React + Vite + TypeScript application
-    image: visionmart-frontend:placeholder
-
-  backend:
-    # FastAPI application (REST + WebSocket)
-    image: visionmart-backend:placeholder
-
+  # ----------------------------------------------------------
+  # Data services
+  # ----------------------------------------------------------
   postgres:
-    # PostgreSQL database
-    image: postgres:placeholder
+    image: postgres:16-alpine
+    container_name: visionmart-postgres
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-visionmart}
+      POSTGRES_USER: ${POSTGRES_USER:-visionmart}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-visionmart}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./docker/postgres/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-visionmart}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks: [visionmart-net]
+    logging: *default-logging
 
   redis:
-    # Redis cache + Celery broker
-    image: redis:placeholder
+    image: redis:7-alpine
+    container_name: visionmart-redis
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis_data:/data
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks: [visionmart-net]
+    logging: *default-logging
 
   minio:
-    # MinIO object storage (S3 compatible)
-    image: minio/minio:placeholder
+    image: minio/minio:RELEASE.2024-10-13T13-34-11Z
+    container_name: visionmart-minio
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-visionmart}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-visionmart-minio}
+    volumes:
+      - minio_data:/data
+    ports:
+      - "9000:9000"
+      - "${MINIO_CONSOLE_PORT:-9001}:9001"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+    networks: [visionmart-net]
+    logging: *default-logging
 
-  nginx:
-    # Reverse proxy / TLS termination
-    image: nginx:placeholder
+  # ----------------------------------------------------------
+  # Application services
+  # ----------------------------------------------------------
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    image: visionmart/backend:dev
+    container_name: visionmart-backend
+    env_file: .env
+    depends_on:
+      postgres: { condition: service_healthy }
+      redis:    { condition: service_healthy }
+      minio:    { condition: service_started }
+    volumes:
+      - ./backend:/app
+    ports:
+      - "${BACKEND_PORT:-8000}:8000"
+    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+    networks: [visionmart-net]
+    logging: *default-logging
+
+  celery-worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    image: visionmart/backend:dev
+    container_name: visionmart-celery-worker
+    env_file: .env
+    depends_on:
+      redis:    { condition: service_healthy }
+      backend:  { condition: service_started }
+    volumes:
+      - ./backend:/app
+    command: ["celery", "-A", "app.workers.celery_app", "worker", "--loglevel=info"]
+    networks: [visionmart-net]
+    logging: *default-logging
 
   ai-engine:
-    # Computer Vision pipeline (YOLOv8 + ByteTrack + ONNX Runtime)
-    image: visionmart-ai-engine:placeholder
+    build:
+      context: ./ai-engine
+      dockerfile: Dockerfile
+    image: visionmart/ai-engine:dev
+    container_name: visionmart-ai-engine
+    env_file: .env
+    volumes:
+      - ./ai-engine:/app
+      - ./models:/models
+    ports:
+      - "${AI_ENGINE_PORT:-8100}:8100"
+    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8100", "--reload"]
+    networks: [visionmart-net]
+    logging: *default-logging
 
-networks: {}
-volumes: {}
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      target: dev
+    image: visionmart/frontend:dev
+    container_name: visionmart-frontend
+    env_file: .env
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+    ports:
+      - "${FRONTEND_PORT:-3000}:3000"
+    command: ["npm", "run", "dev", "--", "--host", "0.0.0.0", "--port", "3000"]
+    networks: [visionmart-net]
+    logging: *default-logging
+
+  nginx:
+    image: nginx:1.27-alpine
+    container_name: visionmart-nginx
+    depends_on:
+      - backend
+      - frontend
+      - ai-engine
+    volumes:
+      - ./docker/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./docker/nginx/conf.d:/etc/nginx/conf.d:ro
+    ports:
+      - "${NGINX_HTTP_PORT:-80}:80"
+      - "${NGINX_HTTPS_PORT:-443}:443"
+    networks: [visionmart-net]
+    logging: *default-logging
+
+# --------------------------------------------------------------
+networks:
+  visionmart-net:
+    driver: bridge
+
+volumes:
+  postgres_data:
+  redis_data:
+  minio_data:
