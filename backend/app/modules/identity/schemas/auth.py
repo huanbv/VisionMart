@@ -5,11 +5,11 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, Field
 
 
 class LoginRequest(BaseModel):
-    email: EmailStr
+    email: str = Field(min_length=3, max_length=255)
     password: str = Field(min_length=1, max_length=255)
 
 
@@ -28,7 +28,7 @@ class TokenResponse(BaseModel):
 class CurrentUserResponse(BaseModel):
     id: uuid.UUID
     organization_id: uuid.UUID
-    email: EmailStr
+    email: str
     username: str
     full_name: str | None
     is_active: bool
