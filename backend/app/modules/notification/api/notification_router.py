@@ -11,6 +11,7 @@ from app.core.exceptions import NotFoundError, ValidationError
 from app.database.session import get_session
 from app.dependencies.auth import CurrentUser, get_current_user, require_roles
 from app.modules.notification.application.services import NotificationService
+from app.modules.notification.application.alert_service import AlertService
 from app.modules.notification.infrastructure.repositories import (
     SqlAlchemyNotificationRepository,
 )
@@ -139,3 +140,12 @@ async def create_notification(
     except ValidationError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
     return NotificationResponse.model_validate(n)
+
+
+@router.post("/alerts/scan", status_code=status.HTTP_200_OK)
+async def trigger_alert_scan(
+    current: CurrentUser = Depends(require_roles("super_admin", "org_admin")),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    result = await AlertService(session).scan_organization(current.organization_id)
+    return {"organization_id": str(current.organization_id), **result}

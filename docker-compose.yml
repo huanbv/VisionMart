@@ -125,6 +125,24 @@ services:
     networks: [visionmart-net]
     logging: *default-logging
 
+  celery-beat:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+      target: dev
+    image: visionmart/backend:dev
+    container_name: visionmart-celery-beat
+    <<: *default-restart
+    env_file: .env
+    depends_on:
+      redis:         { condition: service_healthy }
+      celery-worker: { condition: service_started }
+    volumes:
+      - ./backend:/app
+    command: ["celery", "-A", "app.workers.celery_app", "beat", "--loglevel=info"]
+    networks: [visionmart-net]
+    logging: *default-logging
+
   ai-engine:
     build:
       context: ./ai-engine

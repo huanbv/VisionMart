@@ -62,6 +62,11 @@ class Settings(BaseSettings):
     CELERY_BROKER_URL: str = "redis://redis:6379/1"
     CELERY_RESULT_BACKEND: str = "redis://redis:6379/2"
 
+    # ---- Alerts ----
+    ALERT_SCAN_INTERVAL_SECONDS: int = 300
+    ALERT_DEDUP_HOURS: int = 6
+    CAMERA_OFFLINE_THRESHOLD_SECONDS: int = 300
+
     # ---- AI Engine ----
     AI_ENGINE_BASE_URL: str = "http://ai-engine:8100"
 
