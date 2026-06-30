@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import sqlalchemy as sa
 from alembic import op
+from sqlalchemy.dialects import postgresql
 
 revision = "7a1b3c5d9e0f"
 down_revision = "6fa79a26c4de"
@@ -16,16 +17,19 @@ branch_labels = None
 depends_on = None
 
 
+movement_enum = postgresql.ENUM(
+    "in",
+    "out",
+    "adjust",
+    "transfer_in",
+    "transfer_out",
+    name="stock_movement_type",
+    create_type=False,
+)
+
+
 def upgrade() -> None:
-    stock_movement_type = sa.Enum(
-        "in",
-        "out",
-        "adjust",
-        "transfer_in",
-        "transfer_out",
-        name="stock_movement_type",
-    )
-    stock_movement_type.create(op.get_bind(), checkfirst=True)
+    movement_enum.create(op.get_bind(), checkfirst=True)
 
     op.create_table(
         "stock_movements",
@@ -51,19 +55,7 @@ def upgrade() -> None:
         sa.Column("organization_id", sa.UUID(), nullable=False),
         sa.Column("product_id", sa.UUID(), nullable=False),
         sa.Column("branch_id", sa.UUID(), nullable=False),
-        sa.Column(
-            "movement_type",
-            sa.Enum(
-                "in",
-                "out",
-                "adjust",
-                "transfer_in",
-                "transfer_out",
-                name="stock_movement_type",
-                create_type=False,
-            ),
-            nullable=False,
-        ),
+        sa.Column("movement_type", movement_enum, nullable=False),
         sa.Column("delta", sa.Integer(), nullable=False),
         sa.Column("quantity_after", sa.Integer(), nullable=False),
         sa.Column("reason", sa.String(length=255), nullable=True),
@@ -108,4 +100,4 @@ def downgrade() -> None:
         "ix_stock_movements_organization_id", table_name="stock_movements"
     )
     op.drop_table("stock_movements")
-    sa.Enum(name="stock_movement_type").drop(op.get_bind(), checkfirst=True)
+    movement_enum.drop(op.get_bind(), checkfirst=True)
