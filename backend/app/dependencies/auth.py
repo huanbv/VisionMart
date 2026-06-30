@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import uuid
 from dataclasses import dataclass
+from typing import Callable
 
 from fastapi import Depends, Header, HTTPException, status
 
@@ -43,3 +44,22 @@ def get_current_user(
         organization_id=uuid.UUID(claims.organization_id),
         roles=claims.roles,
     )
+
+
+def require_roles(*role_codes: str) -> Callable[[CurrentUser], CurrentUser]:
+    """Dependency factory: ensure the current user has at least one of given roles."""
+
+    allowed = set(role_codes)
+
+    def _checker(
+        current: CurrentUser = Depends(get_current_user),
+    ) -> CurrentUser:
+        if not (allowed & set(current.roles)):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Insufficient role",
+            )
+        return current
+
+    return _checker
+

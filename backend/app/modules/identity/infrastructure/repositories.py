@@ -5,7 +5,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 
-from sqlalchemy import select, update
+from sqlalchemy import delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.modules.identity.infrastructure.models import (
@@ -47,6 +47,130 @@ class SqlAlchemyUserRepository:
         result = await self._session.execute(stmt)
         return [row[0] for row in result.all()]
 
+    # ---- management ----
+
+    async def list_for_org(
+        self,
+        organization_id: uuid.UUID,
+        *,
+        skip: int = 0,
+        limit: int = 50,
+        search: str | None = None,
+    ) -> tuple[list[User], int]:
+        base = select(User).where(
+            User.organization_id == organization_id,
+            User.is_deleted.is_(False),
+        )
+        if search:
+            pattern = f"%{search.lower()}%"
+            base = base.where(
+                func.lower(User.email).like(pattern)
+                | func.lower(User.username).like(pattern)
+                | func.lower(func.coalesce(User.full_name, "")).like(pattern)
+            )
+
+        total = (
+            await self._session.execute(
+                select(func.count()).select_from(base.subquery())
+            )
+        ).scalar_one()
+        items = (
+            (
+                await self._session.execute(
+                    base.order_by(User.created_at.desc()).offset(skip).limit(limit)
+                )
+            )
+            .scalars()
+            .all()
+        )
+        return list(items), int(total)
+
+    async def email_exists(
+        self,
+        organization_id: uuid.UUID,
+        email: str,
+        *,
+        exclude_id: uuid.UUID | None = None,
+    ) -> bool:
+        stmt = select(User.id).where(
+            User.organization_id == organization_id,
+            User.email == email,
+            User.is_deleted.is_(False),
+        )
+        if exclude_id is not None:
+            stmt = stmt.where(User.id != exclude_id)
+        return (await self._session.execute(stmt)).first() is not None
+
+    async def username_exists(
+        self,
+        organization_id: uuid.UUID,
+        username: str,
+        *,
+        exclude_id: uuid.UUID | None = None,
+    ) -> bool:
+        stmt = select(User.id).where(
+            User.organization_id == organization_id,
+            User.username == username,
+            User.is_deleted.is_(False),
+        )
+        if exclude_id is not None:
+            stmt = stmt.where(User.id != exclude_id)
+        return (await self._session.execute(stmt)).first() is not None
+
+    async def add(self, user: User) -> User:
+        self._session.add(user)
+        await self._session.commit()
+        await self._session.refresh(user)
+        return user
+
+    async def save(self, user: User) -> User:
+        await self._session.commit()
+        await self._session.refresh(user)
+        return user
+
+    async def soft_delete(self, user: User) -> None:
+        user.is_deleted = True
+        user.is_active = False
+        await self._session.commit()
+
+
+class SqlAlchemyRoleRepository:
+    def __init__(self, session: AsyncSession) -> None:
+        self._session = session
+
+    async def list_for_org(self, organization_id: uuid.UUID) -> list[Role]:
+        stmt = (
+            select(Role)
+            .where(
+                Role.organization_id == organization_id,
+                Role.is_deleted.is_(False),
+            )
+            .order_by(Role.code.asc())
+        )
+        return list((await self._session.execute(stmt)).scalars().all())
+
+    async def get_by_codes(
+        self, organization_id: uuid.UUID, codes: list[str]
+    ) -> list[Role]:
+        if not codes:
+            return []
+        stmt = select(Role).where(
+            Role.organization_id == organization_id,
+            Role.code.in_(codes),
+            Role.is_deleted.is_(False),
+        )
+        return list((await self._session.execute(stmt)).scalars().all())
+
+    async def replace_user_roles(
+        self, user_id: uuid.UUID, role_ids: list[uuid.UUID]
+    ) -> None:
+        await self._session.execute(
+            delete(UserRole).where(UserRole.user_id == user_id)
+        )
+        for rid in role_ids:
+            self._session.add(UserRole(user_id=user_id, role_id=rid))
+        await self._session.commit()
+
 
 class SqlAlchemyRefreshTokenRepository:
     def __init__(self, session: AsyncSession) -> None:
@@ -84,3 +208,4 @@ class SqlAlchemyRefreshTokenRepository:
             .values(revoked_at=datetime.utcnow())
         )
         await self._session.commit()
+
