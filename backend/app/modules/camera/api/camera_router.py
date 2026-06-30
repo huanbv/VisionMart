@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, UploadFile, File, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exceptions import ConflictError, NotFoundError, ValidationError
@@ -24,6 +24,7 @@ from app.modules.camera.schemas.camera import (
     CameraUpdate,
 )
 from app.modules.tenancy.infrastructure.models import Branch
+from app.services.ai_engine_client import AIEngineClient, AIEngineError
 
 router = APIRouter(prefix="/cameras", tags=["camera"])
 
@@ -220,3 +221,42 @@ async def delete_camera(
     except NotFoundError as exc:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.post("/{camera_id}/analyze")
+async def analyze_camera_frame(
+    camera_id: uuid.UUID,
+    image: UploadFile = File(...),
+    model: str | None = None,
+    current: CurrentUser = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    service = _service(session)
+    try:
+        await service.get(current.organization_id, camera_id)
+    except NotFoundError as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+
+    content = await image.read()
+    if not content:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, detail="Empty image upload")
+    if len(content) > 10 * 1024 * 1024:
+        raise HTTPException(
+            status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail="Image exceeds 10 MB",
+        )
+
+    client = AIEngineClient()
+    try:
+        result = await client.detect(
+            content=content,
+            filename=image.filename or "frame.jpg",
+            content_type=image.content_type or "image/jpeg",
+            model=model,
+        )
+    except AIEngineError as exc:
+        raise HTTPException(
+            status.HTTP_502_BAD_GATEWAY, detail=f"AI engine error: {exc}"
+        ) from exc
+
+    return {"camera_id": str(camera_id), **result}

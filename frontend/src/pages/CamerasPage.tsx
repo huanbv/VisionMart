@@ -8,6 +8,7 @@ import {
   Form,
   Input,
   InputNumber,
+  Modal,
   Popconfirm,
   Row,
   Select,
@@ -16,11 +17,15 @@ import {
   Switch,
   Table,
   Tag,
+  Typography,
+  Upload,
   message,
 } from "antd";
 import {
   DeleteOutlined,
   EditOutlined,
+  ExperimentOutlined,
+  InboxOutlined,
   PlusOutlined,
   ReloadOutlined,
   WifiOutlined,
@@ -29,8 +34,10 @@ import type { ColumnsType } from "antd/es/table";
 
 import { listBranches, type Branch } from "@/api/tenancy";
 import {
+  type AnalyzeResult,
   type Camera,
   type CameraStats,
+  analyzeCameraFrame,
   createCamera,
   deleteCamera,
   getCameraStats,
@@ -210,6 +217,31 @@ export default function CamerasPage() {
     }
   };
 
+  const [analyzeFor, setAnalyzeFor] = useState<Camera | null>(null);
+  const [analyzeFile, setAnalyzeFile] = useState<File | null>(null);
+  const [analyzeResult, setAnalyzeResult] = useState<AnalyzeResult | null>(null);
+  const [analyzing, setAnalyzing] = useState(false);
+
+  const onAnalyze = async () => {
+    if (!analyzeFor || !analyzeFile) return;
+    setAnalyzing(true);
+    setAnalyzeResult(null);
+    try {
+      const res = await analyzeCameraFrame(analyzeFor.id, analyzeFile);
+      setAnalyzeResult(res);
+    } catch {
+      message.error("Phân tích thất bại");
+    } finally {
+      setAnalyzing(false);
+    }
+  };
+
+  const closeAnalyze = () => {
+    setAnalyzeFor(null);
+    setAnalyzeFile(null);
+    setAnalyzeResult(null);
+  };
+
   const columns: ColumnsType<Camera> = [
     {
       title: "Trạng thái",
@@ -258,7 +290,7 @@ export default function CamerasPage() {
     },
     {
       title: "Hành động",
-      width: 170,
+      width: 210,
       fixed: "right",
       render: (_, row) => (
         <Space>
@@ -267,6 +299,16 @@ export default function CamerasPage() {
             icon={<WifiOutlined />}
             onClick={() => onPing(row)}
             title="Heartbeat (online)"
+          />
+          <Button
+            size="small"
+            icon={<ExperimentOutlined />}
+            onClick={() => {
+              setAnalyzeFor(row);
+              setAnalyzeFile(null);
+              setAnalyzeResult(null);
+            }}
+            title="Phân tích khung hình"
           />
           <Button
             size="small"
@@ -455,6 +497,89 @@ export default function CamerasPage() {
           </Button>
         </Form>
       </Drawer>
+
+      <Modal
+        title={
+          analyzeFor ? `Phân tích khung hình — ${analyzeFor.name}` : "Phân tích"
+        }
+        open={!!analyzeFor}
+        onCancel={closeAnalyze}
+        footer={[
+          <Button key="close" onClick={closeAnalyze}>
+            Đóng
+          </Button>,
+          <Button
+            key="run"
+            type="primary"
+            disabled={!analyzeFile}
+            loading={analyzing}
+            onClick={onAnalyze}
+          >
+            Chạy phân tích
+          </Button>,
+        ]}
+        width={640}
+      >
+        <Upload.Dragger
+          multiple={false}
+          accept="image/*"
+          beforeUpload={(file) => {
+            setAnalyzeFile(file as File);
+            setAnalyzeResult(null);
+            return false;
+          }}
+          onRemove={() => {
+            setAnalyzeFile(null);
+            setAnalyzeResult(null);
+          }}
+          fileList={
+            analyzeFile
+              ? [
+                  {
+                    uid: "1",
+                    name: analyzeFile.name,
+                    status: "done",
+                  },
+                ]
+              : []
+          }
+        >
+          <p className="ant-upload-drag-icon">
+            <InboxOutlined />
+          </p>
+          <p className="ant-upload-text">Kéo thả hoặc bấm để chọn ảnh</p>
+          <p className="ant-upload-hint">JPG/PNG, tối đa 10 MB</p>
+        </Upload.Dragger>
+
+        {analyzeResult && (
+          <Card size="small" style={{ marginTop: 16 }}>
+            <Space direction="vertical" style={{ width: "100%" }}>
+              <Typography.Text>
+                Model: <Tag color="blue">{analyzeResult.model}</Tag>
+                Kích thước: {analyzeResult.image.width}×{analyzeResult.image.height}{" "}
+                ({analyzeResult.image.format}, {analyzeResult.image.size_bytes} B)
+              </Typography.Text>
+              <Typography.Text type="secondary">
+                Thời gian xử lý: {analyzeResult.elapsed_ms} ms — phát hiện{" "}
+                {analyzeResult.detections.length} đối tượng.
+              </Typography.Text>
+              <pre
+                style={{
+                  margin: 0,
+                  padding: 12,
+                  background: "#fafafa",
+                  borderRadius: 4,
+                  fontSize: 12,
+                  maxHeight: 240,
+                  overflow: "auto",
+                }}
+              >
+                {JSON.stringify(analyzeResult.detections, null, 2)}
+              </pre>
+            </Space>
+          </Card>
+        )}
+      </Modal>
     </Space>
   );
 }

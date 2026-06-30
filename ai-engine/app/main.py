@@ -13,6 +13,7 @@ from fastapi import FastAPI
 from pydantic import BaseModel
 
 from app import __version__
+from app.api.detect import router as detect_router
 
 logger = logging.getLogger("ai-engine")
 
@@ -39,3 +40,6 @@ async def health() -> HealthStatus:
 @app.get("/ready", response_model=HealthStatus, tags=["health"])
 async def ready() -> HealthStatus:
     return HealthStatus(status="ready", service="ai-engine", version=__version__)
+
+
+app.include_router(detect_router)

@@ -112,3 +112,43 @@ export async function heartbeatCamera(
 export async function deleteCamera(id: string): Promise<void> {
   await apiClient.delete(`/cameras/${id}`);
 }
+
+export interface DetectionBox {
+  x1: number;
+  y1: number;
+  x2: number;
+  y2: number;
+}
+
+export interface Detection {
+  class_name: string;
+  confidence: number;
+  bbox: DetectionBox;
+  stub?: boolean;
+}
+
+export interface AnalyzeResult {
+  camera_id: string;
+  model: string;
+  image: { width: number; height: number; format: string; size_bytes: number };
+  detections: Detection[];
+  elapsed_ms: number;
+}
+
+export async function analyzeCameraFrame(
+  id: string,
+  file: File,
+  model?: string,
+): Promise<AnalyzeResult> {
+  const form = new FormData();
+  form.append("image", file);
+  const { data } = await apiClient.post<AnalyzeResult>(
+    `/cameras/${id}/analyze`,
+    form,
+    {
+      params: model ? { model } : undefined,
+      headers: { "Content-Type": "multipart/form-data" },
+    },
+  );
+  return data;
+}
