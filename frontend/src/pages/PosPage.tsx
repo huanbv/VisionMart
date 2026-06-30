@@ -24,6 +24,7 @@ import type { ColumnsType } from "antd/es/table";
 
 import { listBranches, type Branch } from "@/api/tenancy";
 import { listProducts, type Product } from "@/api/catalog";
+import { listCustomers, type Customer } from "@/api/customers";
 import { createOrder, type OrderDetail } from "@/api/sales";
 import { useAuth } from "@/contexts/AuthContext";
 
@@ -44,7 +45,9 @@ export default function PosPage() {
 
   const [branches, setBranches] = useState<Branch[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
+  const [customers, setCustomers] = useState<Customer[]>([]);
   const [branchId, setBranchId] = useState<string | undefined>(undefined);
+  const [customerId, setCustomerId] = useState<string | undefined>(undefined);
   const [pickProductId, setPickProductId] = useState<string | undefined>();
   const [lines, setLines] = useState<Line[]>([]);
   const [notes, setNotes] = useState("");
@@ -61,6 +64,9 @@ export default function PosPage() {
     listProducts({ limit: 500, is_active: true })
       .then((res) => setProducts(res.items))
       .catch(() => message.error("Không tải được sản phẩm"));
+    listCustomers({ limit: 500, is_active: true })
+      .then((res) => setCustomers(res.items))
+      .catch(() => message.error("Không tải được khách hàng"));
   }, []);
 
   const productMap = useMemo(() => {
@@ -128,6 +134,7 @@ export default function PosPage() {
     try {
       const order = await createOrder({
         branch_id: branchId,
+        customer_id: customerId ?? null,
         notes: notes || null,
         lines: lines.map((l) => ({
           product_id: l.product_id,
@@ -139,6 +146,7 @@ export default function PosPage() {
       setSuccessOrder(order);
       setLines([]);
       setNotes("");
+      setCustomerId(undefined);
     } catch (err: unknown) {
       const detail = (err as { response?: { data?: { detail?: unknown } } })
         ?.response?.data?.detail;
@@ -270,6 +278,24 @@ export default function PosPage() {
                 options={branches.map((b) => ({
                   value: b.id,
                   label: `${b.code} — ${b.name}`,
+                }))}
+              />
+            </div>
+            <div>
+              <div style={{ marginBottom: 4 }}>Khách hàng</div>
+              <Select
+                showSearch
+                allowClear
+                optionFilterProp="label"
+                placeholder="Khách vãng lai"
+                style={{ width: "100%" }}
+                value={customerId}
+                onChange={setCustomerId}
+                options={customers.map((c) => ({
+                  value: c.id,
+                  label:
+                    `${c.full_name ?? ""} ${c.phone ? `(${c.phone})` : c.email ?? ""}`.trim() ||
+                    c.id,
                 }))}
               />
             </div>

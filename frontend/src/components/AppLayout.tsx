@@ -4,6 +4,7 @@ import {
   ApartmentOutlined,
   AppstoreOutlined,
   BankOutlined,
+  ContactsOutlined,
   DashboardOutlined,
   DatabaseOutlined,
   FileTextOutlined,
@@ -71,6 +72,11 @@ const MENU_ITEMS = [
         label: <Link to="/orders">Đơn hàng</Link>,
       },
     ],
+  },
+  {
+    key: "/customers",
+    icon: <ContactsOutlined />,
+    label: <Link to="/customers">Khách hàng</Link>,
   },
   {
     key: "/users",
