@@ -7,6 +7,7 @@ import CamerasPage from "@/pages/CamerasPage";
 import CategoriesPage from "@/pages/CategoriesPage";
 import CustomersPage from "@/pages/CustomersPage";
 import DashboardPage from "@/pages/DashboardPage";
+import DetectionsPage from "@/pages/DetectionsPage";
 import EmployeesPage from "@/pages/EmployeesPage";
 import InventoryPage from "@/pages/InventoryPage";
 import LoginPage from "@/pages/LoginPage";
@@ -41,6 +42,7 @@ export default function App() {
         <Route path="/customers" element={<CustomersPage />} />
         <Route path="/employees" element={<EmployeesPage />} />
         <Route path="/cameras" element={<CamerasPage />} />
+        <Route path="/detections" element={<DetectionsPage />} />
         <Route path="/users" element={<UsersPage />} />
         <Route path="/roles" element={<RolesPage />} />
         <Route path="/audit-logs" element={<AuditLogsPage />} />

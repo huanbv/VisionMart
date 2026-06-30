@@ -129,6 +129,7 @@ export interface Detection {
 
 export interface AnalyzeResult {
   camera_id: string;
+  detection_event_id: string;
   model: string;
   image: { width: number; height: number; format: string; size_bytes: number };
   detections: Detection[];

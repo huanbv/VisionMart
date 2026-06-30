@@ -24,6 +24,10 @@ from app.modules.camera.schemas.camera import (
     CameraUpdate,
 )
 from app.modules.tenancy.infrastructure.models import Branch
+from app.modules.detection.application.detection_service import DetectionService
+from app.modules.detection.infrastructure.repositories import (
+    SqlAlchemyDetectionRepository,
+)
 from app.services.ai_engine_client import AIEngineClient, AIEngineError
 
 router = APIRouter(prefix="/cameras", tags=["camera"])
@@ -259,4 +263,16 @@ async def analyze_camera_frame(
             status.HTTP_502_BAD_GATEWAY, detail=f"AI engine error: {exc}"
         ) from exc
 
-    return {"camera_id": str(camera_id), **result}
+    detection_service = DetectionService(SqlAlchemyDetectionRepository(session))
+    event = await detection_service.record(
+        organization_id=current.organization_id,
+        camera_id=camera_id,
+        user_id=current.id,
+        result=result,
+    )
+
+    return {
+        "camera_id": str(camera_id),
+        "detection_event_id": str(event.id),
+        **result,
+    }

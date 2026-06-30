@@ -10,6 +10,7 @@ from app.modules.catalog.api.category_router import router as category_router
 from app.modules.catalog.api.product_router import router as product_router
 from app.modules.customer.api.customer_router import router as customer_router
 from app.modules.dashboard.api.dashboard_router import router as dashboard_router
+from app.modules.detection.api.detection_router import router as detection_router
 from app.modules.employee.api.employee_router import router as employee_router
 from app.modules.identity.api.auth_router import router as auth_router
 from app.modules.identity.api.role_router import router as role_router
@@ -38,3 +39,4 @@ api_router.include_router(dashboard_router)
 api_router.include_router(notification_router)
 api_router.include_router(audit_router)
 api_router.include_router(reports_router)
+api_router.include_router(detection_router)

@@ -18,6 +18,7 @@ from app.modules.audit.infrastructure import models as _audit  # noqa: F401
 from app.modules.camera.infrastructure import models as _camera  # noqa: F401
 from app.modules.catalog.infrastructure import models as _catalog  # noqa: F401
 from app.modules.customer.infrastructure import models as _customer  # noqa: F401
+from app.modules.detection.infrastructure import models as _detection  # noqa: F401
 from app.modules.employee.infrastructure import models as _employee  # noqa: F401
 from app.modules.identity.infrastructure import models as _identity  # noqa: F401
 from app.modules.inventory.infrastructure import models as _inventory  # noqa: F401

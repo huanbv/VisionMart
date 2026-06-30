@@ -9,6 +9,7 @@ import {
   ContactsOutlined,
   DashboardOutlined,
   DatabaseOutlined,
+  EyeOutlined,
   FileTextOutlined,
   LogoutOutlined,
   SafetyOutlined,
@@ -91,6 +92,11 @@ const MENU_ITEMS = [
     key: "/cameras",
     icon: <VideoCameraOutlined />,
     label: <Link to="/cameras">Camera</Link>,
+  },
+  {
+    key: "/detections",
+    icon: <EyeOutlined />,
+    label: <Link to="/detections">Phát hiện AI</Link>,
   },
   {
     key: "/users",
