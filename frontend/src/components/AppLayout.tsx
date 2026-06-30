@@ -15,6 +15,7 @@ import {
   TagsOutlined,
   TeamOutlined,
   UserOutlined,
+  VideoCameraOutlined,
 } from "@ant-design/icons";
 import { Link, Outlet, useLocation, useNavigate } from "react-router-dom";
 
@@ -82,6 +83,11 @@ const MENU_ITEMS = [
     key: "/employees",
     icon: <TeamOutlined />,
     label: <Link to="/employees">Nhân viên</Link>,
+  },
+  {
+    key: "/cameras",
+    icon: <VideoCameraOutlined />,
+    label: <Link to="/cameras">Camera</Link>,
   },
   {
     key: "/users",
