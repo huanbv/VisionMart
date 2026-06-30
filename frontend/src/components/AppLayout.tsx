@@ -2,10 +2,13 @@ import { useMemo } from "react";
 import { Avatar, Button, Layout, Menu, Space, Typography } from "antd";
 import {
   ApartmentOutlined,
+  AppstoreOutlined,
   BankOutlined,
   DashboardOutlined,
   LogoutOutlined,
   SafetyOutlined,
+  ShoppingOutlined,
+  TagsOutlined,
   TeamOutlined,
   UserOutlined,
 } from "@ant-design/icons";
@@ -28,6 +31,23 @@ const MENU_ITEMS = [
     label: <Link to="/branches">Chi nhánh</Link>,
   },
   {
+    key: "catalog",
+    icon: <AppstoreOutlined />,
+    label: "Catalog",
+    children: [
+      {
+        key: "/categories",
+        icon: <TagsOutlined />,
+        label: <Link to="/categories">Danh mục</Link>,
+      },
+      {
+        key: "/products",
+        icon: <ShoppingOutlined />,
+        label: <Link to="/products">Sản phẩm</Link>,
+      },
+    ],
+  },
+  {
     key: "/users",
     icon: <TeamOutlined />,
     label: <Link to="/users">Người dùng</Link>,
@@ -45,8 +65,17 @@ export default function AppLayout() {
   const location = useLocation();
 
   const selectedKey = useMemo(() => {
-    const match = MENU_ITEMS.map((m) => m.key)
-      .filter((k) => k === "/" ? location.pathname === "/" : location.pathname.startsWith(k))
+    const keys: string[] = [];
+    for (const item of MENU_ITEMS) {
+      if (typeof item.key === "string" && item.key.startsWith("/")) keys.push(item.key);
+      if ("children" in item && item.children) {
+        for (const child of item.children) {
+          if (typeof child.key === "string" && child.key.startsWith("/")) keys.push(child.key);
+        }
+      }
+    }
+    const match = keys
+      .filter((k) => (k === "/" ? location.pathname === "/" : location.pathname.startsWith(k)))
       .sort((a, b) => b.length - a.length)[0];
     return match ?? "/";
   }, [location.pathname]);

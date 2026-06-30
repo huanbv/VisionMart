@@ -2,9 +2,11 @@ import { Navigate, Route, Routes } from "react-router-dom";
 
 import AppLayout from "@/components/AppLayout";
 import BranchesPage from "@/pages/BranchesPage";
+import CategoriesPage from "@/pages/CategoriesPage";
 import DashboardPage from "@/pages/DashboardPage";
 import LoginPage from "@/pages/LoginPage";
 import OrganizationPage from "@/pages/OrganizationPage";
+import ProductsPage from "@/pages/ProductsPage";
 import RolesPage from "@/pages/RolesPage";
 import UsersPage from "@/pages/UsersPage";
 import { RequireAuth } from "@/routes/RequireAuth";
@@ -23,6 +25,8 @@ export default function App() {
         <Route path="/" element={<DashboardPage />} />
         <Route path="/organization" element={<OrganizationPage />} />
         <Route path="/branches" element={<BranchesPage />} />
+        <Route path="/categories" element={<CategoriesPage />} />
+        <Route path="/products" element={<ProductsPage />} />
         <Route path="/users" element={<UsersPage />} />
         <Route path="/roles" element={<RolesPage />} />
       </Route>
