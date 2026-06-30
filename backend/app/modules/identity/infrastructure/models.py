@@ -8,7 +8,7 @@ from datetime import datetime
 from sqlalchemy import Boolean, DateTime, ForeignKey, String, UniqueConstraint, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from app.database.entity import AssociationBase, Entity
+from app.database.entity import AssociationBase, Entity, ImmutableEntity
 from app.database.types import UUIDType
 
 
@@ -115,3 +115,27 @@ class RolePermission(AssociationBase):
     permission_id: Mapped[uuid.UUID] = mapped_column(
         UUIDType, ForeignKey("permissions.id", ondelete="CASCADE"), primary_key=True
     )
+
+
+class RefreshToken(ImmutableEntity):
+    """Opaque refresh token. `secret_hash` = HMAC-SHA256(token_secret)."""
+
+    __tablename__ = "refresh_tokens"
+
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUIDType, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    family_id: Mapped[uuid.UUID] = mapped_column(UUIDType, nullable=False, index=True)
+    secret_hash: Mapped[str] = mapped_column(String(128), nullable=False)
+    issued_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    expires_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, index=True
+    )
+    revoked_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    replaced_by: Mapped[uuid.UUID | None] = mapped_column(UUIDType, nullable=True)
+    user_agent: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    ip_address: Mapped[str | None] = mapped_column(String(64), nullable=True)

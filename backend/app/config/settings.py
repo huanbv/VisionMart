@@ -38,6 +38,20 @@ class Settings(BaseSettings):
     BACKEND_CORS_ORIGINS: str = "http://localhost:3000"
     BACKEND_SECRET_KEY: str = Field("change-me", min_length=8)
 
+    # ---- Auth ----
+    JWT_PRIVATE_KEY_PATH: str = "/run/secrets/jwt_private.pem"
+    JWT_PUBLIC_KEY_PATH: str = "/run/secrets/jwt_public.pem"
+    JWT_ALGORITHM: str = "RS256"
+    JWT_ISSUER: str = "visionmart"
+    JWT_AUDIENCE: str = "visionmart-api"
+    ACCESS_TOKEN_TTL_SECONDS: int = 900            # 15 minutes
+    REFRESH_TOKEN_TTL_SECONDS: int = 1209600       # 14 days
+    SEED_ADMIN_EMAIL: str = "admin@visionmart.local"
+    SEED_ADMIN_USERNAME: str = "admin"
+    SEED_ADMIN_PASSWORD: str = "ChangeMe!2026"
+    SEED_ORGANIZATION_NAME: str = "VisionMart Demo"
+    SEED_ORGANIZATION_SLUG: str = "demo"
+
     # ---- Database ----
     DATABASE_URL: str = (
         "postgresql+asyncpg://visionmart:visionmart@postgres:5432/visionmart"

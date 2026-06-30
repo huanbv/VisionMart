@@ -1,0 +1,79 @@
+import axios, {
+  AxiosError,
+  AxiosInstance,
+  AxiosRequestConfig,
+  InternalAxiosRequestConfig,
+} from "axios";
+
+const ACCESS_KEY = "vm.access_token";
+const REFRESH_KEY = "vm.refresh_token";
+
+export const tokenStore = {
+  getAccess: () => localStorage.getItem(ACCESS_KEY),
+  getRefresh: () => localStorage.getItem(REFRESH_KEY),
+  set: (access: string, refresh: string) => {
+    localStorage.setItem(ACCESS_KEY, access);
+    localStorage.setItem(REFRESH_KEY, refresh);
+  },
+  clear: () => {
+    localStorage.removeItem(ACCESS_KEY);
+    localStorage.removeItem(REFRESH_KEY);
+  },
+};
+
+const baseURL = import.meta.env.VITE_API_BASE_URL ?? "/api/v1";
+
+export const apiClient: AxiosInstance = axios.create({
+  baseURL,
+  timeout: 15000,
+});
+
+apiClient.interceptors.request.use((config: InternalAxiosRequestConfig) => {
+  const token = tokenStore.getAccess();
+  if (token) {
+    config.headers.set("Authorization", `Bearer ${token}`);
+  }
+  return config;
+});
+
+type RetriableConfig = AxiosRequestConfig & { _retry?: boolean };
+
+let refreshPromise: Promise<string> | null = null;
+
+async function refreshAccessToken(): Promise<string> {
+  const refresh = tokenStore.getRefresh();
+  if (!refresh) throw new Error("No refresh token");
+  const resp = await axios.post(`${baseURL}/auth/refresh`, {
+    refresh_token: refresh,
+  });
+  tokenStore.set(resp.data.access_token, resp.data.refresh_token);
+  return resp.data.access_token as string;
+}
+
+apiClient.interceptors.response.use(
+  (r) => r,
+  async (error: AxiosError) => {
+    const original = error.config as RetriableConfig | undefined;
+    const status = error.response?.status;
+    if (status !== 401 || !original || original._retry) {
+      return Promise.reject(error);
+    }
+    if (original.url?.includes("/auth/login") || original.url?.includes("/auth/refresh")) {
+      return Promise.reject(error);
+    }
+    original._retry = true;
+    try {
+      refreshPromise = refreshPromise ?? refreshAccessToken();
+      const newToken = await refreshPromise;
+      refreshPromise = null;
+      original.headers = original.headers ?? {};
+      (original.headers as Record<string, string>)["Authorization"] = `Bearer ${newToken}`;
+      return apiClient.request(original);
+    } catch (refreshErr) {
+      refreshPromise = null;
+      tokenStore.clear();
+      window.location.assign("/login");
+      return Promise.reject(refreshErr);
+    }
+  },
+);
