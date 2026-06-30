@@ -28,9 +28,17 @@ export default function LoginPage() {
       message.success("Đăng nhập thành công");
       navigate("/", { replace: true });
     } catch (err: unknown) {
-      const detail =
-        (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail ??
-        "Đăng nhập thất bại";
+      const data = (err as { response?: { data?: { detail?: unknown } } })?.response?.data;
+      let detail = "Đăng nhập thất bại";
+      if (typeof data?.detail === "string") {
+        detail = data.detail;
+      } else if (Array.isArray(data?.detail)) {
+        detail = data.detail
+          .map((d: { msg?: string; loc?: unknown[] }) =>
+            `${(d.loc ?? []).slice(1).join(".")}: ${d.msg ?? ""}`.trim(),
+          )
+          .join("; ");
+      }
       message.error(detail);
     } finally {
       setSubmitting(false);
