@@ -5,6 +5,7 @@ import BranchesPage from "@/pages/BranchesPage";
 import CategoriesPage from "@/pages/CategoriesPage";
 import CustomersPage from "@/pages/CustomersPage";
 import DashboardPage from "@/pages/DashboardPage";
+import EmployeesPage from "@/pages/EmployeesPage";
 import InventoryPage from "@/pages/InventoryPage";
 import LoginPage from "@/pages/LoginPage";
 import OrdersPage from "@/pages/OrdersPage";
@@ -35,6 +36,7 @@ export default function App() {
         <Route path="/pos" element={<PosPage />} />
         <Route path="/orders" element={<OrdersPage />} />
         <Route path="/customers" element={<CustomersPage />} />
+        <Route path="/employees" element={<EmployeesPage />} />
         <Route path="/users" element={<UsersPage />} />
         <Route path="/roles" element={<RolesPage />} />
       </Route>

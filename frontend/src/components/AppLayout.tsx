@@ -79,6 +79,11 @@ const MENU_ITEMS = [
     label: <Link to="/customers">Khách hàng</Link>,
   },
   {
+    key: "/employees",
+    icon: <TeamOutlined />,
+    label: <Link to="/employees">Nhân viên</Link>,
+  },
+  {
     key: "/users",
     icon: <TeamOutlined />,
     label: <Link to="/users">Người dùng</Link>,
