@@ -5,6 +5,7 @@ import {
   AppstoreOutlined,
   AuditOutlined,
   BankOutlined,
+  BarChartOutlined,
   ContactsOutlined,
   DashboardOutlined,
   DatabaseOutlined,
@@ -105,6 +106,11 @@ const MENU_ITEMS = [
     key: "/audit-logs",
     icon: <AuditOutlined />,
     label: <Link to="/audit-logs">Nhật ký</Link>,
+  },
+  {
+    key: "/reports",
+    icon: <BarChartOutlined />,
+    label: <Link to="/reports">Báo cáo</Link>,
   },
 ];
 

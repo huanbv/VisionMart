@@ -14,6 +14,7 @@ import OrdersPage from "@/pages/OrdersPage";
 import OrganizationPage from "@/pages/OrganizationPage";
 import PosPage from "@/pages/PosPage";
 import ProductsPage from "@/pages/ProductsPage";
+import ReportsPage from "@/pages/ReportsPage";
 import RolesPage from "@/pages/RolesPage";
 import UsersPage from "@/pages/UsersPage";
 import { RequireAuth } from "@/routes/RequireAuth";
@@ -43,6 +44,7 @@ export default function App() {
         <Route path="/users" element={<UsersPage />} />
         <Route path="/roles" element={<RolesPage />} />
         <Route path="/audit-logs" element={<AuditLogsPage />} />
+        <Route path="/reports" element={<ReportsPage />} />
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>

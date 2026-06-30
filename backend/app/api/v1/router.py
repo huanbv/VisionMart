@@ -16,6 +16,7 @@ from app.modules.identity.api.role_router import router as role_router
 from app.modules.identity.api.user_router import router as user_router
 from app.modules.inventory.api.inventory_router import router as inventory_router
 from app.modules.notification.api.notification_router import router as notification_router
+from app.modules.reports.api.reports_router import router as reports_router
 from app.modules.sales.api.order_router import router as order_router
 from app.modules.tenancy.api.branch_router import router as branch_router
 from app.modules.tenancy.api.organization_router import router as organization_router
@@ -36,3 +37,4 @@ api_router.include_router(camera_router)
 api_router.include_router(dashboard_router)
 api_router.include_router(notification_router)
 api_router.include_router(audit_router)
+api_router.include_router(reports_router)
