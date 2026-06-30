@@ -10,8 +10,9 @@ import {
   markAllRead,
   markNotificationRead,
 } from "@/api/notifications";
+import { tokenStore } from "@/api/client";
 
-const POLL_INTERVAL_MS = 30_000;
+const POLL_INTERVAL_MS = 60_000;
 const LIST_LIMIT = 10;
 
 const PRIORITY_COLOR: Record<string, string> = {
@@ -53,6 +54,50 @@ export default function NotificationBell() {
     const id = window.setInterval(loadCount, POLL_INTERVAL_MS);
     return () => window.clearInterval(id);
   }, [loadCount]);
+
+  useEffect(() => {
+    let ws: WebSocket | null = null;
+    let retry: number | null = null;
+    let cancelled = false;
+
+    const connect = () => {
+      const token = tokenStore.getAccess();
+      if (!token || cancelled) return;
+      const proto = window.location.protocol === "https:" ? "wss" : "ws";
+      const url = `${proto}://${window.location.host}/ws/notifications?token=${encodeURIComponent(token)}`;
+      try {
+        ws = new WebSocket(url);
+      } catch {
+        return;
+      }
+      ws.onmessage = (ev) => {
+        try {
+          const data = JSON.parse(ev.data);
+          if (data?.event === "notification.created") {
+            setUnread((u) => u + 1);
+            if (open) loadList();
+          }
+        } catch {
+          // ignore malformed payload
+        }
+      };
+      ws.onclose = () => {
+        if (cancelled) return;
+        retry = window.setTimeout(connect, 5_000);
+      };
+      ws.onerror = () => {
+        ws?.close();
+      };
+    };
+
+    connect();
+    return () => {
+      cancelled = true;
+      if (retry) window.clearTimeout(retry);
+      ws?.close();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   useEffect(() => {
     if (open) loadList();

@@ -14,6 +14,7 @@ from sqlalchemy import and_, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config.settings import get_settings
+from app.core.realtime import channels_for_notification, publish_event
 from app.modules.camera.infrastructure.models import Camera
 from app.modules.catalog.infrastructure.models import Product
 from app.modules.identity.infrastructure.models import Role
@@ -36,6 +37,7 @@ class AlertService:
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
         self._settings = get_settings()
+        self._pending: list[Notification] = []
 
     async def _admin_role_id(
         self, organization_id: uuid.UUID
@@ -88,6 +90,7 @@ class AlertService:
             sent_at=datetime.now(timezone.utc),
         )
         self._session.add(n)
+        self._pending.append(n)
         return n
 
     async def scan_organization(self, organization_id: uuid.UUID) -> dict:
@@ -99,6 +102,7 @@ class AlertService:
             hours=self._settings.ALERT_DEDUP_HOURS
         )
 
+        self._pending = []
         low_created = await self._scan_low_stock(
             organization_id, role_id, dedup_since
         )
@@ -108,6 +112,21 @@ class AlertService:
 
         if low_created or cam_created:
             await self._session.commit()
+            for n in self._pending:
+                await publish_event(
+                    channels_for_notification(
+                        organization_id=n.organization_id,
+                        recipient_user_id=n.recipient_user_id,
+                        recipient_role_id=n.recipient_role_id,
+                    ),
+                    {
+                        "event": "notification.created",
+                        "id": str(n.id),
+                        "type": n.type,
+                        "title": n.title,
+                        "priority": n.priority.value,
+                    },
+                )
         return {"low_stock": low_created, "camera_offline": cam_created}
 
     async def _scan_low_stock(

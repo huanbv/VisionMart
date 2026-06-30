@@ -14,6 +14,7 @@ from app.config.settings import get_settings
 from app.core.logging import configure_logging
 from app.middleware.audit import AuditMiddleware
 from app.middleware.request_id import RequestIdMiddleware
+from app.modules.notification.api.notification_ws import router as notification_ws_router
 from app.routers import health
 
 
@@ -51,6 +52,7 @@ def create_app() -> FastAPI:
 
     app.include_router(health.router)
     app.include_router(api_router, prefix=settings.BACKEND_API_PREFIX)
+    app.include_router(notification_ws_router, prefix="/ws")
 
     return app
 

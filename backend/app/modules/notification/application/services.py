@@ -6,6 +6,7 @@ import uuid
 from datetime import datetime, timezone
 
 from app.core.exceptions import NotFoundError, ValidationError
+from app.core.realtime import channels_for_notification, publish_event
 from app.modules.notification.infrastructure.models import (
     Notification,
     NotificationChannel,
@@ -104,4 +105,19 @@ class NotificationService:
             status=NotificationStatus.SENT,
             sent_at=datetime.now(timezone.utc),
         )
-        return await self._repo.add(n)
+        saved = await self._repo.add(n)
+        await publish_event(
+            channels_for_notification(
+                organization_id=organization_id,
+                recipient_user_id=recipient_user_id,
+                recipient_role_id=recipient_role_id,
+            ),
+            {
+                "event": "notification.created",
+                "id": str(saved.id),
+                "type": saved.type,
+                "title": saved.title,
+                "priority": saved.priority.value,
+            },
+        )
+        return saved
