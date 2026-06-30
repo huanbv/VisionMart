@@ -20,6 +20,7 @@ import {
 import { Link, Outlet, useLocation, useNavigate } from "react-router-dom";
 
 import { useAuth } from "@/contexts/AuthContext";
+import NotificationBell from "@/components/NotificationBell";
 
 const { Header, Sider, Content } = Layout;
 
@@ -143,6 +144,7 @@ export default function AppLayout() {
       <Layout>
         <Header className="!bg-white !px-6 flex items-center justify-end shadow-sm">
           <Space>
+            <NotificationBell />
             <Avatar icon={<UserOutlined />} />
             <Typography.Text strong>{user?.email}</Typography.Text>
             <Button icon={<LogoutOutlined />} onClick={handleLogout}>
