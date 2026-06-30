@@ -5,6 +5,7 @@ import {
   AppstoreOutlined,
   BankOutlined,
   DashboardOutlined,
+  DatabaseOutlined,
   LogoutOutlined,
   SafetyOutlined,
   ShoppingOutlined,
@@ -46,6 +47,11 @@ const MENU_ITEMS = [
         label: <Link to="/products">Sản phẩm</Link>,
       },
     ],
+  },
+  {
+    key: "/inventory",
+    icon: <DatabaseOutlined />,
+    label: <Link to="/inventory">Tồn kho</Link>,
   },
   {
     key: "/users",

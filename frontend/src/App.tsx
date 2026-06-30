@@ -4,6 +4,7 @@ import AppLayout from "@/components/AppLayout";
 import BranchesPage from "@/pages/BranchesPage";
 import CategoriesPage from "@/pages/CategoriesPage";
 import DashboardPage from "@/pages/DashboardPage";
+import InventoryPage from "@/pages/InventoryPage";
 import LoginPage from "@/pages/LoginPage";
 import OrganizationPage from "@/pages/OrganizationPage";
 import ProductsPage from "@/pages/ProductsPage";
@@ -27,6 +28,7 @@ export default function App() {
         <Route path="/branches" element={<BranchesPage />} />
         <Route path="/categories" element={<CategoriesPage />} />
         <Route path="/products" element={<ProductsPage />} />
+        <Route path="/inventory" element={<InventoryPage />} />
         <Route path="/users" element={<UsersPage />} />
         <Route path="/roles" element={<RolesPage />} />
       </Route>
