@@ -6,7 +6,9 @@ import CategoriesPage from "@/pages/CategoriesPage";
 import DashboardPage from "@/pages/DashboardPage";
 import InventoryPage from "@/pages/InventoryPage";
 import LoginPage from "@/pages/LoginPage";
+import OrdersPage from "@/pages/OrdersPage";
 import OrganizationPage from "@/pages/OrganizationPage";
+import PosPage from "@/pages/PosPage";
 import ProductsPage from "@/pages/ProductsPage";
 import RolesPage from "@/pages/RolesPage";
 import UsersPage from "@/pages/UsersPage";
@@ -29,6 +31,8 @@ export default function App() {
         <Route path="/categories" element={<CategoriesPage />} />
         <Route path="/products" element={<ProductsPage />} />
         <Route path="/inventory" element={<InventoryPage />} />
+        <Route path="/pos" element={<PosPage />} />
+        <Route path="/orders" element={<OrdersPage />} />
         <Route path="/users" element={<UsersPage />} />
         <Route path="/roles" element={<RolesPage />} />
       </Route>

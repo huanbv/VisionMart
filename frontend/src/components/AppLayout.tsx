@@ -6,8 +6,10 @@ import {
   BankOutlined,
   DashboardOutlined,
   DatabaseOutlined,
+  FileTextOutlined,
   LogoutOutlined,
   SafetyOutlined,
+  ShoppingCartOutlined,
   ShoppingOutlined,
   TagsOutlined,
   TeamOutlined,
@@ -52,6 +54,23 @@ const MENU_ITEMS = [
     key: "/inventory",
     icon: <DatabaseOutlined />,
     label: <Link to="/inventory">Tồn kho</Link>,
+  },
+  {
+    key: "sales",
+    icon: <ShoppingCartOutlined />,
+    label: "Bán hàng",
+    children: [
+      {
+        key: "/pos",
+        icon: <ShoppingCartOutlined />,
+        label: <Link to="/pos">Bán hàng (POS)</Link>,
+      },
+      {
+        key: "/orders",
+        icon: <FileTextOutlined />,
+        label: <Link to="/orders">Đơn hàng</Link>,
+      },
+    ],
   },
   {
     key: "/users",
