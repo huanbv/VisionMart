@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter
 
+from app.modules.audit.api.audit_router import router as audit_router
 from app.modules.camera.api.camera_router import router as camera_router
 from app.modules.catalog.api.category_router import router as category_router
 from app.modules.catalog.api.product_router import router as product_router
@@ -34,3 +35,4 @@ api_router.include_router(employee_router)
 api_router.include_router(camera_router)
 api_router.include_router(dashboard_router)
 api_router.include_router(notification_router)
+api_router.include_router(audit_router)

@@ -1,6 +1,7 @@
 import { Navigate, Route, Routes } from "react-router-dom";
 
 import AppLayout from "@/components/AppLayout";
+import AuditLogsPage from "@/pages/AuditLogsPage";
 import BranchesPage from "@/pages/BranchesPage";
 import CamerasPage from "@/pages/CamerasPage";
 import CategoriesPage from "@/pages/CategoriesPage";
@@ -41,6 +42,7 @@ export default function App() {
         <Route path="/cameras" element={<CamerasPage />} />
         <Route path="/users" element={<UsersPage />} />
         <Route path="/roles" element={<RolesPage />} />
+        <Route path="/audit-logs" element={<AuditLogsPage />} />
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>

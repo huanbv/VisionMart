@@ -3,6 +3,7 @@ import { Avatar, Button, Layout, Menu, Space, Typography } from "antd";
 import {
   ApartmentOutlined,
   AppstoreOutlined,
+  AuditOutlined,
   BankOutlined,
   ContactsOutlined,
   DashboardOutlined,
@@ -99,6 +100,11 @@ const MENU_ITEMS = [
     key: "/roles",
     icon: <SafetyOutlined />,
     label: <Link to="/roles">Vai trò</Link>,
+  },
+  {
+    key: "/audit-logs",
+    icon: <AuditOutlined />,
+    label: <Link to="/audit-logs">Nhật ký</Link>,
   },
 ];
 

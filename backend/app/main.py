@@ -12,6 +12,7 @@ from app import __version__
 from app.api.v1.router import api_router
 from app.config.settings import get_settings
 from app.core.logging import configure_logging
+from app.middleware.audit import AuditMiddleware
 from app.middleware.request_id import RequestIdMiddleware
 from app.routers import health
 
@@ -43,6 +44,10 @@ def create_app() -> FastAPI:
         allow_headers=["*"],
     )
     app.add_middleware(RequestIdMiddleware)
+    app.add_middleware(
+        AuditMiddleware,
+        skip_prefixes=("/auth/refresh",),
+    )
 
     app.include_router(health.router)
     app.include_router(api_router, prefix=settings.BACKEND_API_PREFIX)
