@@ -19,6 +19,7 @@ from decimal import Decimal
 
 from sqlalchemy import select
 
+from app import models as _models  # noqa: F401  - register all ORM mappers
 from app.config.settings import get_settings
 from app.database.session import SessionLocal
 from app.modules.camera.infrastructure.models import Camera
