@@ -73,13 +73,13 @@ class ShoppingCart(Entity):
     )
     session_id: Mapped[str | None] = mapped_column(String(80), nullable=True, index=True)
     status: Mapped[CartStatus] = mapped_column(
-        SAEnum(CartStatus, name="cart_status"),
+        SAEnum(CartStatus, name="cart_status", values_callable=lambda x: [e.value for e in x]),
         nullable=False,
         default=CartStatus.ACTIVE,
         server_default=CartStatus.ACTIVE.value,
     )
     source: Mapped[CartSource] = mapped_column(
-        SAEnum(CartSource, name="cart_source"),
+        SAEnum(CartSource, name="cart_source", values_callable=lambda x: [e.value for e in x]),
         nullable=False,
         default=CartSource.AI_VISION,
         server_default=CartSource.AI_VISION.value,
@@ -136,7 +136,7 @@ class Order(Entity):
     )
     code: Mapped[str] = mapped_column(String(40), nullable=False)
     status: Mapped[OrderStatus] = mapped_column(
-        SAEnum(OrderStatus, name="order_status"),
+        SAEnum(OrderStatus, name="order_status", values_callable=lambda x: [e.value for e in x]),
         nullable=False,
         default=OrderStatus.PENDING,
         server_default=OrderStatus.PENDING.value,

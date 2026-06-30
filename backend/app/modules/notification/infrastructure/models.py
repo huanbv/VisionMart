@@ -66,7 +66,11 @@ class Notification(Entity):
         index=True,
     )
     channel: Mapped[NotificationChannel] = mapped_column(
-        SAEnum(NotificationChannel, name="notification_channel"),
+        SAEnum(
+            NotificationChannel,
+            name="notification_channel",
+            values_callable=lambda x: [e.value for e in x],
+        ),
         nullable=False,
         default=NotificationChannel.IN_APP,
         server_default=NotificationChannel.IN_APP.value,
@@ -76,13 +80,21 @@ class Notification(Entity):
     body: Mapped[str | None] = mapped_column(Text, nullable=True)
     payload: Mapped[dict | None] = mapped_column(JSONBType, nullable=True)
     priority: Mapped[NotificationPriority] = mapped_column(
-        SAEnum(NotificationPriority, name="notification_priority"),
+        SAEnum(
+            NotificationPriority,
+            name="notification_priority",
+            values_callable=lambda x: [e.value for e in x],
+        ),
         nullable=False,
         default=NotificationPriority.NORMAL,
         server_default=NotificationPriority.NORMAL.value,
     )
     status: Mapped[NotificationStatus] = mapped_column(
-        SAEnum(NotificationStatus, name="notification_status"),
+        SAEnum(
+            NotificationStatus,
+            name="notification_status",
+            values_callable=lambda x: [e.value for e in x],
+        ),
         nullable=False,
         default=NotificationStatus.PENDING,
         server_default=NotificationStatus.PENDING.value,
