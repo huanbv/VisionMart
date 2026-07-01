@@ -208,6 +208,11 @@ class TrainingService:
                     job.error_message = status["error"]
                 await self._session.commit()
                 await self._session.refresh(job)
+                job.progress = status.get("progress")
+                job.current_epoch = status.get("current_epoch")
+                job.total_epochs = status.get("total_epochs")
+                job.started_at_ts = status.get("started_at")
+                job.finished_at_ts = status.get("finished_at")
             except AIEngineError as exc:
                 logger.warning("training status poll failed: %s", exc)
         return job

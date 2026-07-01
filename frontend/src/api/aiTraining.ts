@@ -28,6 +28,11 @@ export interface TrainingJob {
   error_message: string | null;
   created_at: string;
   updated_at: string;
+  progress?: string | null;
+  current_epoch?: number | null;
+  total_epochs?: number | null;
+  started_at_ts?: number | null;
+  finished_at_ts?: number | null;
 }
 
 export interface TrainingJobList {

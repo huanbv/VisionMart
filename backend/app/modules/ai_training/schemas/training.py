@@ -48,6 +48,11 @@ class TrainingJobRead(BaseModel):
     error_message: str | None
     created_at: datetime
     updated_at: datetime
+    progress: str | None = None
+    current_epoch: int | None = None
+    total_epochs: int | None = None
+    started_at_ts: float | None = None
+    finished_at_ts: float | None = None
 
 
 class TrainingJobList(BaseModel):

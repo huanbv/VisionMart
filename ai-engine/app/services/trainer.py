@@ -48,6 +48,8 @@ class JobState:
     image_size: int = 640
     started_at: float = 0.0
     finished_at: float = 0.0
+    current_epoch: int = 0
+    total_epochs: int = 0
     metrics: dict[str, Any] | None = None
     weight_key: str | None = None
     error: str | None = None
@@ -63,6 +65,8 @@ class JobState:
             "progress": self.progress,
             "started_at": self.started_at,
             "finished_at": self.finished_at,
+            "current_epoch": self.current_epoch,
+            "total_epochs": self.total_epochs,
         }
 
 
@@ -209,6 +213,19 @@ def _train_yolo(state: JobState, workdir: str) -> str:
     name = "run"
 
     model = YOLO(base_weight)
+    state.total_epochs = state.epochs
+    state.current_epoch = 0
+
+    def _on_epoch_end(trainer: Any) -> None:
+        try:
+            state.current_epoch = int(getattr(trainer, "epoch", state.current_epoch) or 0) + 1
+        except Exception:  # noqa: BLE001
+            pass
+
+    try:
+        model.add_callback("on_train_epoch_end", _on_epoch_end)
+    except Exception:  # noqa: BLE001
+        pass
     results = model.train(
         data=os.path.join(workdir, "data.yaml"),
         epochs=state.epochs,

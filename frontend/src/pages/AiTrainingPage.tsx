@@ -12,6 +12,7 @@ import {
   Input,
   List,
   Popconfirm,
+  Progress,
   Row,
   Select,
   Space,
@@ -53,6 +54,16 @@ const STATUS_COLORS: Record<string, string> = {
   failed: "error",
 };
 
+function formatDuration(seconds: number): string {
+  if (!Number.isFinite(seconds) || seconds < 0) return "—";
+  const s = Math.floor(seconds);
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  const sec = s % 60;
+  const pad = (n: number) => n.toString().padStart(2, "0");
+  return h > 0 ? `${h}:${pad(m)}:${pad(sec)}` : `${pad(m)}:${pad(sec)}`;
+}
+
 export default function AiTrainingPage() {
   const [products, setProducts] = useState<Product[]>([]);
   const [selectedProductId, setSelectedProductId] = useState<string | null>(null);
@@ -63,6 +74,7 @@ export default function AiTrainingPage() {
   const [loadingProducts, setLoadingProducts] = useState(false);
   const [loadingImages, setLoadingImages] = useState(false);
   const [training, setTraining] = useState(false);
+  const [now, setNow] = useState<number>(() => Date.now() / 1000);
   const [form] = Form.useForm<{
     name: string;
     product_ids: string[];
@@ -155,6 +167,13 @@ export default function AiTrainingPage() {
       }
     }, 3000);
     return () => window.clearInterval(timer);
+  }, [activeJob]);
+
+  useEffect(() => {
+    if (!activeJob) return;
+    if (activeJob.status !== "pending" && activeJob.status !== "running") return;
+    const tick = window.setInterval(() => setNow(Date.now() / 1000), 1000);
+    return () => window.clearInterval(tick);
   }, [activeJob]);
 
   const uploadProps: UploadProps = useMemo(
@@ -421,6 +440,65 @@ export default function AiTrainingPage() {
                     },
                   ]}
                 />
+                {(() => {
+                  const total = activeJob.total_epochs || activeJob.epochs || 0;
+                  const current = activeJob.current_epoch || 0;
+                  const running = activeJob.status === "running" || activeJob.status === "pending";
+                  const succeeded = activeJob.status === "succeeded";
+                  const percent = succeeded
+                    ? 100
+                    : total > 0
+                    ? Math.min(99, Math.round((current / total) * 100))
+                    : running
+                    ? 5
+                    : 0;
+                  const startTs = activeJob.started_at_ts || 0;
+                  const endTs = activeJob.finished_at_ts || 0;
+                  const elapsed = startTs
+                    ? (endTs > 0 ? endTs : now) - startTs
+                    : 0;
+                  const eta =
+                    running && current > 0 && total > 0 && elapsed > 0
+                      ? (elapsed / current) * (total - current)
+                      : 0;
+                  return (
+                    <>
+                      <Progress
+                        percent={percent}
+                        status={
+                          activeJob.status === "failed"
+                            ? "exception"
+                            : succeeded
+                            ? "success"
+                            : "active"
+                        }
+                      />
+                      <Row gutter={8}>
+                        <Col span={8}>
+                          <Statistic
+                            title="Epoch"
+                            value={total > 0 ? `${current}/${total}` : "—"}
+                          />
+                        </Col>
+                        <Col span={8}>
+                          <Statistic
+                            title="Đã chạy"
+                            value={startTs ? formatDuration(elapsed) : "—"}
+                          />
+                        </Col>
+                        <Col span={8}>
+                          <Statistic
+                            title="Còn lại (ước tính)"
+                            value={eta > 0 ? formatDuration(eta) : "—"}
+                          />
+                        </Col>
+                      </Row>
+                      {activeJob.progress && (
+                        <Text type="secondary">Bước: {activeJob.progress}</Text>
+                      )}
+                    </>
+                  );
+                })()}
                 {activeJob.error_message && (
                   <Alert type="error" message={activeJob.error_message} />
                 )}
