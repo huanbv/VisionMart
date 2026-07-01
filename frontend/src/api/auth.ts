@@ -53,3 +53,7 @@ export async function changePassword(
     new_password: newPassword,
   });
 }
+
+export async function logoutAll(): Promise<void> {
+  await apiClient.post("/auth/logout-all");
+}

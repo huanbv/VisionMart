@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { Avatar, Button, Layout, Menu, Space, Typography } from "antd";
+import { Avatar, Button, Layout, Menu, Popconfirm, Space, Typography, message } from "antd";
 import {
   ApartmentOutlined,
   AppstoreOutlined,
@@ -27,6 +27,7 @@ import { Link, Outlet, useLocation, useNavigate } from "react-router-dom";
 import { useAuth } from "@/contexts/AuthContext";
 import ChangePasswordModal from "@/components/ChangePasswordModal";
 import NotificationBell from "@/components/NotificationBell";
+import { logoutAll } from "@/api/auth";
 
 const { Header, Sider, Content } = Layout;
 
@@ -160,6 +161,17 @@ export default function AppLayout() {
     navigate("/login", { replace: true });
   };
 
+  const handleLogoutAll = async () => {
+    try {
+      await logoutAll();
+      message.success("Đã đăng xuất khỏi mọi thiết bị");
+    } catch {
+      message.error("Không thể đăng xuất mọi thiết bị");
+    }
+    await logout();
+    navigate("/login", { replace: true });
+  };
+
   return (
     <Layout className="min-h-screen">
       <Sider breakpoint="lg" collapsedWidth={64} theme="dark">
@@ -185,6 +197,18 @@ export default function AppLayout() {
             >
               Đổi mật khẩu
             </Button>
+            <Popconfirm
+              title="Đăng xuất mọi thiết bị?"
+              description="Thu hồi tất cả phiên đăng nhập đang hoạt động, bao gồm thiết bị hiện tại."
+              okText="Đồng ý"
+              cancelText="Hủy"
+              okButtonProps={{ danger: true }}
+              onConfirm={handleLogoutAll}
+            >
+              <Button danger icon={<LogoutOutlined />}>
+                Thiết bị khác
+              </Button>
+            </Popconfirm>
             <Button icon={<LogoutOutlined />} onClick={handleLogout}>
               Đăng xuất
             </Button>

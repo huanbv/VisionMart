@@ -166,3 +166,17 @@ async def change_password(
     user.hashed_password = hasher.hash(payload.new_password)
     await users.save(user)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.post(
+    "/logout-all",
+    status_code=status.HTTP_204_NO_CONTENT,
+    response_class=Response,
+)
+async def logout_all(
+    current: CurrentUser = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> Response:
+    tokens = SqlAlchemyRefreshTokenRepository(session)
+    await tokens.revoke_all_for_user(current.user_id)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)

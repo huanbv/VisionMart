@@ -209,3 +209,15 @@ class SqlAlchemyRefreshTokenRepository:
         )
         await self._session.commit()
 
+    async def revoke_all_for_user(self, user_id: uuid.UUID) -> int:
+        result = await self._session.execute(
+            update(RefreshToken)
+            .where(
+                RefreshToken.user_id == user_id,
+                RefreshToken.revoked_at.is_(None),
+            )
+            .values(revoked_at=datetime.utcnow())
+        )
+        await self._session.commit()
+        return result.rowcount or 0
+
