@@ -94,6 +94,12 @@ class Settings(BaseSettings):
     DETECTION_CLEANUP_INTERVAL_SECONDS: int = 3600
     DETECTION_CLEANUP_BATCH_SIZE: int = 500
 
+    # ---- Shopping Cart / AI checkout ----
+    AI_ENGINE_API_KEY: str = "change-me-ai-engine-key"
+    CART_EXPIRATION_MINUTES: int = 30
+    CART_SWEEPER_INTERVAL_SECONDS: int = 60
+    CART_AI_MIN_CONFIDENCE: float = 0.6
+
     # ---- MinIO ----
     MINIO_ENDPOINT: str = "minio:9000"
     MINIO_ROOT_USER: str = "visionmart"

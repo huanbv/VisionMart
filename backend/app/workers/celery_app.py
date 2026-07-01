@@ -17,6 +17,7 @@ celery_app = Celery(
         "app.workers.tasks.alerts",
         "app.workers.tasks.rtsp_capture",
         "app.workers.tasks.detection_cleanup",
+        "app.workers.tasks.cart_sweeper",
     ],
 )
 
@@ -44,6 +45,12 @@ celery_app.conf.update(
             "task": "detection.cleanup",
             "schedule": schedule(
                 run_every=_settings.DETECTION_CLEANUP_INTERVAL_SECONDS
+            ),
+        },
+        "cart-sweep-expired": {
+            "task": "cart.sweep_expired",
+            "schedule": schedule(
+                run_every=_settings.CART_SWEEPER_INTERVAL_SECONDS
             ),
         },
     },

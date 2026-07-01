@@ -19,6 +19,7 @@ import {
   ShoppingOutlined,
   TagsOutlined,
   TeamOutlined,
+  ThunderboltOutlined,
   UserOutlined,
   VideoCameraOutlined,
 } from "@ant-design/icons";
@@ -80,6 +81,11 @@ const MENU_ITEMS = [
         key: "/orders",
         icon: <FileTextOutlined />,
         label: <Link to="/orders">Đơn hàng</Link>,
+      },
+      {
+        key: "/live-cart",
+        icon: <ThunderboltOutlined />,
+        label: <Link to="/live-cart">Giỏ hàng AI (Live)</Link>,
       },
     ],
   },

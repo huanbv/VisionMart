@@ -11,6 +11,7 @@ import DashboardPage from "@/pages/DashboardPage";
 import DetectionsPage from "@/pages/DetectionsPage";
 import EmployeesPage from "@/pages/EmployeesPage";
 import InventoryPage from "@/pages/InventoryPage";
+import LiveCartPage from "@/pages/LiveCartPage";
 import LoginPage from "@/pages/LoginPage";
 import NotificationsPage from "@/pages/NotificationsPage";
 import OrdersPage from "@/pages/OrdersPage";
@@ -41,6 +42,7 @@ export default function App() {
         <Route path="/inventory" element={<InventoryPage />} />
         <Route path="/pos" element={<PosPage />} />
         <Route path="/orders" element={<OrdersPage />} />
+        <Route path="/live-cart" element={<LiveCartPage />} />
         <Route path="/customers" element={<CustomersPage />} />
         <Route path="/employees" element={<EmployeesPage />} />
         <Route path="/cameras" element={<CamerasPage />} />

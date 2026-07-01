@@ -18,6 +18,8 @@ from app.modules.identity.api.user_router import router as user_router
 from app.modules.inventory.api.inventory_router import router as inventory_router
 from app.modules.notification.api.notification_router import router as notification_router
 from app.modules.reports.api.reports_router import router as reports_router
+from app.modules.sales.api.ai_events_router import router as ai_events_router
+from app.modules.sales.api.cart_router import router as cart_router
 from app.modules.sales.api.order_router import router as order_router
 from app.modules.tenancy.api.branch_router import router as branch_router
 from app.modules.tenancy.api.organization_router import router as organization_router
@@ -32,6 +34,8 @@ api_router.include_router(category_router)
 api_router.include_router(product_router)
 api_router.include_router(inventory_router)
 api_router.include_router(order_router)
+api_router.include_router(cart_router)
+api_router.include_router(ai_events_router)
 api_router.include_router(customer_router)
 api_router.include_router(employee_router)
 api_router.include_router(camera_router)

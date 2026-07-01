@@ -15,6 +15,7 @@ from pydantic import BaseModel
 
 from app import __version__
 from app.api.capture import router as capture_router
+from app.api.cart_simulate import router as cart_router
 from app.api.detect import router as detect_router
 
 logger = logging.getLogger("ai-engine")
@@ -46,6 +47,7 @@ async def ready() -> HealthStatus:
 
 app.include_router(detect_router)
 app.include_router(capture_router)
+app.include_router(cart_router)
 
 
 @app.get("/metrics", include_in_schema=False)
