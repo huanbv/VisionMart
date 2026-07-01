@@ -157,6 +157,7 @@ services:
       YOLO_DEVICE: ${YOLO_DEVICE:-cpu}
     volumes:
       - ./ai-engine:/app
+      - ./ai-engine/config:/app/config:ro
       - ./models:/models
       - ai_engine_weights:/root/.config/Ultralytics
     ports:
