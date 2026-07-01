@@ -63,6 +63,7 @@ interface FormValues {
   fps: number | null;
   is_active: boolean;
   auto_capture_enabled: boolean;
+  is_checkout_zone: boolean;
   alert_classes: string;
   alert_min_confidence: number | null;
 }
@@ -139,6 +140,7 @@ export default function CamerasPage() {
     form.setFieldsValue({
       is_active: true,
       auto_capture_enabled: false,
+      is_checkout_zone: false,
       fps: 25,
       alert_classes: "",
       alert_min_confidence: null,
@@ -158,6 +160,7 @@ export default function CamerasPage() {
       fps: c.fps,
       is_active: c.is_active,
       auto_capture_enabled: c.auto_capture_enabled,
+      is_checkout_zone: c.is_checkout_zone,
       alert_classes: c.alert_classes ?? "",
       alert_min_confidence: c.alert_min_confidence,
     });
@@ -189,6 +192,7 @@ export default function CamerasPage() {
           fps_unset: fps === null,
           is_active: values.is_active,
           auto_capture_enabled: values.auto_capture_enabled,
+          is_checkout_zone: values.is_checkout_zone,
           alert_classes: alertClasses,
           alert_classes_unset: !alertClasses,
           alert_min_confidence: alertMinConfidence,
@@ -206,6 +210,7 @@ export default function CamerasPage() {
           fps,
           is_active: values.is_active,
           auto_capture_enabled: values.auto_capture_enabled,
+          is_checkout_zone: values.is_checkout_zone,
           alert_classes: alertClasses,
           alert_min_confidence: alertMinConfidence,
         });
@@ -569,6 +574,14 @@ export default function CamerasPage() {
             <Switch />
           </Form.Item>
           <Form.Item
+            label="Khu vực thanh toán (checkout zone)"
+            name="is_checkout_zone"
+            valuePropName="checked"
+            tooltip="Khi bật, mỗi lần AI thấy người trong khung hình sẽ tự phát sự kiện checkout_initiated để backend chốt cart thành order."
+          >
+            <Switch />
+          </Form.Item>
+          <Form.Item
             label="Class cảnh báo riêng (mặc định dùng cấu hình chung)"
             name="alert_classes"
             tooltip="Danh sách class phân cách bằng dấu phẩy. Ví dụ: person,car. Để trống để dùng DETECTION_ALERT_CLASSES toàn cục."
@@ -672,6 +685,53 @@ export default function CamerasPage() {
               >
                 {JSON.stringify(analyzeResult.detections, null, 2)}
               </pre>
+              {analyzeResult.frame_pipeline && (
+                <Card
+                  size="small"
+                  type="inner"
+                  title="Cart pipeline (ByteTrack → SKU → cart events)"
+                >
+                  <Space direction="vertical" size={6} style={{ width: "100%" }}>
+                    <Typography.Text>
+                      Persons: <Tag>{analyzeResult.frame_pipeline.persons}</Tag>
+                      Products (mapped SKU):{" "}
+                      <Tag color={analyzeResult.frame_pipeline.products > 0 ? "green" : "orange"}>
+                        {analyzeResult.frame_pipeline.products}
+                      </Tag>
+                      Checkout zone:{" "}
+                      <Tag color={analyzeResult.frame_pipeline.is_checkout_zone ? "purple" : "default"}>
+                        {analyzeResult.frame_pipeline.is_checkout_zone ? "YES" : "NO"}
+                      </Tag>
+                    </Typography.Text>
+                    {analyzeResult.frame_pipeline.customer_id && (
+                      <Typography.Text type="secondary">
+                        Customer nhận diện: {analyzeResult.frame_pipeline.customer_id}
+                      </Typography.Text>
+                    )}
+                    {analyzeResult.frame_pipeline.emitted_events.length === 0 ? (
+                      <Typography.Text type="warning">
+                        Chưa phát sự kiện nào. Kiểm tra: (1) camera có bật "Khu vực
+                        thanh toán" không, (2) ảnh có product được map trong
+                        class_to_sku.json không, (3) confidence &ge; ngưỡng.
+                      </Typography.Text>
+                    ) : (
+                      <pre
+                        style={{
+                          margin: 0,
+                          padding: 12,
+                          background: "#fafafa",
+                          borderRadius: 4,
+                          fontSize: 12,
+                          maxHeight: 240,
+                          overflow: "auto",
+                        }}
+                      >
+                        {JSON.stringify(analyzeResult.frame_pipeline.emitted_events, null, 2)}
+                      </pre>
+                    )}
+                  </Space>
+                </Card>
+              )}
             </Space>
           </Card>
         )}

@@ -15,6 +15,7 @@ export interface Camera {
   is_online: boolean;
   is_active: boolean;
   auto_capture_enabled: boolean;
+  is_checkout_zone: boolean;
   alert_classes: string | null;
   alert_min_confidence: number | null;
   last_seen_at: string | null;
@@ -40,6 +41,7 @@ export interface CameraCreatePayload {
   config?: Record<string, unknown> | null;
   is_active?: boolean;
   auto_capture_enabled?: boolean;
+  is_checkout_zone?: boolean;
   alert_classes?: string | null;
   alert_min_confidence?: number | null;
 }
@@ -55,6 +57,7 @@ export interface CameraUpdatePayload {
   config?: Record<string, unknown> | null;
   is_active?: boolean;
   auto_capture_enabled?: boolean;
+  is_checkout_zone?: boolean;
   alert_classes?: string | null;
   alert_min_confidence?: number | null;
   location_unset?: boolean;
@@ -138,6 +141,31 @@ export interface Detection {
   stub?: boolean;
 }
 
+export interface FramePipelineEvent {
+  event: {
+    event_type: string;
+    product_sku: string | null;
+    track_id: string;
+    confidence: number;
+    customer_id: string | null;
+  };
+  backend: { status: number; body: unknown };
+}
+
+export interface FramePipelineResult {
+  detections: Array<{
+    track_id: number;
+    class_name: string;
+    confidence: number;
+    bbox: { x1: number; y1: number; x2: number; y2: number };
+  }>;
+  persons: number;
+  products: number;
+  is_checkout_zone: boolean;
+  customer_id: string | null;
+  emitted_events: FramePipelineEvent[];
+}
+
 export interface AnalyzeResult {
   camera_id: string;
   detection_event_id: string;
@@ -145,6 +173,7 @@ export interface AnalyzeResult {
   image: { width: number; height: number; format: string; size_bytes: number };
   detections: Detection[];
   elapsed_ms: number;
+  frame_pipeline?: FramePipelineResult | null;
 }
 
 export async function analyzeCameraFrame(
