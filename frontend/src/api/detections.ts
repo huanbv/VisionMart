@@ -62,6 +62,16 @@ export async function getDetectionImageBlob(id: string): Promise<Blob> {
   return data;
 }
 
+export async function exportDetectionsCsv(
+  params: ListDetectionsParams & { max_rows?: number } = {},
+): Promise<Blob> {
+  const { data } = await apiClient.get<Blob>("/detections/export.csv", {
+    params,
+    responseType: "blob",
+  });
+  return data;
+}
+
 export interface DetectionSeriesPoint {
   date: string;
   events: number;

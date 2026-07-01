@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 import asyncio
+import csv
+import io
 import uuid
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
+from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database.session import get_session
@@ -82,6 +85,103 @@ async def detection_stats(
             DetectionCameraCount(camera_id=cid, events=e, detections=n)
             for cid, e, n in top_cams
         ],
+    )
+
+
+@router.get("/export.csv")
+async def export_detections_csv(
+    camera_id: uuid.UUID | None = None,
+    model: str | None = None,
+    min_confidence: float | None = Query(None, ge=0.0, le=1.0),
+    date_from: datetime | None = None,
+    date_to: datetime | None = None,
+    max_rows: int = Query(10000, ge=1, le=100000),
+    current: CurrentUser = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> StreamingResponse:
+    repo = SqlAlchemyDetectionRepository(session)
+    batch_size = 500
+
+    async def _row_batches():
+        offset = 0
+        remaining = max_rows
+        while remaining > 0:
+            page_size = min(batch_size, remaining)
+            events = await repo.list(
+                organization_id=current.organization_id,
+                camera_id=camera_id,
+                model=model,
+                min_confidence=min_confidence,
+                date_from=date_from,
+                date_to=date_to,
+                skip=offset,
+                limit=page_size,
+            )
+            if not events:
+                return
+            for ev in events:
+                yield ev
+            offset += len(events)
+            remaining -= len(events)
+            if len(events) < page_size:
+                return
+
+    async def _generate():
+        buffer = io.StringIO()
+        writer = csv.writer(buffer)
+        writer.writerow(
+            [
+                "id",
+                "created_at",
+                "camera_id",
+                "model",
+                "detection_count",
+                "max_confidence",
+                "elapsed_ms",
+                "image_width",
+                "image_height",
+                "image_key",
+                "classes",
+            ]
+        )
+        yield buffer.getvalue()
+        buffer.seek(0)
+        buffer.truncate(0)
+
+        async for ev in _row_batches():
+            classes = ",".join(
+                sorted(
+                    {
+                        str(d.get("class_name", ""))
+                        for d in (ev.detections or [])
+                        if isinstance(d, dict) and d.get("class_name")
+                    }
+                )
+            )
+            writer.writerow(
+                [
+                    str(ev.id),
+                    ev.created_at.isoformat() if ev.created_at else "",
+                    str(ev.camera_id),
+                    ev.model,
+                    ev.detection_count,
+                    f"{ev.max_confidence:.4f}",
+                    ev.elapsed_ms,
+                    ev.image_width,
+                    ev.image_height,
+                    ev.image_key or "",
+                    classes,
+                ]
+            )
+            yield buffer.getvalue()
+            buffer.seek(0)
+            buffer.truncate(0)
+
+    filename = f"detections_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}.csv"
+    return StreamingResponse(
+        _generate(),
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
 
 

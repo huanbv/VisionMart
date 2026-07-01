@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import {
+  Button,
   Card,
   DatePicker,
   InputNumber,
@@ -11,11 +12,13 @@ import {
   Typography,
   message,
 } from "antd";
+import { DownloadOutlined } from "@ant-design/icons";
 import type { ColumnsType } from "antd/es/table";
 import type { Dayjs } from "dayjs";
 
 import { listCameras, type Camera } from "@/api/cameras";
 import {
+  exportDetectionsCsv,
   getDetection,
   getDetectionImageBlob,
   listDetections,
@@ -38,6 +41,7 @@ export default function DetectionsPage() {
   const [detail, setDetail] = useState<DetectionEvent | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
   const [imageUrl, setImageUrl] = useState<string | null>(null);
+  const [exporting, setExporting] = useState(false);
 
   const cameraMap = useMemo(() => {
     const m = new Map<string, string>();
@@ -116,6 +120,34 @@ export default function DetectionsPage() {
     };
   }, [imageUrl]);
 
+  const onExport = async () => {
+    setExporting(true);
+    try {
+      const blob = await exportDetectionsCsv({
+        camera_id: cameraId,
+        model: model || undefined,
+        min_confidence: minConfidence ?? undefined,
+        date_from: dateRange?.[0]?.startOf("day").toISOString(),
+        date_to: dateRange?.[1]?.endOf("day").toISOString(),
+        max_rows: 10000,
+      });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      const ts = new Date().toISOString().replace(/[:.]/g, "-");
+      a.download = `detections_${ts}.csv`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+      message.success("Đã xuất CSV");
+    } catch {
+      message.error("Xuất CSV thất bại");
+    } finally {
+      setExporting(false);
+    }
+  };
+
   const columns: ColumnsType<DetectionEventSummary> = [
     {
       title: "Thời điểm",
@@ -164,7 +196,18 @@ export default function DetectionsPage() {
   ];
 
   return (
-    <Card title="Phát hiện AI">
+    <Card
+      title="Phát hiện AI"
+      extra={
+        <Button
+          icon={<DownloadOutlined />}
+          loading={exporting}
+          onClick={onExport}
+        >
+          Xuất CSV
+        </Button>
+      }
+    >
       <Space style={{ marginBottom: 16 }} wrap>
         <Select
           allowClear
