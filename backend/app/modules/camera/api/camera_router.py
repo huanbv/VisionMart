@@ -24,10 +24,18 @@ from app.modules.camera.schemas.camera import (
     CameraUpdate,
 )
 from app.modules.tenancy.infrastructure.models import Branch
+from app.modules.detection.application.alert_dispatcher import (
+    DetectionAlertDispatcher,
+)
 from app.modules.detection.application.detection_service import DetectionService
 from app.modules.detection.infrastructure.repositories import (
     SqlAlchemyDetectionRepository,
 )
+from app.modules.notification.application.services import NotificationService
+from app.modules.notification.infrastructure.repositories import (
+    SqlAlchemyNotificationRepository,
+)
+from app.config.settings import get_settings
 from app.services.ai_engine_client import AIEngineClient, AIEngineError
 
 router = APIRouter(prefix="/cameras", tags=["camera"])
@@ -237,7 +245,7 @@ async def analyze_camera_frame(
 ) -> dict:
     service = _service(session)
     try:
-        await service.get(current.organization_id, camera_id)
+        camera = await service.get(current.organization_id, camera_id)
     except NotFoundError as exc:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
 
@@ -271,8 +279,15 @@ async def analyze_camera_frame(
         result=result,
     )
 
+    notification_service = NotificationService(
+        SqlAlchemyNotificationRepository(session)
+    )
+    dispatcher = DetectionAlertDispatcher(notification_service, get_settings())
+    alerts_sent = await dispatcher.dispatch(event, camera.name)
+
     return {
         "camera_id": str(camera_id),
         "detection_event_id": str(event.id),
+        "alerts_sent": alerts_sent,
         **result,
     }

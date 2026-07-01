@@ -70,6 +70,11 @@ class Settings(BaseSettings):
     # ---- AI Engine ----
     AI_ENGINE_BASE_URL: str = "http://ai-engine:8100"
 
+    # ---- Detection alerts ----
+    DETECTION_ALERT_MIN_CONFIDENCE: float = 0.7
+    DETECTION_ALERT_CLASSES: str = "person"
+    DETECTION_ALERT_DEDUP_SECONDS: int = 60
+
     # ---- MinIO ----
     MINIO_ENDPOINT: str = "minio:9000"
     MINIO_ROOT_USER: str = "visionmart"
