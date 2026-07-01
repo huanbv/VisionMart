@@ -49,6 +49,9 @@ ai-engine/weights/*
 !ai-engine/weights/.gitkeep
 ai-engine/datasets/*
 !ai-engine/datasets/.gitkeep
+ai-engine/training/datasets/*
+!ai-engine/training/datasets/.gitkeep
+ai-engine/training/runs/
 models/*
 !models/.gitkeep
 datasets/*
