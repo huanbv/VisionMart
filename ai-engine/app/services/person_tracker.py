@@ -22,6 +22,11 @@ _TRACKERS: dict[str, Any] = {}
 _LOCK = asyncio.Lock()
 
 
+def reset_trackers() -> None:
+    """Clear the per-camera tracker cache so YOLO_MODEL changes take effect."""
+    _TRACKERS.clear()
+
+
 @dataclass(frozen=True)
 class TrackedObject:
     track_id: int

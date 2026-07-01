@@ -1,0 +1,102 @@
+import { apiClient } from "./client";
+
+export interface TrainingImage {
+  id: string;
+  product_id: string;
+  storage_key: string;
+  image_size_bytes: number;
+  image_format: string | null;
+  created_at: string;
+  preview_url: string | null;
+}
+
+export interface TrainingImageList {
+  items: TrainingImage[];
+  total: number;
+}
+
+export interface TrainingJob {
+  id: string;
+  name: string;
+  status: "pending" | "running" | "succeeded" | "failed";
+  epochs: number;
+  image_size: number;
+  branch_id: string | null;
+  class_map: Record<string, unknown>;
+  metrics: Record<string, number> | null;
+  weight_key: string | null;
+  error_message: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface TrainingJobList {
+  items: TrainingJob[];
+  total: number;
+}
+
+export interface CreateTrainingJobPayload {
+  name: string;
+  product_ids: string[];
+  branch_id?: string | null;
+  epochs?: number;
+  image_size?: number;
+}
+
+export async function uploadTrainingImage(
+  productId: string,
+  file: File
+): Promise<TrainingImage> {
+  const form = new FormData();
+  form.append("product_id", productId);
+  form.append("image", file);
+  const { data } = await apiClient.post<TrainingImage>(
+    "/ai/training/images",
+    form,
+    { headers: { "Content-Type": "multipart/form-data" } }
+  );
+  return data;
+}
+
+export async function listTrainingImages(
+  productId?: string
+): Promise<TrainingImageList> {
+  const { data } = await apiClient.get<TrainingImageList>(
+    "/ai/training/images",
+    { params: productId ? { product_id: productId } : {} }
+  );
+  return data;
+}
+
+export async function deleteTrainingImage(imageId: string): Promise<void> {
+  await apiClient.delete(`/ai/training/images/${imageId}`);
+}
+
+export async function createTrainingJob(
+  payload: CreateTrainingJobPayload
+): Promise<TrainingJob> {
+  const { data } = await apiClient.post<TrainingJob>(
+    "/ai/training/jobs",
+    payload
+  );
+  return data;
+}
+
+export async function listTrainingJobs(): Promise<TrainingJobList> {
+  const { data } = await apiClient.get<TrainingJobList>("/ai/training/jobs");
+  return data;
+}
+
+export async function getTrainingJob(jobId: string): Promise<TrainingJob> {
+  const { data } = await apiClient.get<TrainingJob>(
+    `/ai/training/jobs/${jobId}`
+  );
+  return data;
+}
+
+export async function deployTrainingJob(jobId: string): Promise<TrainingJob> {
+  const { data } = await apiClient.post<TrainingJob>(
+    `/ai/training/jobs/${jobId}/deploy`
+  );
+  return data;
+}

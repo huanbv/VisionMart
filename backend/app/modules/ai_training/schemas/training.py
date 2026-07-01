@@ -1,0 +1,55 @@
+"""Pydantic DTOs for the AI training API."""
+
+from __future__ import annotations
+
+import uuid
+from datetime import datetime
+
+from pydantic import BaseModel, ConfigDict, Field
+
+
+class TrainingImageRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    product_id: uuid.UUID
+    storage_key: str
+    image_size_bytes: int
+    image_format: str | None
+    created_at: datetime
+    preview_url: str | None = None
+
+
+class TrainingImageList(BaseModel):
+    items: list[TrainingImageRead]
+    total: int
+
+
+class TrainingJobCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=120)
+    product_ids: list[uuid.UUID] = Field(min_length=1)
+    branch_id: uuid.UUID | None = None
+    epochs: int = Field(default=30, ge=5, le=300)
+    image_size: int = Field(default=640, ge=320, le=1280)
+
+
+class TrainingJobRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    name: str
+    status: str
+    epochs: int
+    image_size: int
+    branch_id: uuid.UUID | None
+    class_map: dict
+    metrics: dict | None
+    weight_key: str | None
+    error_message: str | None
+    created_at: datetime
+    updated_at: datetime
+
+
+class TrainingJobList(BaseModel):
+    items: list[TrainingJobRead]
+    total: int

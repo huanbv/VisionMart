@@ -50,6 +50,14 @@ class YoloDetector:
                     )
         return cls._instance
 
+    @classmethod
+    def reset(cls, new_model_path: str | None = None) -> None:
+        """Drop the cached detector so the next call reloads (optionally new weight)."""
+        with cls._lock:
+            if new_model_path:
+                os.environ["YOLO_MODEL"] = new_model_path
+            cls._instance = None
+
     @property
     def model_name(self) -> str:
         return self._model_name

@@ -98,3 +98,70 @@ class AIEngineClient:
         except httpx.HTTPError as exc:
             logger.warning("ai-engine capture failed: %s", exc)
             raise AIEngineError(str(exc)) from exc
+
+    async def start_training(
+        self,
+        *,
+        job_id: str,
+        organization_id: str,
+        branch_id: str | None,
+        class_map: dict[str, list[str]],
+        class_to_sku: dict[str, str],
+        epochs: int,
+        image_size: int,
+    ) -> dict[str, Any]:
+        """Trigger a training run on the ai-engine.
+
+        ``class_map`` maps YOLO class name -> list of MinIO storage keys.
+        """
+        url = f"{self._base_url}/ai/train"
+        payload: dict[str, Any] = {
+            "job_id": job_id,
+            "organization_id": organization_id,
+            "branch_id": branch_id,
+            "class_map": class_map,
+            "class_to_sku": class_to_sku,
+            "epochs": epochs,
+            "image_size": image_size,
+        }
+        try:
+            async with httpx.AsyncClient(timeout=self._timeout) as client:
+                resp = await client.post(url, json=payload)
+                resp.raise_for_status()
+                return resp.json()
+        except httpx.HTTPError as exc:
+            logger.warning("ai-engine train start failed: %s", exc)
+            raise AIEngineError(str(exc)) from exc
+
+    async def training_status(self, job_id: str) -> dict[str, Any]:
+        url = f"{self._base_url}/ai/train/{job_id}"
+        try:
+            async with httpx.AsyncClient(timeout=self._timeout) as client:
+                resp = await client.get(url)
+                resp.raise_for_status()
+                return resp.json()
+        except httpx.HTTPError as exc:
+            logger.warning("ai-engine train status failed: %s", exc)
+            raise AIEngineError(str(exc)) from exc
+
+    async def deploy_weight(
+        self,
+        *,
+        weight_key: str,
+        organization_id: str,
+        branch_id: str | None,
+    ) -> dict[str, Any]:
+        url = f"{self._base_url}/ai/config/model"
+        payload: dict[str, Any] = {
+            "weight_key": weight_key,
+            "organization_id": organization_id,
+            "branch_id": branch_id,
+        }
+        try:
+            async with httpx.AsyncClient(timeout=self._timeout) as client:
+                resp = await client.post(url, json=payload)
+                resp.raise_for_status()
+                return resp.json()
+        except httpx.HTTPError as exc:
+            logger.warning("ai-engine deploy weight failed: %s", exc)
+            raise AIEngineError(str(exc)) from exc

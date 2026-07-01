@@ -10,6 +10,7 @@ import {
   ContactsOutlined,
   DashboardOutlined,
   DatabaseOutlined,
+  ExperimentOutlined,
   EyeOutlined,
   FileTextOutlined,
   KeyOutlined,
@@ -113,6 +114,11 @@ const MENU_ITEMS = [
     key: "/ai-analytics",
     icon: <BarChartOutlined />,
     label: <Link to="/ai-analytics">Thống kê AI</Link>,
+  },
+  {
+    key: "/ai-training",
+    icon: <ExperimentOutlined />,
+    label: <Link to="/ai-training">Train AI</Link>,
   },
   {
     key: "/notifications",

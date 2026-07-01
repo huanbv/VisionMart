@@ -2,6 +2,7 @@ import { Navigate, Route, Routes } from "react-router-dom";
 
 import AppLayout from "@/components/AppLayout";
 import AIAnalyticsPage from "@/pages/AIAnalyticsPage";
+import AiTrainingPage from "@/pages/AiTrainingPage";
 import AuditLogsPage from "@/pages/AuditLogsPage";
 import BranchesPage from "@/pages/BranchesPage";
 import CamerasPage from "@/pages/CamerasPage";
@@ -48,6 +49,7 @@ export default function App() {
         <Route path="/cameras" element={<CamerasPage />} />
         <Route path="/detections" element={<DetectionsPage />} />
         <Route path="/ai-analytics" element={<AIAnalyticsPage />} />
+        <Route path="/ai-training" element={<AiTrainingPage />} />
         <Route path="/notifications" element={<NotificationsPage />} />
         <Route path="/users" element={<UsersPage />} />
         <Route path="/roles" element={<RolesPage />} />

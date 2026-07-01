@@ -155,10 +155,18 @@ services:
       YOLO_MODEL: ${YOLO_MODEL:-yolov8n.pt}
       YOLO_CONF_THRESHOLD: ${YOLO_CONF_THRESHOLD:-0.25}
       YOLO_DEVICE: ${YOLO_DEVICE:-cpu}
+      MINIO_ENDPOINT: ${MINIO_ENDPOINT:-minio:9000}
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-visionmart}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-visionmart-minio}
+      MINIO_BUCKET: ${MINIO_BUCKET:-visionmart}
+      MINIO_USE_SSL: ${MINIO_USE_SSL:-false}
+      MODELS_DIR: /models
+      TRAINING_ROOT: /app/training
     volumes:
       - ./ai-engine:/app
-      - ./ai-engine/config:/app/config:ro
+      - ./ai-engine/config:/app/config
       - ./models:/models
+      - ai_engine_training:/app/training
       - ai_engine_weights:/root/.config/Ultralytics
     ports:
       - "${AI_ENGINE_PORT:-8100}:8100"
@@ -217,3 +225,4 @@ volumes:
   redis_data:
   minio_data:
   ai_engine_weights:
+  ai_engine_training:
