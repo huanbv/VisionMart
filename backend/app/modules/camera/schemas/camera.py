@@ -24,6 +24,7 @@ class CameraResponse(BaseModel):
     config: dict | None
     is_online: bool
     is_active: bool
+    auto_capture_enabled: bool
     last_seen_at: datetime | None
     created_at: datetime
     updated_at: datetime
@@ -46,6 +47,7 @@ class CameraCreate(BaseModel):
     fps: int | None = Field(default=None, ge=1, le=240)
     config: dict | None = None
     is_active: bool = True
+    auto_capture_enabled: bool = False
 
 
 class CameraUpdate(BaseModel):
@@ -58,6 +60,7 @@ class CameraUpdate(BaseModel):
     fps: int | None = Field(default=None, ge=1, le=240)
     config: dict | None = None
     is_active: bool | None = None
+    auto_capture_enabled: bool | None = None
 
     location_unset: bool = False
     resolution_unset: bool = False

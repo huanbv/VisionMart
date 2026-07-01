@@ -71,6 +71,7 @@ def _to_response(camera: Camera, branch: Branch | None) -> CameraResponse:
         config=camera.config,
         is_online=camera.is_online,
         is_active=camera.is_active,
+        auto_capture_enabled=camera.auto_capture_enabled,
         last_seen_at=camera.last_seen_at,
         created_at=camera.created_at,
         updated_at=camera.updated_at,
@@ -145,6 +146,7 @@ async def create_camera(
             fps=payload.fps,
             config=payload.config,
             is_active=payload.is_active,
+            auto_capture_enabled=payload.auto_capture_enabled,
         )
     except ValidationError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
@@ -191,6 +193,7 @@ async def update_camera(
             fps=_resolve(payload.fps, payload.fps_unset),
             config=_resolve(payload.config, payload.config_unset),
             is_active=payload.is_active,
+            auto_capture_enabled=payload.auto_capture_enabled,
         )
     except NotFoundError as exc:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc

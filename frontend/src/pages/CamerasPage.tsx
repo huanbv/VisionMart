@@ -59,6 +59,7 @@ interface FormValues {
   resolution: string;
   fps: number | null;
   is_active: boolean;
+  auto_capture_enabled: boolean;
 }
 
 export default function CamerasPage() {
@@ -130,7 +131,7 @@ export default function CamerasPage() {
   const openCreate = () => {
     setEditing(null);
     form.resetFields();
-    form.setFieldsValue({ is_active: true, fps: 25 });
+    form.setFieldsValue({ is_active: true, auto_capture_enabled: false, fps: 25 });
     setDrawerOpen(true);
   };
 
@@ -145,6 +146,7 @@ export default function CamerasPage() {
       resolution: c.resolution ?? "",
       fps: c.fps,
       is_active: c.is_active,
+      auto_capture_enabled: c.auto_capture_enabled,
     });
     setDrawerOpen(true);
   };
@@ -168,6 +170,7 @@ export default function CamerasPage() {
           fps,
           fps_unset: fps === null,
           is_active: values.is_active,
+          auto_capture_enabled: values.auto_capture_enabled,
         });
         message.success("Đã cập nhật camera");
       } else {
@@ -180,6 +183,7 @@ export default function CamerasPage() {
           resolution,
           fps,
           is_active: values.is_active,
+          auto_capture_enabled: values.auto_capture_enabled,
         });
         message.success("Đã tạo camera");
       }
@@ -275,6 +279,13 @@ export default function CamerasPage() {
       dataIndex: "stream_url",
       ellipsis: true,
       render: (v: string) => <code style={{ fontSize: 12 }}>{v}</code>,
+    },
+    {
+      title: "Auto",
+      dataIndex: "auto_capture_enabled",
+      width: 80,
+      render: (v: boolean) =>
+        v ? <Tag color="blue">ON</Tag> : <Tag>OFF</Tag>,
     },
     {
       title: "FPS",
@@ -490,6 +501,14 @@ export default function CamerasPage() {
             </Col>
           </Row>
           <Form.Item label="Active" name="is_active" valuePropName="checked">
+            <Switch />
+          </Form.Item>
+          <Form.Item
+            label="Tự động chụp khung hình (RTSP auto-capture)"
+            name="auto_capture_enabled"
+            valuePropName="checked"
+            tooltip="Khi bật, hệ thống sẽ định kỳ kéo frame từ Stream URL của camera này để phân tích AI. Yêu cầu RTSP_CAPTURE_ENABLED=true trên server."
+          >
             <Switch />
           </Form.Item>
           <Button type="primary" htmlType="submit" loading={saving}>

@@ -150,6 +150,7 @@ class SqlAlchemyCameraRepository:
             .where(
                 Camera.is_deleted.is_(False),
                 Camera.is_active.is_(True),
+                Camera.auto_capture_enabled.is_(True),
                 Camera.stream_url.isnot(None),
                 func.length(Camera.stream_url) > 0,
             )

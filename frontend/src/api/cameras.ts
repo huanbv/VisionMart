@@ -14,6 +14,7 @@ export interface Camera {
   config: Record<string, unknown> | null;
   is_online: boolean;
   is_active: boolean;
+  auto_capture_enabled: boolean;
   last_seen_at: string | null;
   created_at: string;
   updated_at: string;
@@ -36,6 +37,7 @@ export interface CameraCreatePayload {
   fps?: number | null;
   config?: Record<string, unknown> | null;
   is_active?: boolean;
+  auto_capture_enabled?: boolean;
 }
 
 export interface CameraUpdatePayload {
@@ -48,6 +50,7 @@ export interface CameraUpdatePayload {
   fps?: number | null;
   config?: Record<string, unknown> | null;
   is_active?: boolean;
+  auto_capture_enabled?: boolean;
   location_unset?: boolean;
   resolution_unset?: boolean;
   fps_unset?: boolean;

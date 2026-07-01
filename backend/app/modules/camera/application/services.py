@@ -64,6 +64,7 @@ class CameraService:
         fps: int | None,
         config: dict | None,
         is_active: bool,
+        auto_capture_enabled: bool = False,
     ) -> Camera:
         branch = await self._repo.get_branch_in_org(organization_id, branch_id)
         if branch is None:
@@ -81,6 +82,7 @@ class CameraService:
             fps=fps,
             config=config,
             is_active=is_active,
+            auto_capture_enabled=auto_capture_enabled,
         )
         return await self._repo.add(c)
 
@@ -98,6 +100,7 @@ class CameraService:
         fps: object = _UNSET,
         config: object = _UNSET,
         is_active: bool | None = None,
+        auto_capture_enabled: bool | None = None,
     ) -> Camera:
         c = await self.get(organization_id, camera_id)
         if code is not None and code != c.code:
@@ -127,6 +130,9 @@ class CameraService:
             c.is_active = is_active
             if not is_active:
                 c.is_online = False
+                c.auto_capture_enabled = False
+        if auto_capture_enabled is not None:
+            c.auto_capture_enabled = auto_capture_enabled and c.is_active
         return await self._repo.save(c)
 
     async def heartbeat(
