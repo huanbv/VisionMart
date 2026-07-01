@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import {
+  Button,
   Card,
   DatePicker,
   Input,
@@ -9,10 +10,15 @@ import {
   Typography,
   message,
 } from "antd";
+import { DownloadOutlined } from "@ant-design/icons";
 import type { ColumnsType } from "antd/es/table";
 import type { Dayjs } from "dayjs";
 
-import { listAuditLogs, type AuditLog } from "@/api/auditLogs";
+import {
+  exportAuditLogsCsv,
+  listAuditLogs,
+  type AuditLog,
+} from "@/api/auditLogs";
 
 const PAGE_SIZE = 50;
 
@@ -57,6 +63,27 @@ export default function AuditLogsPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [page, resourceType, action, dateRange]);
 
+  const onExport = async () => {
+    try {
+      const blob = await exportAuditLogsCsv({
+        resource_type: resourceType || undefined,
+        action: action || undefined,
+        date_from: dateRange?.[0]?.startOf("day").toISOString(),
+        date_to: dateRange?.[1]?.endOf("day").toISOString(),
+      });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `audit_logs_${new Date().toISOString()}.csv`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+    } catch {
+      message.error("Không xuất được CSV");
+    }
+  };
+
   const columns: ColumnsType<AuditLog> = [
     {
       title: "Thời điểm",
@@ -98,7 +125,14 @@ export default function AuditLogsPage() {
   ];
 
   return (
-    <Card title="Nhật ký hệ thống">
+    <Card
+      title="Nhật ký hệ thống"
+      extra={
+        <Button icon={<DownloadOutlined />} onClick={() => void onExport()}>
+          Xuất CSV
+        </Button>
+      }
+    >
       <Space style={{ marginBottom: 16 }} wrap>
         <Input
           allowClear

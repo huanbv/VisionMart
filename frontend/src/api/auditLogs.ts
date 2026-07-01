@@ -40,3 +40,13 @@ export async function listAuditLogs(
   });
   return data;
 }
+
+export async function exportAuditLogsCsv(
+  params: Omit<ListAuditLogsParams, "skip" | "limit"> & { max_rows?: number } = {},
+): Promise<Blob> {
+  const { data } = await apiClient.get<Blob>("/audit-logs/export.csv", {
+    params,
+    responseType: "blob",
+  });
+  return data;
+}
