@@ -11,6 +11,7 @@ from fastapi import (
     Form,
     HTTPException,
     Query,
+    Response,
     UploadFile,
     status,
 )
@@ -97,7 +98,7 @@ async def delete_image(
     image_id: uuid.UUID,
     current: CurrentUser = Depends(require_roles(*_TRAINER_ROLES)),
     session: AsyncSession = Depends(get_session),
-) -> None:
+) -> Response:
     service = _service(session)
     try:
         await service.delete_image(
@@ -107,6 +108,7 @@ async def delete_image(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)
         ) from exc
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.post(
