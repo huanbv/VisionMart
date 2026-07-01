@@ -1,4 +1,4 @@
-# ---- Runtime (foundation; CV/ML libs added in Sprint 04) ----
+# ---- Runtime ----
 fastapi==0.115.4
 uvicorn[standard]==0.32.0
 pydantic==2.9.2
@@ -8,8 +8,12 @@ python-json-logger==2.0.7
 python-multipart==0.0.12
 Pillow==10.4.0
 
+# ---- Computer Vision / ML ----
+# NOTE: torch and torchvision are installed separately in the Dockerfile
+# from the PyTorch CPU-only wheel index to keep the image size small.
+numpy==1.26.4
+opencv-python-headless==4.10.0.84
+ultralytics==8.3.30
+
 # Reserved for later sprints:
-# opencv-python-headless
-# ultralytics
 # onnxruntime
-# numpy

@@ -151,9 +151,14 @@ services:
     container_name: visionmart-ai-engine
     <<: *default-restart
     env_file: .env
+    environment:
+      YOLO_MODEL: ${YOLO_MODEL:-yolov8n.pt}
+      YOLO_CONF_THRESHOLD: ${YOLO_CONF_THRESHOLD:-0.25}
+      YOLO_DEVICE: ${YOLO_DEVICE:-cpu}
     volumes:
       - ./ai-engine:/app
       - ./models:/models
+      - ai_engine_weights:/root/.config/Ultralytics
     ports:
       - "${AI_ENGINE_PORT:-8100}:8100"
     command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8100", "--reload"]
@@ -210,3 +215,4 @@ volumes:
   postgres_data:
   redis_data:
   minio_data:
+  ai_engine_weights:

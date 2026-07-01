@@ -1,8 +1,7 @@
 """Detection endpoint.
 
-Currently a deterministic stub: returns the image dimensions and a
-single placeholder bounding box. Real YOLOv8/ONNX backends will replace
-the stub once their weights ship in this image.
+Runs YOLOv8 by default; a deterministic stub is still available via
+`?model=stub` for smoke tests and when weights are not yet available.
 """
 
 from __future__ import annotations
@@ -14,6 +13,8 @@ from typing import Any
 
 from fastapi import APIRouter, File, HTTPException, Query, UploadFile, status
 from PIL import Image, UnidentifiedImageError
+
+from app.services.yolo_detector import YoloDetector
 
 logger = logging.getLogger("ai-engine.detect")
 
@@ -60,11 +61,26 @@ async def detect(
             detail="Unsupported image format",
         ) from exc
 
-    detections = _stub_detections(width, height)
+    use_stub = (model or "").lower() == "stub"
+    if use_stub:
+        detections = _stub_detections(width, height)
+        model_name = "stub-v0"
+    else:
+        try:
+            detector = YoloDetector.get()
+            detections = await detector.detect(content)
+            model_name = detector.model_name
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("YOLO inference failed")
+            raise HTTPException(
+                status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"YOLO inference failed: {exc}",
+            ) from exc
+
     elapsed_ms = round((time.perf_counter() - started) * 1000, 2)
 
     return {
-        "model": model or "stub-v0",
+        "model": model_name,
         "image": {
             "width": width,
             "height": height,

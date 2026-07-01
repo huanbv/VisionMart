@@ -189,6 +189,7 @@ export default function DetectionsPage() {
             setModel(v);
           }}
           options={[
+            { value: "yolov8n.pt", label: "yolov8n" },
             { value: "stub-v0", label: "stub-v0" },
           ]}
         />
