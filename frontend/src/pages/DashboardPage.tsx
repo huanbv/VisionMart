@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { Link } from "react-router-dom";
 import {
   Badge,
   Card,
@@ -27,6 +28,11 @@ import {
 import type { ColumnsType } from "antd/es/table";
 
 import { listBranches, type Branch } from "@/api/tenancy";
+import { listCameras, type Camera } from "@/api/cameras";
+import {
+  listDetections,
+  type DetectionEventSummary,
+} from "@/api/detections";
 import {
   type DashboardSummary,
   type LowStockItem,
@@ -117,30 +123,43 @@ export default function DashboardPage() {
   const [top, setTop] = useState<TopProduct[]>([]);
   const [low, setLow] = useState<LowStockItem[]>([]);
   const [recent, setRecent] = useState<RecentOrder[]>([]);
+  const [alerts, setAlerts] = useState<DetectionEventSummary[]>([]);
+  const [cameras, setCameras] = useState<Camera[]>([]);
   const [loading, setLoading] = useState(false);
+
+  const cameraMap = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const c of cameras) m.set(c.id, c.name);
+    return m;
+  }, [cameras]);
 
   useEffect(() => {
     listBranches({ limit: 200 })
       .then((res) => setBranches(res.items))
       .catch(() => message.error("Không tải được chi nhánh"));
+    listCameras({ limit: 200 })
+      .then((res) => setCameras(res.items))
+      .catch(() => undefined);
   }, []);
 
   useEffect(() => {
     const load = async () => {
       setLoading(true);
       try {
-        const [s, tr, tp, ls, ro] = await Promise.all([
+        const [s, tr, tp, ls, ro, al] = await Promise.all([
           getDashboardSummary(branchId),
           getSalesTrend(trendDays, branchId),
           getTopProducts(30, 10, branchId),
           getLowStockItems(10, branchId),
           getRecentOrders(10, branchId),
+          listDetections({ limit: 5 }),
         ]);
         setSummary(s);
         setTrend(tr.points);
         setTop(tp.items);
         setLow(ls.items);
         setRecent(ro.items);
+        setAlerts(al.items);
       } catch {
         message.error("Không tải được dashboard");
       } finally {
@@ -407,15 +426,62 @@ export default function DashboardPage() {
         </Col>
       </Row>
 
-      <Card title="Đơn hàng gần nhất" loading={loading}>
-        <Table
-          rowKey="id"
-          dataSource={recent}
-          columns={recentColumns}
-          pagination={false}
-          size="small"
-        />
-      </Card>
+      <Row gutter={16}>
+        <Col xs={24} lg={14}>
+          <Card title="Đơn hàng gần nhất" loading={loading}>
+            <Table
+              rowKey="id"
+              dataSource={recent}
+              columns={recentColumns}
+              pagination={false}
+              size="small"
+            />
+          </Card>
+        </Col>
+        <Col xs={24} lg={10}>
+          <Card
+            title="Cảnh báo AI gần đây"
+            loading={loading}
+            extra={<Link to="/detections">Xem tất cả</Link>}
+          >
+            {alerts.length === 0 ? (
+              <Empty description="Chưa có phát hiện" />
+            ) : (
+              <Space direction="vertical" size={8} style={{ width: "100%" }}>
+                {alerts.map((a) => {
+                  const confPct = Math.round(a.max_confidence * 100);
+                  const color =
+                    confPct >= 80 ? "red" : confPct >= 60 ? "orange" : "blue";
+                  return (
+                    <Link
+                      key={a.id}
+                      to="/detections"
+                      style={{ color: "inherit" }}
+                    >
+                      <Space
+                        style={{ width: "100%", justifyContent: "space-between" }}
+                        wrap
+                      >
+                        <Space direction="vertical" size={0}>
+                          <Typography.Text strong>
+                            <VideoCameraOutlined />{" "}
+                            {cameraMap.get(a.camera_id) ?? a.camera_id.slice(0, 8)}
+                          </Typography.Text>
+                          <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                            {new Date(a.created_at).toLocaleString("vi-VN")} —{" "}
+                            {a.detection_count} đối tượng
+                          </Typography.Text>
+                        </Space>
+                        <Tag color={color}>{confPct}%</Tag>
+                      </Space>
+                    </Link>
+                  );
+                })}
+              </Space>
+            )}
+          </Card>
+        </Col>
+      </Row>
     </Space>
   );
 }
