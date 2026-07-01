@@ -99,6 +99,11 @@ const MENU_ITEMS = [
     label: <Link to="/detections">Phát hiện AI</Link>,
   },
   {
+    key: "/ai-analytics",
+    icon: <BarChartOutlined />,
+    label: <Link to="/ai-analytics">Thống kê AI</Link>,
+  },
+  {
     key: "/users",
     icon: <TeamOutlined />,
     label: <Link to="/users">Người dùng</Link>,

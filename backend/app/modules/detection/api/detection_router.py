@@ -16,9 +16,13 @@ from app.modules.detection.infrastructure.repositories import (
     SqlAlchemyDetectionRepository,
 )
 from app.modules.detection.schemas.detection import (
+    DetectionCameraCount,
+    DetectionClassCount,
     DetectionEventListResponse,
     DetectionEventResponse,
     DetectionEventSummary,
+    DetectionSeriesPoint,
+    DetectionStatsResponse,
 )
 from app.services.object_storage import MinioStorage, ObjectStorageError
 
@@ -27,6 +31,58 @@ router = APIRouter(prefix="/detections", tags=["detection"])
 
 def _service(session: AsyncSession) -> DetectionService:
     return DetectionService(SqlAlchemyDetectionRepository(session))
+
+
+@router.get("/stats", response_model=DetectionStatsResponse)
+async def detection_stats(
+    camera_id: uuid.UUID | None = None,
+    date_from: datetime | None = None,
+    date_to: datetime | None = None,
+    current: CurrentUser = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> DetectionStatsResponse:
+    repo = SqlAlchemyDetectionRepository(session)
+    summary = await repo.summary(
+        organization_id=current.organization_id,
+        camera_id=camera_id,
+        date_from=date_from,
+        date_to=date_to,
+    )
+    series = await repo.series_by_day(
+        organization_id=current.organization_id,
+        camera_id=camera_id,
+        date_from=date_from,
+        date_to=date_to,
+    )
+    top_cams = await repo.top_cameras(
+        organization_id=current.organization_id,
+        date_from=date_from,
+        date_to=date_to,
+        limit=5,
+    )
+    top_cls = await repo.top_classes(
+        organization_id=current.organization_id,
+        camera_id=camera_id,
+        date_from=date_from,
+        date_to=date_to,
+        limit=10,
+    )
+    return DetectionStatsResponse(
+        total_events=summary["total_events"],
+        total_detections=summary["total_detections"],
+        avg_max_confidence=summary["avg_max_confidence"],
+        series=[
+            DetectionSeriesPoint(date=d, events=e, detections=n)
+            for d, e, n in series
+        ],
+        top_classes=[
+            DetectionClassCount(class_name=cn, count=c) for cn, c in top_cls
+        ],
+        top_cameras=[
+            DetectionCameraCount(camera_id=cid, events=e, detections=n)
+            for cid, e, n in top_cams
+        ],
+    )
 
 
 @router.get("", response_model=DetectionEventListResponse)

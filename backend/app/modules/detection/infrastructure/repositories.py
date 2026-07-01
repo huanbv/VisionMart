@@ -6,11 +6,10 @@ import uuid
 from datetime import datetime
 from typing import Sequence
 
-from sqlalchemy import func, select
+from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.modules.detection.infrastructure.models import DetectionEvent
-
 
 class SqlAlchemyDetectionRepository:
     def __init__(self, session: AsyncSession) -> None:
@@ -98,3 +97,125 @@ class SqlAlchemyDetectionRepository:
             date_to=date_to,
         )
         return int((await self._session.execute(stmt)).scalar_one())
+
+    async def summary(
+        self,
+        *,
+        organization_id: uuid.UUID,
+        camera_id: uuid.UUID | None = None,
+        date_from: datetime | None = None,
+        date_to: datetime | None = None,
+    ) -> dict:
+        stmt = self._apply_filters(
+            select(
+                func.count(DetectionEvent.id),
+                func.coalesce(func.sum(DetectionEvent.detection_count), 0),
+                func.coalesce(func.avg(DetectionEvent.max_confidence), 0.0),
+            ),
+            organization_id=organization_id,
+            camera_id=camera_id,
+            model=None,
+            min_confidence=None,
+            date_from=date_from,
+            date_to=date_to,
+        )
+        row = (await self._session.execute(stmt)).one()
+        return {
+            "total_events": int(row[0] or 0),
+            "total_detections": int(row[1] or 0),
+            "avg_max_confidence": float(row[2] or 0.0),
+        }
+
+    async def series_by_day(
+        self,
+        *,
+        organization_id: uuid.UUID,
+        camera_id: uuid.UUID | None = None,
+        date_from: datetime | None = None,
+        date_to: datetime | None = None,
+    ) -> list[tuple[str, int, int]]:
+        day = func.date_trunc("day", DetectionEvent.created_at).label("day")
+        stmt = self._apply_filters(
+            select(
+                day,
+                func.count(DetectionEvent.id),
+                func.coalesce(func.sum(DetectionEvent.detection_count), 0),
+            ),
+            organization_id=organization_id,
+            camera_id=camera_id,
+            model=None,
+            min_confidence=None,
+            date_from=date_from,
+            date_to=date_to,
+        ).group_by(day).order_by(day)
+        rows = (await self._session.execute(stmt)).all()
+        return [
+            (
+                r[0].date().isoformat() if r[0] is not None else "",
+                int(r[1] or 0),
+                int(r[2] or 0),
+            )
+            for r in rows
+        ]
+
+    async def top_cameras(
+        self,
+        *,
+        organization_id: uuid.UUID,
+        date_from: datetime | None = None,
+        date_to: datetime | None = None,
+        limit: int = 5,
+    ) -> list[tuple[uuid.UUID, int, int]]:
+        stmt = self._apply_filters(
+            select(
+                DetectionEvent.camera_id,
+                func.count(DetectionEvent.id),
+                func.coalesce(func.sum(DetectionEvent.detection_count), 0),
+            ),
+            organization_id=organization_id,
+            camera_id=None,
+            model=None,
+            min_confidence=None,
+            date_from=date_from,
+            date_to=date_to,
+        ).group_by(DetectionEvent.camera_id).order_by(
+            func.count(DetectionEvent.id).desc()
+        ).limit(limit)
+        rows = (await self._session.execute(stmt)).all()
+        return [(r[0], int(r[1] or 0), int(r[2] or 0)) for r in rows]
+
+    async def top_classes(
+        self,
+        *,
+        organization_id: uuid.UUID,
+        camera_id: uuid.UUID | None = None,
+        date_from: datetime | None = None,
+        date_to: datetime | None = None,
+        limit: int = 10,
+    ) -> list[tuple[str, int]]:
+        params: dict = {"org_id": str(organization_id), "lim": limit}
+        clauses = ["organization_id = :org_id"]
+        if camera_id is not None:
+            clauses.append("camera_id = :camera_id")
+            params["camera_id"] = str(camera_id)
+        if date_from is not None:
+            clauses.append("created_at >= :date_from")
+            params["date_from"] = date_from
+        if date_to is not None:
+            clauses.append("created_at <= :date_to")
+            params["date_to"] = date_to
+        where_sql = " AND ".join(clauses)
+        sql = text(
+            f"""
+            SELECT elem->>'class_name' AS class_name, COUNT(*) AS n
+            FROM detection_events,
+                 jsonb_array_elements(detections) AS elem
+            WHERE {where_sql}
+              AND elem->>'class_name' IS NOT NULL
+            GROUP BY class_name
+            ORDER BY n DESC
+            LIMIT :lim
+            """
+        )
+        rows = (await self._session.execute(sql, params)).all()
+        return [(str(r[0]), int(r[1] or 0)) for r in rows]

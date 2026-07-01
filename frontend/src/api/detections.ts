@@ -61,3 +61,45 @@ export async function getDetectionImageBlob(id: string): Promise<Blob> {
   });
   return data;
 }
+
+export interface DetectionSeriesPoint {
+  date: string;
+  events: number;
+  detections: number;
+}
+
+export interface DetectionClassCount {
+  class_name: string;
+  count: number;
+}
+
+export interface DetectionCameraCount {
+  camera_id: string;
+  events: number;
+  detections: number;
+}
+
+export interface DetectionStatsResponse {
+  total_events: number;
+  total_detections: number;
+  avg_max_confidence: number;
+  series: DetectionSeriesPoint[];
+  top_classes: DetectionClassCount[];
+  top_cameras: DetectionCameraCount[];
+}
+
+export interface DetectionStatsParams {
+  camera_id?: string;
+  date_from?: string;
+  date_to?: string;
+}
+
+export async function getDetectionStats(
+  params: DetectionStatsParams = {},
+): Promise<DetectionStatsResponse> {
+  const { data } = await apiClient.get<DetectionStatsResponse>(
+    "/detections/stats",
+    { params },
+  );
+  return data;
+}

@@ -36,3 +36,29 @@ class DetectionEventListResponse(BaseModel):
     total: int
     skip: int = Field(0, ge=0)
     limit: int = Field(50, ge=1)
+
+
+class DetectionSeriesPoint(BaseModel):
+    date: str
+    events: int
+    detections: int
+
+
+class DetectionClassCount(BaseModel):
+    class_name: str
+    count: int
+
+
+class DetectionCameraCount(BaseModel):
+    camera_id: uuid.UUID
+    events: int
+    detections: int
+
+
+class DetectionStatsResponse(BaseModel):
+    total_events: int
+    total_detections: int
+    avg_max_confidence: float
+    series: list[DetectionSeriesPoint]
+    top_classes: list[DetectionClassCount]
+    top_cameras: list[DetectionCameraCount]
