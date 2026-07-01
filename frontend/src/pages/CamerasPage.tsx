@@ -25,6 +25,7 @@ import {
   DeleteOutlined,
   EditOutlined,
   ExperimentOutlined,
+  EyeOutlined,
   InboxOutlined,
   PlusOutlined,
   ReloadOutlined,
@@ -37,12 +38,14 @@ import {
   type AnalyzeResult,
   type Camera,
   type CameraStats,
+  type PreviewResult,
   analyzeCameraFrame,
   createCamera,
   deleteCamera,
   getCameraStats,
   heartbeatCamera,
   listCameras,
+  previewCameraStream,
   updateCamera,
 } from "@/api/cameras";
 import { useAuth } from "@/contexts/AuthContext";
@@ -246,6 +249,33 @@ export default function CamerasPage() {
     setAnalyzeResult(null);
   };
 
+  const [previewFor, setPreviewFor] = useState<Camera | null>(null);
+  const [previewResult, setPreviewResult] = useState<PreviewResult | null>(
+    null,
+  );
+  const [previewLoading, setPreviewLoading] = useState(false);
+
+  const onPreview = async (row: Camera) => {
+    setPreviewFor(row);
+    setPreviewResult(null);
+    setPreviewLoading(true);
+    try {
+      const res = await previewCameraStream(row.id);
+      setPreviewResult(res);
+    } catch (err: unknown) {
+      const d = (err as { response?: { data?: { detail?: unknown } } })
+        ?.response?.data?.detail;
+      message.error(typeof d === "string" ? d : "Không mở được stream");
+    } finally {
+      setPreviewLoading(false);
+    }
+  };
+
+  const closePreview = () => {
+    setPreviewFor(null);
+    setPreviewResult(null);
+  };
+
   const columns: ColumnsType<Camera> = [
     {
       title: "Trạng thái",
@@ -310,6 +340,12 @@ export default function CamerasPage() {
             icon={<WifiOutlined />}
             onClick={() => onPing(row)}
             title="Heartbeat (online)"
+          />
+          <Button
+            size="small"
+            icon={<EyeOutlined />}
+            onClick={() => onPreview(row)}
+            title="Xem thử luồng"
           />
           <Button
             size="small"
@@ -597,6 +633,99 @@ export default function CamerasPage() {
               </pre>
             </Space>
           </Card>
+        )}
+      </Modal>
+
+      <Modal
+        title={
+          previewFor
+            ? `Xem thử luồng — ${previewFor.name}`
+            : "Xem thử luồng"
+        }
+        open={!!previewFor}
+        onCancel={closePreview}
+        footer={[
+          <Button key="close" onClick={closePreview}>
+            Đóng
+          </Button>,
+          <Button
+            key="refresh"
+            type="primary"
+            icon={<ReloadOutlined />}
+            loading={previewLoading}
+            onClick={() => previewFor && onPreview(previewFor)}
+          >
+            Chụp lại
+          </Button>,
+        ]}
+        width={720}
+      >
+        {previewLoading && !previewResult && (
+          <Typography.Text type="secondary">
+            Đang mở luồng và chụp khung hình...
+          </Typography.Text>
+        )}
+        {previewResult && (
+          <Space direction="vertical" style={{ width: "100%" }} size={12}>
+            <div
+              style={{
+                position: "relative",
+                width: "100%",
+                background: "#000",
+                borderRadius: 4,
+                overflow: "hidden",
+              }}
+            >
+              <img
+                src={`data:image/jpeg;base64,${previewResult.frame_base64}`}
+                alt="preview"
+                style={{ width: "100%", display: "block" }}
+              />
+              {previewResult.detections.map((d, i) => {
+                const w = previewResult.image.width || 1;
+                const h = previewResult.image.height || 1;
+                return (
+                  <div
+                    key={i}
+                    style={{
+                      position: "absolute",
+                      left: `${(d.bbox.x1 / w) * 100}%`,
+                      top: `${(d.bbox.y1 / h) * 100}%`,
+                      width: `${((d.bbox.x2 - d.bbox.x1) / w) * 100}%`,
+                      height: `${((d.bbox.y2 - d.bbox.y1) / h) * 100}%`,
+                      border: "2px solid #52c41a",
+                      boxSizing: "border-box",
+                    }}
+                  >
+                    <span
+                      style={{
+                        position: "absolute",
+                        top: -18,
+                        left: 0,
+                        background: "#52c41a",
+                        color: "#fff",
+                        fontSize: 11,
+                        padding: "0 4px",
+                        whiteSpace: "nowrap",
+                      }}
+                    >
+                      {d.class_name} {(d.confidence * 100).toFixed(0)}%
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+            <Typography.Text>
+              Model: <Tag color="blue">{previewResult.model}</Tag>
+              Kích thước: {previewResult.image.width}×
+              {previewResult.image.height} ({previewResult.image.format},{" "}
+              {previewResult.image.size_bytes} B)
+            </Typography.Text>
+            <Typography.Text type="secondary">
+              Thời gian chụp + suy luận: {previewResult.elapsed_ms} ms — phát
+              hiện {previewResult.detections.length} đối tượng.
+            </Typography.Text>
+          </Space>
         )}
       </Modal>
     </Space>

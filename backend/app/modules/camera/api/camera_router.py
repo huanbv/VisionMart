@@ -314,3 +314,43 @@ async def analyze_camera_frame(
         "alerts_sent": alerts_sent,
         **result,
     }
+
+
+@router.post("/{camera_id}/preview")
+async def preview_camera_stream(
+    camera_id: uuid.UUID,
+    current: CurrentUser = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    service = _service(session)
+    try:
+        camera = await service.get(current.organization_id, camera_id)
+    except NotFoundError as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+
+    if not camera.stream_url:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            detail="Camera has no stream_url configured",
+        )
+
+    client = AIEngineClient()
+    try:
+        result = await client.capture(
+            stream_url=camera.stream_url,
+            open_timeout_ms=get_settings().RTSP_CAPTURE_OPEN_TIMEOUT_MS,
+        )
+    except AIEngineError as exc:
+        raise HTTPException(
+            status.HTTP_502_BAD_GATEWAY, detail=f"AI engine error: {exc}"
+        ) from exc
+
+    return {
+        "camera_id": str(camera_id),
+        "camera_name": camera.name,
+        "model": result.get("model"),
+        "image": result.get("image"),
+        "elapsed_ms": result.get("elapsed_ms"),
+        "detections": result.get("detections", []),
+        "frame_base64": result.get("frame_base64"),
+    }

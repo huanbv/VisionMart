@@ -156,3 +156,20 @@ export async function analyzeCameraFrame(
   );
   return data;
 }
+
+export interface PreviewResult {
+  camera_id: string;
+  camera_name: string;
+  model: string;
+  image: { width: number; height: number; format: string; size_bytes: number };
+  elapsed_ms: number;
+  detections: Detection[];
+  frame_base64: string;
+}
+
+export async function previewCameraStream(id: string): Promise<PreviewResult> {
+  const { data } = await apiClient.post<PreviewResult>(
+    `/cameras/${id}/preview`,
+  );
+  return data;
+}
