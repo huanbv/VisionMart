@@ -9,7 +9,10 @@ from typing import Sequence
 from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.modules.detection.infrastructure.models import DetectionEventclass SqlAlchemyDetectionRepository:
+from app.modules.detection.infrastructure.models import DetectionEvent
+
+
+class SqlAlchemyDetectionRepository:
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
 
