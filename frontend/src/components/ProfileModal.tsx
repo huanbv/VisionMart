@@ -1,9 +1,10 @@
 import { useEffect, useState } from "react";
-import { Form, Input, Modal, message } from "antd";
+import { Divider, Form, Input, Modal, message } from "antd";
 import { isAxiosError } from "axios";
 
 import { updateProfile } from "@/api/auth";
 import { useAuth } from "@/contexts/AuthContext";
+import SessionsPanel from "@/components/SessionsPanel";
 
 interface Props {
   open: boolean;
@@ -55,6 +56,7 @@ export default function ProfileModal({ open, onClose }: Props) {
       onOk={() => void handleOk()}
       onCancel={onClose}
       destroyOnClose
+      width={640}
     >
       <Form form={form} layout="vertical" preserve={false}>
         <Form.Item label="Email">
@@ -71,6 +73,8 @@ export default function ProfileModal({ open, onClose }: Props) {
           <Input placeholder="Nguyễn Văn A" />
         </Form.Item>
       </Form>
+      <Divider />
+      <SessionsPanel />
     </Modal>
   );
 }

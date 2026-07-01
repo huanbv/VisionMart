@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import uuid
+
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -22,6 +24,8 @@ from app.modules.identity.schemas.auth import (
     CurrentUserResponse,
     LoginRequest,
     RefreshRequest,
+    SessionListResponse,
+    SessionResponse,
     TokenResponse,
     UpdateProfileRequest,
 )
@@ -209,4 +213,35 @@ async def logout_all(
 ) -> Response:
     tokens = SqlAlchemyRefreshTokenRepository(session)
     await tokens.revoke_all_for_user(current.user_id)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.get("/sessions", response_model=SessionListResponse)
+async def list_sessions(
+    current: CurrentUser = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> SessionListResponse:
+    tokens = SqlAlchemyRefreshTokenRepository(session)
+    items = await tokens.list_active_for_user(current.user_id)
+    return SessionListResponse(
+        items=[SessionResponse.model_validate(t) for t in items]
+    )
+
+
+@router.delete(
+    "/sessions/{session_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    response_class=Response,
+)
+async def revoke_session(
+    session_id: uuid.UUID,
+    current: CurrentUser = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> Response:
+    tokens = SqlAlchemyRefreshTokenRepository(session)
+    stored = await tokens.get_by_id(session_id)
+    if stored is None or stored.user_id != current.user_id:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Session not found")
+    if stored.revoked_at is None:
+        await tokens.revoke(session_id)
     return Response(status_code=status.HTTP_204_NO_CONTENT)

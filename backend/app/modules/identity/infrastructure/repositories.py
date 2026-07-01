@@ -221,3 +221,18 @@ class SqlAlchemyRefreshTokenRepository:
         await self._session.commit()
         return result.rowcount or 0
 
+    async def list_active_for_user(
+        self, user_id: uuid.UUID
+    ) -> list[RefreshToken]:
+        now = datetime.utcnow()
+        result = await self._session.execute(
+            select(RefreshToken)
+            .where(
+                RefreshToken.user_id == user_id,
+                RefreshToken.revoked_at.is_(None),
+                RefreshToken.expires_at > now,
+            )
+            .order_by(RefreshToken.issued_at.desc())
+        )
+        return list(result.scalars().all())
+

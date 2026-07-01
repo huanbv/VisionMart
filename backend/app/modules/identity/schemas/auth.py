@@ -26,6 +26,20 @@ class UpdateProfileRequest(BaseModel):
     full_name: str | None = Field(default=None, max_length=255)
 
 
+class SessionResponse(BaseModel):
+    id: uuid.UUID
+    issued_at: datetime
+    expires_at: datetime
+    user_agent: str | None
+    ip_address: str | None
+
+    model_config = {"from_attributes": True}
+
+
+class SessionListResponse(BaseModel):
+    items: list[SessionResponse]
+
+
 class TokenResponse(BaseModel):
     access_token: str
     refresh_token: str

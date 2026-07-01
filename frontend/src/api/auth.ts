@@ -66,3 +66,22 @@ export async function changePassword(
 export async function logoutAll(): Promise<void> {
   await apiClient.post("/auth/logout-all");
 }
+
+export interface AuthSession {
+  id: string;
+  issued_at: string;
+  expires_at: string;
+  user_agent: string | null;
+  ip_address: string | null;
+}
+
+export async function listSessions(): Promise<AuthSession[]> {
+  const { data } = await apiClient.get<{ items: AuthSession[] }>(
+    "/auth/sessions",
+  );
+  return data.items;
+}
+
+export async function revokeSession(sessionId: string): Promise<void> {
+  await apiClient.delete(`/auth/sessions/${sessionId}`);
+}
