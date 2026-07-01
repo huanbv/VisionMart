@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { Avatar, Button, Layout, Menu, Space, Typography } from "antd";
 import {
   ApartmentOutlined,
@@ -12,6 +12,7 @@ import {
   DatabaseOutlined,
   EyeOutlined,
   FileTextOutlined,
+  KeyOutlined,
   LogoutOutlined,
   SafetyOutlined,
   ShoppingCartOutlined,
@@ -24,6 +25,7 @@ import {
 import { Link, Outlet, useLocation, useNavigate } from "react-router-dom";
 
 import { useAuth } from "@/contexts/AuthContext";
+import ChangePasswordModal from "@/components/ChangePasswordModal";
 import NotificationBell from "@/components/NotificationBell";
 
 const { Header, Sider, Content } = Layout;
@@ -134,6 +136,7 @@ const MENU_ITEMS = [
 export default function AppLayout() {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
+  const [passwordModalOpen, setPasswordModalOpen] = useState(false);
   const location = useLocation();
 
   const selectedKey = useMemo(() => {
@@ -176,6 +179,12 @@ export default function AppLayout() {
             <NotificationBell />
             <Avatar icon={<UserOutlined />} />
             <Typography.Text strong>{user?.email}</Typography.Text>
+            <Button
+              icon={<KeyOutlined />}
+              onClick={() => setPasswordModalOpen(true)}
+            >
+              Đổi mật khẩu
+            </Button>
             <Button icon={<LogoutOutlined />} onClick={handleLogout}>
               Đăng xuất
             </Button>
@@ -185,6 +194,10 @@ export default function AppLayout() {
           <Outlet />
         </Content>
       </Layout>
+      <ChangePasswordModal
+        open={passwordModalOpen}
+        onClose={() => setPasswordModalOpen(false)}
+      />
     </Layout>
   );
 }

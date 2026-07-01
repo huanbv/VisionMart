@@ -18,6 +18,7 @@ from app.modules.identity.infrastructure.repositories import (
     SqlAlchemyUserRepository,
 )
 from app.modules.identity.schemas.auth import (
+    ChangePasswordRequest,
     CurrentUserResponse,
     LoginRequest,
     RefreshRequest,
@@ -136,3 +137,32 @@ async def me(
         roles=roles,
         last_login_at=user.last_login_at,
     )
+
+
+@router.post(
+    "/change-password",
+    status_code=status.HTTP_204_NO_CONTENT,
+    response_class=Response,
+)
+async def change_password(
+    payload: ChangePasswordRequest,
+    current: CurrentUser = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> Response:
+    users = SqlAlchemyUserRepository(session)
+    user = await users.get_by_id(current.user_id)
+    if user is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="User not found")
+    hasher = PasswordHasher()
+    if not hasher.verify(user.hashed_password, payload.current_password):
+        raise HTTPException(
+            status.HTTP_401_UNAUTHORIZED, detail="Current password is incorrect"
+        )
+    if payload.new_password == payload.current_password:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            detail="New password must differ from the current password",
+        )
+    user.hashed_password = hasher.hash(payload.new_password)
+    await users.save(user)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
