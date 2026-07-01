@@ -23,6 +23,7 @@ class DetectionService:
         camera_id: uuid.UUID,
         user_id: uuid.UUID | None,
         result: dict,
+        image_key: str | None = None,
     ) -> DetectionEvent:
         image = result.get("image", {}) or {}
         detections = result.get("detections", []) or []
@@ -43,6 +44,7 @@ class DetectionService:
             elapsed_ms=int(result.get("elapsed_ms") or 0),
             detection_count=len(detections),
             max_confidence=max(confidences) if confidences else 0.0,
+            image_key=image_key,
             detections=detections,
         )
         return await self._repo.add(event)

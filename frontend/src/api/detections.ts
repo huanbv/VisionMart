@@ -16,6 +16,7 @@ export interface DetectionEventSummary {
   detection_count: number;
   max_confidence: number;
   created_at: string;
+  image_key: string | null;
 }
 
 export interface DetectionEvent extends DetectionEventSummary {
@@ -51,5 +52,12 @@ export async function listDetections(
 
 export async function getDetection(id: string): Promise<DetectionEvent> {
   const { data } = await apiClient.get<DetectionEvent>(`/detections/${id}`);
+  return data;
+}
+
+export async function getDetectionImageBlob(id: string): Promise<Blob> {
+  const { data } = await apiClient.get<Blob>(`/detections/${id}/image`, {
+    responseType: "blob",
+  });
   return data;
 }

@@ -24,6 +24,7 @@ class DetectionEventSummary(BaseModel):
     detection_count: int
     max_confidence: float
     created_at: datetime
+    image_key: str | None = None
 
 
 class DetectionEventResponse(DetectionEventSummary):

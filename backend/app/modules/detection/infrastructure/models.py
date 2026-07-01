@@ -46,4 +46,7 @@ class DetectionEvent(ImmutableEntity):
     max_confidence: Mapped[float] = mapped_column(
         Float, nullable=False, server_default="0"
     )
+    image_key: Mapped[str | None] = mapped_column(
+        String(512), nullable=True
+    )
     detections: Mapped[list] = mapped_column(JSONBType, nullable=False)

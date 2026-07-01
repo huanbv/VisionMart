@@ -17,6 +17,7 @@ import type { Dayjs } from "dayjs";
 import { listCameras, type Camera } from "@/api/cameras";
 import {
   getDetection,
+  getDetectionImageBlob,
   listDetections,
   type DetectionEvent,
   type DetectionEventSummary,
@@ -36,6 +37,7 @@ export default function DetectionsPage() {
   const [dateRange, setDateRange] = useState<[Dayjs, Dayjs] | null>(null);
   const [detail, setDetail] = useState<DetectionEvent | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
+  const [imageUrl, setImageUrl] = useState<string | null>(null);
 
   const cameraMap = useMemo(() => {
     const m = new Map<string, string>();
@@ -85,12 +87,34 @@ export default function DetectionsPage() {
     try {
       const ev = await getDetection(id);
       setDetail(ev);
+      if (ev.image_key) {
+        try {
+          const blob = await getDetectionImageBlob(ev.id);
+          setImageUrl(URL.createObjectURL(blob));
+        } catch {
+          setImageUrl(null);
+        }
+      } else {
+        setImageUrl(null);
+      }
     } catch {
       message.error("Không tải được chi tiết");
     } finally {
       setDetailLoading(false);
     }
   };
+
+  const closeDetail = () => {
+    if (imageUrl) URL.revokeObjectURL(imageUrl);
+    setImageUrl(null);
+    setDetail(null);
+  };
+
+  useEffect(() => {
+    return () => {
+      if (imageUrl) URL.revokeObjectURL(imageUrl);
+    };
+  }, [imageUrl]);
 
   const columns: ColumnsType<DetectionEventSummary> = [
     {
@@ -210,9 +234,9 @@ export default function DetectionsPage() {
       <Modal
         title="Chi tiết phát hiện"
         open={!!detail || detailLoading}
-        onCancel={() => setDetail(null)}
+        onCancel={closeDetail}
         footer={null}
-        width={720}
+        width={820}
         confirmLoading={detailLoading}
       >
         {detail && (
@@ -228,6 +252,68 @@ export default function DetectionsPage() {
               <strong>Thời điểm:</strong>{" "}
               {new Date(detail.created_at).toLocaleString("vi-VN")}
             </Typography.Paragraph>
+            {imageUrl && (
+              <div
+                style={{
+                  position: "relative",
+                  width: "100%",
+                  maxWidth: 780,
+                  aspectRatio: `${detail.image_width} / ${detail.image_height}`,
+                  background: "#000",
+                  overflow: "hidden",
+                }}
+              >
+                <img
+                  src={imageUrl}
+                  alt="detection frame"
+                  style={{
+                    width: "100%",
+                    height: "100%",
+                    display: "block",
+                    objectFit: "contain",
+                  }}
+                />
+                {detail.detections.map((d, i) => {
+                  const b = d.bbox;
+                  if (!b) return null;
+                  const left = (b.x1 / detail.image_width) * 100;
+                  const top = (b.y1 / detail.image_height) * 100;
+                  const width = ((b.x2 - b.x1) / detail.image_width) * 100;
+                  const height = ((b.y2 - b.y1) / detail.image_height) * 100;
+                  return (
+                    <div
+                      key={i}
+                      style={{
+                        position: "absolute",
+                        left: `${left}%`,
+                        top: `${top}%`,
+                        width: `${width}%`,
+                        height: `${height}%`,
+                        border: "2px solid #52c41a",
+                        boxSizing: "border-box",
+                        pointerEvents: "none",
+                      }}
+                    >
+                      <span
+                        style={{
+                          position: "absolute",
+                          top: -18,
+                          left: 0,
+                          background: "#52c41a",
+                          color: "#fff",
+                          fontSize: 11,
+                          padding: "1px 4px",
+                          borderRadius: 2,
+                          whiteSpace: "nowrap",
+                        }}
+                      >
+                        {d.class_name} {(d.confidence * 100).toFixed(0)}%
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
             <Typography.Title level={5}>
               Detections ({detail.detections.length})
             </Typography.Title>
@@ -238,7 +324,7 @@ export default function DetectionsPage() {
                 background: "#fafafa",
                 borderRadius: 4,
                 fontSize: 12,
-                maxHeight: 360,
+                maxHeight: 300,
                 overflow: "auto",
               }}
             >

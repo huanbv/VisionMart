@@ -37,6 +37,7 @@ from app.modules.notification.infrastructure.repositories import (
 )
 from app.config.settings import get_settings
 from app.services.ai_engine_client import AIEngineClient, AIEngineError
+from app.services.object_storage import MinioStorage, ObjectStorageError
 
 router = APIRouter(prefix="/cameras", tags=["camera"])
 
@@ -271,12 +272,30 @@ async def analyze_camera_frame(
             status.HTTP_502_BAD_GATEWAY, detail=f"AI engine error: {exc}"
         ) from exc
 
+    image_key: str | None = None
+    try:
+        storage = MinioStorage(get_settings())
+        ext = (image.filename or "frame").rsplit(".", 1)
+        suffix = ext[1].lower() if len(ext) == 2 and len(ext[1]) <= 8 else "bin"
+        image_key = (
+            f"detections/{current.organization_id}/{camera_id}/"
+            f"{uuid.uuid4()}.{suffix}"
+        )
+        await storage.put(
+            image_key,
+            content,
+            content_type=image.content_type or "application/octet-stream",
+        )
+    except ObjectStorageError:
+        image_key = None
+
     detection_service = DetectionService(SqlAlchemyDetectionRepository(session))
     event = await detection_service.record(
         organization_id=current.organization_id,
         camera_id=camera_id,
         user_id=current.user_id,
         result=result,
+        image_key=image_key,
     )
 
     notification_service = NotificationService(
@@ -288,6 +307,7 @@ async def analyze_camera_frame(
     return {
         "camera_id": str(camera_id),
         "detection_event_id": str(event.id),
+        "image_key": image_key,
         "alerts_sent": alerts_sent,
         **result,
     }

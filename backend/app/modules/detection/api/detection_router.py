@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+import asyncio
 import uuid
 from datetime import datetime
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database.session import get_session
@@ -19,6 +20,7 @@ from app.modules.detection.schemas.detection import (
     DetectionEventResponse,
     DetectionEventSummary,
 )
+from app.services.object_storage import MinioStorage, ObjectStorageError
 
 router = APIRouter(prefix="/detections", tags=["detection"])
 
@@ -69,3 +71,42 @@ async def get_detection(
             status.HTTP_404_NOT_FOUND, detail="Detection event not found"
         )
     return DetectionEventResponse.model_validate(event)
+
+
+@router.get("/{event_id}/image")
+async def get_detection_image(
+    event_id: uuid.UUID,
+    current: CurrentUser = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> Response:
+    event = await _service(session).get(current.organization_id, event_id)
+    if event is None or not event.image_key:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Image not found")
+
+    storage = MinioStorage()
+
+    def _fetch() -> tuple[bytes, str]:
+        client = storage._get_client()
+        obj = client.get_object(storage._settings.MINIO_BUCKET, event.image_key)
+        try:
+            data = obj.read()
+            content_type = obj.headers.get(
+                "Content-Type", "application/octet-stream"
+            )
+            return data, content_type
+        finally:
+            obj.close()
+            obj.release_conn()
+
+    try:
+        data, content_type = await asyncio.to_thread(_fetch)
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(
+            status.HTTP_502_BAD_GATEWAY, detail=f"Storage error: {exc}"
+        ) from exc
+
+    return Response(
+        content=data,
+        media_type=content_type,
+        headers={"Cache-Control": "private, max-age=3600"},
+    )
