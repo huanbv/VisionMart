@@ -41,12 +41,12 @@ async def list_notifications(
     svc = _service(session)
     items, total = await svc.list(
         current.organization_id,
-        current.id,
+        current.user_id,
         skip=skip,
         limit=limit,
         unread_only=unread_only,
     )
-    unread = await svc.unread_count(current.organization_id, current.id)
+    unread = await svc.unread_count(current.organization_id, current.user_id)
     return NotificationListResponse(
         items=[NotificationResponse.model_validate(n) for n in items],
         total=total,
@@ -62,7 +62,7 @@ async def unread_count(
     session: AsyncSession = Depends(get_session),
 ) -> UnreadCountResponse:
     unread = await _service(session).unread_count(
-        current.organization_id, current.id
+        current.organization_id, current.user_id
     )
     return UnreadCountResponse(unread=unread)
 
@@ -78,7 +78,7 @@ async def mark_read(
 ) -> NotificationResponse:
     try:
         n = await _service(session).mark_read(
-            current.organization_id, current.id, notification_id
+            current.organization_id, current.user_id, notification_id
         )
     except NotFoundError as exc:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
@@ -91,7 +91,7 @@ async def mark_all_read(
     session: AsyncSession = Depends(get_session),
 ) -> MarkAllReadResponse:
     updated = await _service(session).mark_all_read(
-        current.organization_id, current.id
+        current.organization_id, current.user_id
     )
     return MarkAllReadResponse(updated=updated)
 
@@ -108,7 +108,7 @@ async def delete_notification(
 ) -> Response:
     try:
         await _service(session).delete(
-            current.organization_id, current.id, notification_id
+            current.organization_id, current.user_id, notification_id
         )
     except NotFoundError as exc:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc

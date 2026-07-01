@@ -267,7 +267,7 @@ async def analyze_camera_frame(
     event = await detection_service.record(
         organization_id=current.organization_id,
         camera_id=camera_id,
-        user_id=current.id,
+        user_id=current.user_id,
         result=result,
     )
 
