@@ -12,6 +12,7 @@ import DetectionsPage from "@/pages/DetectionsPage";
 import EmployeesPage from "@/pages/EmployeesPage";
 import InventoryPage from "@/pages/InventoryPage";
 import LoginPage from "@/pages/LoginPage";
+import NotificationsPage from "@/pages/NotificationsPage";
 import OrdersPage from "@/pages/OrdersPage";
 import OrganizationPage from "@/pages/OrganizationPage";
 import PosPage from "@/pages/PosPage";
@@ -45,6 +46,7 @@ export default function App() {
         <Route path="/cameras" element={<CamerasPage />} />
         <Route path="/detections" element={<DetectionsPage />} />
         <Route path="/ai-analytics" element={<AIAnalyticsPage />} />
+        <Route path="/notifications" element={<NotificationsPage />} />
         <Route path="/users" element={<UsersPage />} />
         <Route path="/roles" element={<RolesPage />} />
         <Route path="/audit-logs" element={<AuditLogsPage />} />

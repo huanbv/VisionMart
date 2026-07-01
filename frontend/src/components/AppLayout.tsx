@@ -6,6 +6,7 @@ import {
   AuditOutlined,
   BankOutlined,
   BarChartOutlined,
+  BellOutlined,
   ContactsOutlined,
   DashboardOutlined,
   DatabaseOutlined,
@@ -102,6 +103,11 @@ const MENU_ITEMS = [
     key: "/ai-analytics",
     icon: <BarChartOutlined />,
     label: <Link to="/ai-analytics">Thống kê AI</Link>,
+  },
+  {
+    key: "/notifications",
+    icon: <BellOutlined />,
+    label: <Link to="/notifications">Thông báo</Link>,
   },
   {
     key: "/users",
