@@ -61,7 +61,7 @@ export default function PosPage() {
         if (res.items.length === 1) setBranchId(res.items[0].id);
       })
       .catch(() => message.error("Không tải được chi nhánh"));
-    listProducts({ limit: 500, is_active: true })
+    listProducts({ limit: 200, is_active: true })
       .then((res) => setProducts(res.items))
       .catch(() => message.error("Không tải được sản phẩm"));
     listCustomers({ limit: 500, is_active: true })

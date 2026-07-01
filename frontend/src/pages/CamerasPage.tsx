@@ -685,6 +685,13 @@ export default function CamerasPage() {
               >
                 {JSON.stringify(analyzeResult.detections, null, 2)}
               </pre>
+              {analyzeResult.frame_pipeline_error && (
+                <Card size="small" type="inner" title="Cart pipeline error">
+                  <Typography.Text type="danger">
+                    {analyzeResult.frame_pipeline_error}
+                  </Typography.Text>
+                </Card>
+              )}
               {analyzeResult.frame_pipeline && (
                 <Card
                   size="small"

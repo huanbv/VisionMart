@@ -174,6 +174,7 @@ export interface AnalyzeResult {
   detections: Detection[];
   elapsed_ms: number;
   frame_pipeline?: FramePipelineResult | null;
+  frame_pipeline_error?: string | null;
 }
 
 export async function analyzeCameraFrame(

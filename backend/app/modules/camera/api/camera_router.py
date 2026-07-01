@@ -324,6 +324,7 @@ async def analyze_camera_frame(
     alerts_sent = await dispatcher.dispatch(event, camera, session=session)
 
     frame_pipeline: dict[str, Any] | None = None
+    frame_error: str | None = None
     try:
         frame_pipeline = await client.frame(
             content=content,
@@ -335,7 +336,11 @@ async def analyze_camera_frame(
             recognize_face=False,
         )
     except AIEngineError as exc:
+        frame_error = str(exc)
         logger.warning("ai-engine frame pipeline failed: %s", exc)
+    except Exception as exc:  # noqa: BLE001
+        frame_error = f"{type(exc).__name__}: {exc}"
+        logger.exception("ai-engine frame pipeline crashed")
 
     return {
         "camera_id": str(camera_id),
@@ -343,6 +348,7 @@ async def analyze_camera_frame(
         "image_key": image_key,
         "alerts_sent": alerts_sent,
         "frame_pipeline": frame_pipeline,
+        "frame_pipeline_error": frame_error,
         **result,
     }
 
