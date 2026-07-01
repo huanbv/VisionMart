@@ -81,6 +81,12 @@ class Settings(BaseSettings):
     RTSP_CAPTURE_MAX_CAMERAS: int = 20
     RTSP_CAPTURE_OPEN_TIMEOUT_MS: int = 5000
 
+    # ---- Detection retention ----
+    DETECTION_CLEANUP_ENABLED: bool = True
+    DETECTION_RETENTION_DAYS: int = 30
+    DETECTION_CLEANUP_INTERVAL_SECONDS: int = 3600
+    DETECTION_CLEANUP_BATCH_SIZE: int = 500
+
     # ---- MinIO ----
     MINIO_ENDPOINT: str = "minio:9000"
     MINIO_ROOT_USER: str = "visionmart"

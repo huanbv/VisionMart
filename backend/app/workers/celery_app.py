@@ -16,6 +16,7 @@ celery_app = Celery(
     include=[
         "app.workers.tasks.alerts",
         "app.workers.tasks.rtsp_capture",
+        "app.workers.tasks.detection_cleanup",
     ],
 )
 
@@ -37,6 +38,12 @@ celery_app.conf.update(
             "task": "rtsp.scan_all",
             "schedule": schedule(
                 run_every=_settings.RTSP_CAPTURE_INTERVAL_SECONDS
+            ),
+        },
+        "detection-cleanup": {
+            "task": "detection.cleanup",
+            "schedule": schedule(
+                run_every=_settings.DETECTION_CLEANUP_INTERVAL_SECONDS
             ),
         },
     },

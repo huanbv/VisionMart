@@ -9,9 +9,7 @@ from typing import Sequence
 from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.modules.detection.infrastructure.models import DetectionEvent
-
-class SqlAlchemyDetectionRepository:
+from app.modules.detection.infrastructure.models import DetectionEventclass SqlAlchemyDetectionRepository:
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
 
@@ -219,3 +217,25 @@ class SqlAlchemyDetectionRepository:
         )
         rows = (await self._session.execute(sql, params)).all()
         return [(str(r[0]), int(r[1] or 0)) for r in rows]
+
+    async def list_older_than(
+        self, cutoff: datetime, *, limit: int
+    ) -> list[tuple[uuid.UUID, str | None]]:
+        stmt = (
+            select(DetectionEvent.id, DetectionEvent.image_key)
+            .where(DetectionEvent.created_at < cutoff)
+            .order_by(DetectionEvent.created_at.asc())
+            .limit(limit)
+        )
+        rows = (await self._session.execute(stmt)).all()
+        return [(r[0], r[1]) for r in rows]
+
+    async def hard_delete_ids(self, ids: list[uuid.UUID]) -> int:
+        if not ids:
+            return 0
+        from sqlalchemy import delete as sa_delete
+
+        stmt = sa_delete(DetectionEvent).where(DetectionEvent.id.in_(ids))
+        result = await self._session.execute(stmt)
+        await self._session.commit()
+        return int(result.rowcount or 0)

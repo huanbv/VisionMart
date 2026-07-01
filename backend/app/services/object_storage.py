@@ -75,3 +75,33 @@ class MinioStorage:
         except S3Error as exc:
             logger.exception("MinIO presign failed: %s", key)
             raise ObjectStorageError(str(exc)) from exc
+
+    async def delete(self, key: str) -> None:
+        def _delete() -> None:
+            client = self._get_client()
+            client.remove_object(self._settings.MINIO_BUCKET, key)
+
+        try:
+            await asyncio.to_thread(_delete)
+        except S3Error as exc:
+            logger.warning("MinIO delete failed for %s: %s", key, exc)
+
+    async def delete_many(self, keys: list[str]) -> int:
+        from minio.deleteobjects import DeleteObject
+
+        if not keys:
+            return 0
+
+        def _delete_many() -> int:
+            client = self._get_client()
+            errors = list(
+                client.remove_objects(
+                    self._settings.MINIO_BUCKET,
+                    (DeleteObject(k) for k in keys),
+                )
+            )
+            for err in errors:
+                logger.warning("MinIO delete error: %s", err)
+            return len(keys) - len(errors)
+
+        return await asyncio.to_thread(_delete_many)
