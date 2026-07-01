@@ -63,6 +63,8 @@ interface FormValues {
   fps: number | null;
   is_active: boolean;
   auto_capture_enabled: boolean;
+  alert_classes: string;
+  alert_min_confidence: number | null;
 }
 
 export default function CamerasPage() {
@@ -134,7 +136,13 @@ export default function CamerasPage() {
   const openCreate = () => {
     setEditing(null);
     form.resetFields();
-    form.setFieldsValue({ is_active: true, auto_capture_enabled: false, fps: 25 });
+    form.setFieldsValue({
+      is_active: true,
+      auto_capture_enabled: false,
+      fps: 25,
+      alert_classes: "",
+      alert_min_confidence: null,
+    });
     setDrawerOpen(true);
   };
 
@@ -150,6 +158,8 @@ export default function CamerasPage() {
       fps: c.fps,
       is_active: c.is_active,
       auto_capture_enabled: c.auto_capture_enabled,
+      alert_classes: c.alert_classes ?? "",
+      alert_min_confidence: c.alert_min_confidence,
     });
     setDrawerOpen(true);
   };
@@ -160,6 +170,11 @@ export default function CamerasPage() {
       const location = values.location?.trim() || null;
       const resolution = values.resolution?.trim() || null;
       const fps = values.fps ?? null;
+      const alertClasses = values.alert_classes?.trim() || null;
+      const alertMinConfidence =
+        typeof values.alert_min_confidence === "number"
+          ? values.alert_min_confidence
+          : null;
       if (editing) {
         await updateCamera(editing.id, {
           code: values.code,
@@ -174,6 +189,10 @@ export default function CamerasPage() {
           fps_unset: fps === null,
           is_active: values.is_active,
           auto_capture_enabled: values.auto_capture_enabled,
+          alert_classes: alertClasses,
+          alert_classes_unset: !alertClasses,
+          alert_min_confidence: alertMinConfidence,
+          alert_min_confidence_unset: alertMinConfidence === null,
         });
         message.success("Đã cập nhật camera");
       } else {
@@ -187,6 +206,8 @@ export default function CamerasPage() {
           fps,
           is_active: values.is_active,
           auto_capture_enabled: values.auto_capture_enabled,
+          alert_classes: alertClasses,
+          alert_min_confidence: alertMinConfidence,
         });
         message.success("Đã tạo camera");
       }
@@ -546,6 +567,26 @@ export default function CamerasPage() {
             tooltip="Khi bật, hệ thống sẽ định kỳ kéo frame từ Stream URL của camera này để phân tích AI. Yêu cầu RTSP_CAPTURE_ENABLED=true trên server."
           >
             <Switch />
+          </Form.Item>
+          <Form.Item
+            label="Class cảnh báo riêng (mặc định dùng cấu hình chung)"
+            name="alert_classes"
+            tooltip="Danh sách class phân cách bằng dấu phẩy. Ví dụ: person,car. Để trống để dùng DETECTION_ALERT_CLASSES toàn cục."
+          >
+            <Input maxLength={255} placeholder="person,car,motorcycle" />
+          </Form.Item>
+          <Form.Item
+            label="Ngưỡng confidence cảnh báo riêng"
+            name="alert_min_confidence"
+            tooltip="Số từ 0.0 đến 1.0. Để trống để dùng DETECTION_ALERT_MIN_CONFIDENCE toàn cục."
+          >
+            <InputNumber
+              min={0}
+              max={1}
+              step={0.05}
+              style={{ width: "100%" }}
+              placeholder="0.7"
+            />
           </Form.Item>
           <Button type="primary" htmlType="submit" loading={saving}>
             {editing ? "Cập nhật" : "Tạo mới"}

@@ -7,6 +7,7 @@ import logging
 import redis.asyncio as aioredis
 
 from app.config.settings import Settings
+from app.modules.camera.infrastructure.models import Camera
 from app.modules.detection.infrastructure.models import DetectionEvent
 from app.modules.notification.application.services import NotificationService
 from app.modules.notification.infrastructure.models import (
@@ -26,15 +27,31 @@ class DetectionAlertDispatcher:
         self._notifications = notification_service
         self._settings = settings
 
-    def _allowed_classes(self) -> set[str]:
-        raw = self._settings.DETECTION_ALERT_CLASSES or ""
+    def _resolve_classes(self, camera: Camera | None) -> set[str]:
+        raw = (
+            (camera.alert_classes if camera else None)
+            or self._settings.DETECTION_ALERT_CLASSES
+            or ""
+        )
         return {c.strip().lower() for c in raw.split(",") if c.strip()}
 
+    def _resolve_threshold(self, camera: Camera | None) -> float:
+        if camera and camera.alert_min_confidence is not None:
+            return float(camera.alert_min_confidence)
+        return float(self._settings.DETECTION_ALERT_MIN_CONFIDENCE)
+
     async def dispatch(
-        self, event: DetectionEvent, camera_name: str
+        self, event: DetectionEvent, camera: Camera | str
     ) -> int:
-        threshold = float(self._settings.DETECTION_ALERT_MIN_CONFIDENCE)
-        allowed = self._allowed_classes()
+        if isinstance(camera, str):
+            camera_obj: Camera | None = None
+            camera_name = camera
+        else:
+            camera_obj = camera
+            camera_name = camera.name
+
+        threshold = self._resolve_threshold(camera_obj)
+        allowed = self._resolve_classes(camera_obj)
         if event.user_id is None or not allowed:
             return 0
 

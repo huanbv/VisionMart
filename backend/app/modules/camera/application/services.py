@@ -65,6 +65,8 @@ class CameraService:
         config: dict | None,
         is_active: bool,
         auto_capture_enabled: bool = False,
+        alert_classes: str | None = None,
+        alert_min_confidence: float | None = None,
     ) -> Camera:
         branch = await self._repo.get_branch_in_org(organization_id, branch_id)
         if branch is None:
@@ -83,6 +85,8 @@ class CameraService:
             config=config,
             is_active=is_active,
             auto_capture_enabled=auto_capture_enabled,
+            alert_classes=alert_classes,
+            alert_min_confidence=alert_min_confidence,
         )
         return await self._repo.add(c)
 
@@ -101,6 +105,8 @@ class CameraService:
         config: object = _UNSET,
         is_active: bool | None = None,
         auto_capture_enabled: bool | None = None,
+        alert_classes: object = _UNSET,
+        alert_min_confidence: object = _UNSET,
     ) -> Camera:
         c = await self.get(organization_id, camera_id)
         if code is not None and code != c.code:
@@ -133,6 +139,13 @@ class CameraService:
                 c.auto_capture_enabled = False
         if auto_capture_enabled is not None:
             c.auto_capture_enabled = auto_capture_enabled and c.is_active
+        if alert_classes is not _UNSET:
+            value = alert_classes
+            if isinstance(value, str):
+                value = value.strip() or None
+            c.alert_classes = value  # type: ignore[assignment]
+        if alert_min_confidence is not _UNSET:
+            c.alert_min_confidence = alert_min_confidence  # type: ignore[assignment]
         return await self._repo.save(c)
 
     async def heartbeat(

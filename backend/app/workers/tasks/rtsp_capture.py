@@ -71,7 +71,7 @@ async def _capture_one(
         result=result,
         image_key=image_key,
     )
-    await dispatcher.dispatch(event, camera.name)
+    await dispatcher.dispatch(event, camera)
     return str(camera.id), f"ok:{event.detection_count}"
 
 

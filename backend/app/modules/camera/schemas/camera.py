@@ -25,6 +25,8 @@ class CameraResponse(BaseModel):
     is_online: bool
     is_active: bool
     auto_capture_enabled: bool
+    alert_classes: str | None
+    alert_min_confidence: float | None
     last_seen_at: datetime | None
     created_at: datetime
     updated_at: datetime
@@ -48,6 +50,8 @@ class CameraCreate(BaseModel):
     config: dict | None = None
     is_active: bool = True
     auto_capture_enabled: bool = False
+    alert_classes: str | None = Field(default=None, max_length=255)
+    alert_min_confidence: float | None = Field(default=None, ge=0.0, le=1.0)
 
 
 class CameraUpdate(BaseModel):
@@ -61,11 +65,15 @@ class CameraUpdate(BaseModel):
     config: dict | None = None
     is_active: bool | None = None
     auto_capture_enabled: bool | None = None
+    alert_classes: str | None = Field(default=None, max_length=255)
+    alert_min_confidence: float | None = Field(default=None, ge=0.0, le=1.0)
 
     location_unset: bool = False
     resolution_unset: bool = False
     fps_unset: bool = False
     config_unset: bool = False
+    alert_classes_unset: bool = False
+    alert_min_confidence_unset: bool = False
 
 
 class CameraHeartbeat(BaseModel):

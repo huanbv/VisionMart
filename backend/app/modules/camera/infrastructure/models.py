@@ -5,7 +5,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, UniqueConstraint
+from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Integer, String, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.database.entity import Entity
@@ -44,6 +44,10 @@ class Camera(Entity):
     )
     auto_capture_enabled: Mapped[bool] = mapped_column(
         Boolean, nullable=False, default=False, server_default="false"
+    )
+    alert_classes: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    alert_min_confidence: Mapped[float | None] = mapped_column(
+        Float, nullable=True
     )
     last_seen_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True

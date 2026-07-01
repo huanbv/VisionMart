@@ -15,6 +15,8 @@ export interface Camera {
   is_online: boolean;
   is_active: boolean;
   auto_capture_enabled: boolean;
+  alert_classes: string | null;
+  alert_min_confidence: number | null;
   last_seen_at: string | null;
   created_at: string;
   updated_at: string;
@@ -38,6 +40,8 @@ export interface CameraCreatePayload {
   config?: Record<string, unknown> | null;
   is_active?: boolean;
   auto_capture_enabled?: boolean;
+  alert_classes?: string | null;
+  alert_min_confidence?: number | null;
 }
 
 export interface CameraUpdatePayload {
@@ -51,10 +55,14 @@ export interface CameraUpdatePayload {
   config?: Record<string, unknown> | null;
   is_active?: boolean;
   auto_capture_enabled?: boolean;
+  alert_classes?: string | null;
+  alert_min_confidence?: number | null;
   location_unset?: boolean;
   resolution_unset?: boolean;
   fps_unset?: boolean;
   config_unset?: boolean;
+  alert_classes_unset?: boolean;
+  alert_min_confidence_unset?: boolean;
 }
 
 export interface CameraStats {
