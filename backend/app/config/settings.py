@@ -74,6 +74,7 @@ class Settings(BaseSettings):
     DETECTION_ALERT_MIN_CONFIDENCE: float = 0.7
     DETECTION_ALERT_CLASSES: str = "person"
     DETECTION_ALERT_DEDUP_SECONDS: int = 60
+    DETECTION_ALERT_FALLBACK_ROLE_CODE: str = "org_admin"
 
     # ---- RTSP auto-capture ----
     RTSP_CAPTURE_ENABLED: bool = False

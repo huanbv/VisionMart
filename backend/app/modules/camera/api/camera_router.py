@@ -315,7 +315,7 @@ async def analyze_camera_frame(
         SqlAlchemyNotificationRepository(session)
     )
     dispatcher = DetectionAlertDispatcher(notification_service, get_settings())
-    alerts_sent = await dispatcher.dispatch(event, camera)
+    alerts_sent = await dispatcher.dispatch(event, camera, session=session)
 
     return {
         "camera_id": str(camera_id),

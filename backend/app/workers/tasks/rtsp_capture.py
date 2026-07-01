@@ -77,7 +77,7 @@ async def _capture_one(
         result=result,
         image_key=image_key,
     )
-    await dispatcher.dispatch(event, camera)
+    await dispatcher.dispatch(event, camera, session=session)
     RTSP_CAPTURES_TOTAL.labels(outcome="ok").inc()
     DETECTION_EVENTS_TOTAL.labels(camera_id=str(camera.id)).inc()
     for det in event.detections or []:
