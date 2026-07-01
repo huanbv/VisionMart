@@ -45,6 +45,37 @@ class AIEngineClient:
             logger.warning("ai-engine detect failed: %s", exc)
             raise AIEngineError(str(exc)) from exc
 
+    async def frame(
+        self,
+        *,
+        content: bytes,
+        filename: str,
+        content_type: str,
+        organization_id: str,
+        branch_id: str,
+        camera_id: str | None = None,
+        recognize_face: bool = False,
+        min_confidence: float = 0.4,
+    ) -> dict[str, Any]:
+        url = f"{self._base_url}/ai/frame"
+        files = {"image": (filename, content, content_type)}
+        data: dict[str, str] = {
+            "organization_id": organization_id,
+            "branch_id": branch_id,
+            "recognize_face": "true" if recognize_face else "false",
+            "min_confidence": str(min_confidence),
+        }
+        if camera_id:
+            data["camera_id"] = camera_id
+        try:
+            async with httpx.AsyncClient(timeout=self._timeout) as client:
+                resp = await client.post(url, files=files, data=data)
+                resp.raise_for_status()
+                return resp.json()
+        except httpx.HTTPError as exc:
+            logger.warning("ai-engine frame failed: %s", exc)
+            raise AIEngineError(str(exc)) from exc
+
     async def capture(
         self,
         *,

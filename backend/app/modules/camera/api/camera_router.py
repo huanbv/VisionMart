@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import logging
 import uuid
+from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, UploadFile, File, status
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -40,6 +42,7 @@ from app.services.ai_engine_client import AIEngineClient, AIEngineError
 from app.services.object_storage import MinioStorage, ObjectStorageError
 
 router = APIRouter(prefix="/cameras", tags=["camera"])
+logger = logging.getLogger(__name__)
 
 
 def _service(session: AsyncSession) -> CameraService:
@@ -320,11 +323,26 @@ async def analyze_camera_frame(
     dispatcher = DetectionAlertDispatcher(notification_service, get_settings())
     alerts_sent = await dispatcher.dispatch(event, camera, session=session)
 
+    frame_pipeline: dict[str, Any] | None = None
+    try:
+        frame_pipeline = await client.frame(
+            content=content,
+            filename=image.filename or "frame.jpg",
+            content_type=image.content_type or "image/jpeg",
+            organization_id=str(current.organization_id),
+            branch_id=str(camera.branch_id),
+            camera_id=str(camera_id),
+            recognize_face=False,
+        )
+    except AIEngineError as exc:
+        logger.warning("ai-engine frame pipeline failed: %s", exc)
+
     return {
         "camera_id": str(camera_id),
         "detection_event_id": str(event.id),
         "image_key": image_key,
         "alerts_sent": alerts_sent,
+        "frame_pipeline": frame_pipeline,
         **result,
     }
 
