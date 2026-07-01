@@ -15,7 +15,11 @@ from app.modules.ai_training.infrastructure.models import (
     TrainingJob,
 )
 from app.modules.catalog.infrastructure.models import Product
-from app.services.ai_engine_client import AIEngineClient, AIEngineError
+from app.services.ai_engine_client import (
+    AIEngineClient,
+    AIEngineError,
+    AIEngineNotFoundError,
+)
 from app.services.object_storage import MinioStorage, ObjectStorageError
 
 logger = logging.getLogger(__name__)
@@ -213,6 +217,18 @@ class TrainingService:
                 job.total_epochs = status.get("total_epochs")
                 job.started_at_ts = status.get("started_at")
                 job.finished_at_ts = status.get("finished_at")
+            except AIEngineNotFoundError:
+                logger.warning(
+                    "training job %s missing in ai-engine, marking failed",
+                    job_id,
+                )
+                job.status = "failed"
+                job.error_message = (
+                    "AI Engine không còn giữ job này (có thể đã restart). "
+                    "Vui lòng tạo job mới."
+                )
+                await self._session.commit()
+                await self._session.refresh(job)
             except AIEngineError as exc:
                 logger.warning("training status poll failed: %s", exc)
         return job

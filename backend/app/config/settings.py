@@ -110,6 +110,8 @@ class Settings(BaseSettings):
     MINIO_ROOT_PASSWORD: str = "visionmart-minio"
     MINIO_BUCKET: str = "visionmart"
     MINIO_USE_SSL: bool = False
+    MINIO_PUBLIC_ENDPOINT: str | None = None
+    MINIO_PUBLIC_USE_SSL: bool = True
 
     @property
     def cors_origins_list(self) -> list[str]:

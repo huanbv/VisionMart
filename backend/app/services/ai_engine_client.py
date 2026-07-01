@@ -20,6 +20,10 @@ class AIEngineError(RuntimeError):
     """Raised when the AI Engine is unreachable or returns an error."""
 
 
+class AIEngineNotFoundError(AIEngineError):
+    """Raised when the AI Engine reports 404 for the requested resource."""
+
+
 class AIEngineClient:
     def __init__(self, base_url: str | None = None, timeout: float = 30.0) -> None:
         self._base_url = (base_url or get_settings().AI_ENGINE_BASE_URL).rstrip("/")
@@ -138,8 +142,12 @@ class AIEngineClient:
         try:
             async with httpx.AsyncClient(timeout=self._timeout) as client:
                 resp = await client.get(url)
+                if resp.status_code == 404:
+                    raise AIEngineNotFoundError(f"job {job_id} not found")
                 resp.raise_for_status()
                 return resp.json()
+        except AIEngineNotFoundError:
+            raise
         except httpx.HTTPError as exc:
             logger.warning("ai-engine train status failed: %s", exc)
             raise AIEngineError(str(exc)) from exc

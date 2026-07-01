@@ -27,6 +27,7 @@ class MinioStorage:
     def __init__(self, settings: Settings | None = None) -> None:
         self._settings = settings or get_settings()
         self._client: Minio | None = None
+        self._presign_client: Minio | None = None
 
     def _get_client(self) -> Minio:
         if self._client is None:
@@ -40,6 +41,19 @@ class MinioStorage:
             if not self._client.bucket_exists(bucket):
                 self._client.make_bucket(bucket)
         return self._client
+
+    def _get_presign_client(self) -> Minio:
+        public = self._settings.MINIO_PUBLIC_ENDPOINT
+        if not public:
+            return self._get_client()
+        if self._presign_client is None:
+            self._presign_client = Minio(
+                public,
+                access_key=self._settings.MINIO_ROOT_USER,
+                secret_key=self._settings.MINIO_ROOT_PASSWORD,
+                secure=self._settings.MINIO_PUBLIC_USE_SSL,
+            )
+        return self._presign_client
 
     async def put(
         self, key: str, data: bytes, content_type: str = "application/octet-stream"
@@ -63,7 +77,8 @@ class MinioStorage:
 
     async def presigned_get(self, key: str, expires_seconds: int = 3600) -> str:
         def _sign() -> str:
-            client = self._get_client()
+            self._get_client()
+            client = self._get_presign_client()
             return client.presigned_get_object(
                 self._settings.MINIO_BUCKET,
                 key,
