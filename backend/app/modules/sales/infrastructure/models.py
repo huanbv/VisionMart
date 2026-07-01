@@ -151,6 +151,9 @@ class Order(Entity):
         DateTime(timezone=True), nullable=True
     )
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    payment_gateway: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    payment_reference: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    payment_status: Mapped[str | None] = mapped_column(String(40), nullable=True)
 
     items: Mapped[list["OrderItem"]] = relationship(
         back_populates="order", cascade="all, delete-orphan", lazy="raise"

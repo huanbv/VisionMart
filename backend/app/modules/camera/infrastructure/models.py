@@ -49,6 +49,9 @@ class Camera(Entity):
     alert_min_confidence: Mapped[float | None] = mapped_column(
         Float, nullable=True
     )
+    is_checkout_zone: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default="false"
+    )
     last_seen_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )

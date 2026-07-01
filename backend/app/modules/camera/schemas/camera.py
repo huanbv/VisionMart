@@ -27,6 +27,7 @@ class CameraResponse(BaseModel):
     auto_capture_enabled: bool
     alert_classes: str | None
     alert_min_confidence: float | None
+    is_checkout_zone: bool = False
     last_seen_at: datetime | None
     created_at: datetime
     updated_at: datetime
@@ -52,6 +53,7 @@ class CameraCreate(BaseModel):
     auto_capture_enabled: bool = False
     alert_classes: str | None = Field(default=None, max_length=255)
     alert_min_confidence: float | None = Field(default=None, ge=0.0, le=1.0)
+    is_checkout_zone: bool = False
 
 
 class CameraUpdate(BaseModel):
@@ -67,6 +69,7 @@ class CameraUpdate(BaseModel):
     auto_capture_enabled: bool | None = None
     alert_classes: str | None = Field(default=None, max_length=255)
     alert_min_confidence: float | None = Field(default=None, ge=0.0, le=1.0)
+    is_checkout_zone: bool | None = None
 
     location_unset: bool = False
     resolution_unset: bool = False

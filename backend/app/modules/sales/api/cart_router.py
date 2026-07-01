@@ -20,6 +20,7 @@ from app.modules.inventory.infrastructure.repositories import (
     SqlAlchemyStockMovementRepository,
 )
 from app.modules.sales.application.cart_service import CartService
+from app.modules.sales.application.payment import build_payment_gateway
 from app.modules.sales.infrastructure.models import CartStatus, ShoppingCart
 from app.modules.sales.infrastructure.repositories import (
     SqlAlchemyCartRepository,
@@ -56,6 +57,7 @@ def build_cart_service(session: AsyncSession) -> CartService:
         branches=SqlAlchemyBranchRepository(session),
         orders=SqlAlchemyOrderRepository(session),
         order_items=SqlAlchemyOrderItemRepository(session),
+        payment_gateway=build_payment_gateway(),
     )
 
 

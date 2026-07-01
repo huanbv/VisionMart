@@ -30,6 +30,10 @@ from app.modules.inventory.infrastructure.repositories import (
     SqlAlchemyInventoryRepository,
 )
 from app.modules.sales.application.cart_realtime import publish_cart_update
+from app.modules.sales.application.payment import (
+    PaymentGateway,
+    SimulatedPaymentGateway,
+)
 from app.modules.sales.infrastructure.models import (
     CartSource,
     CartStatus,
@@ -66,6 +70,7 @@ class CartService:
         branches: SqlAlchemyBranchRepository,
         orders: SqlAlchemyOrderRepository,
         order_items: SqlAlchemyOrderItemRepository,
+        payment_gateway: PaymentGateway | None = None,
     ) -> None:
         self._carts = carts
         self._inventories = inventories
@@ -75,6 +80,7 @@ class CartService:
         self._orders = orders
         self._order_items = order_items
         self._settings = get_settings()
+        self._payment = payment_gateway or SimulatedPaymentGateway()
 
     # ------------------------------------------------------------------
     # Query
@@ -224,6 +230,17 @@ class CartService:
         if not lines:
             raise ValidationError("Cart is empty")
 
+        payment = await self._payment.charge(
+            cart_id=cart.id,
+            amount=cart.total_amount,
+            currency=cart.currency,
+            customer_id=cart.customer_id,
+        )
+        if not payment.success:
+            raise ConflictError(
+                f"Payment declined by {payment.gateway}: {payment.error or 'unknown'}"
+            )
+
         code = await self._orders.next_code(organization_id)
         now = _now()
         order = Order(
@@ -238,6 +255,9 @@ class CartService:
             currency=cart.currency,
             paid_at=now,
             notes="Auto-checkout via AI cart" if cart.source == CartSource.AI_VISION else None,
+            payment_gateway=payment.gateway,
+            payment_reference=payment.reference,
+            payment_status=payment.status,
         )
         order = await self._orders.add(order)
 

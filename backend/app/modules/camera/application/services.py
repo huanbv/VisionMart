@@ -67,6 +67,7 @@ class CameraService:
         auto_capture_enabled: bool = False,
         alert_classes: str | None = None,
         alert_min_confidence: float | None = None,
+        is_checkout_zone: bool = False,
     ) -> Camera:
         branch = await self._repo.get_branch_in_org(organization_id, branch_id)
         if branch is None:
@@ -87,6 +88,7 @@ class CameraService:
             auto_capture_enabled=auto_capture_enabled,
             alert_classes=alert_classes,
             alert_min_confidence=alert_min_confidence,
+            is_checkout_zone=is_checkout_zone,
         )
         return await self._repo.add(c)
 
@@ -107,6 +109,7 @@ class CameraService:
         auto_capture_enabled: bool | None = None,
         alert_classes: object = _UNSET,
         alert_min_confidence: object = _UNSET,
+        is_checkout_zone: bool | None = None,
     ) -> Camera:
         c = await self.get(organization_id, camera_id)
         if code is not None and code != c.code:
@@ -146,6 +149,8 @@ class CameraService:
             c.alert_classes = value  # type: ignore[assignment]
         if alert_min_confidence is not _UNSET:
             c.alert_min_confidence = alert_min_confidence  # type: ignore[assignment]
+        if is_checkout_zone is not None:
+            c.is_checkout_zone = is_checkout_zone
         return await self._repo.save(c)
 
     async def heartbeat(

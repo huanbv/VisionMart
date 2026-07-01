@@ -100,6 +100,10 @@ class Settings(BaseSettings):
     CART_SWEEPER_INTERVAL_SECONDS: int = 60
     CART_AI_MIN_CONFIDENCE: float = 0.6
 
+    # ---- Payment gateway ----
+    PAYMENT_GATEWAY: str = "simulated"
+    PAYMENT_SIMULATE_SUCCESS_RATE: float = 1.0
+
     # ---- MinIO ----
     MINIO_ENDPOINT: str = "minio:9000"
     MINIO_ROOT_USER: str = "visionmart"

@@ -74,6 +74,7 @@ def _to_response(camera: Camera, branch: Branch | None) -> CameraResponse:
         auto_capture_enabled=camera.auto_capture_enabled,
         alert_classes=camera.alert_classes,
         alert_min_confidence=camera.alert_min_confidence,
+        is_checkout_zone=camera.is_checkout_zone,
         last_seen_at=camera.last_seen_at,
         created_at=camera.created_at,
         updated_at=camera.updated_at,
@@ -151,6 +152,7 @@ async def create_camera(
             auto_capture_enabled=payload.auto_capture_enabled,
             alert_classes=payload.alert_classes,
             alert_min_confidence=payload.alert_min_confidence,
+            is_checkout_zone=payload.is_checkout_zone,
         )
     except ValidationError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
@@ -204,6 +206,7 @@ async def update_camera(
             alert_min_confidence=_resolve(
                 payload.alert_min_confidence, payload.alert_min_confidence_unset
             ),
+            is_checkout_zone=payload.is_checkout_zone,
         )
     except NotFoundError as exc:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
