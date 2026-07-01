@@ -57,6 +57,19 @@ export async function listCustomers(params: {
   return data;
 }
 
+export async function exportCustomersCsv(params: {
+  search?: string;
+  branch_id?: string;
+  is_active?: boolean;
+  max_rows?: number;
+}): Promise<Blob> {
+  const { data } = await apiClient.get<Blob>("/customers/export.csv", {
+    params,
+    responseType: "blob",
+  });
+  return data;
+}
+
 export async function getCustomer(id: string): Promise<Customer> {
   const { data } = await apiClient.get<Customer>(`/customers/${id}`);
   return data;

@@ -2,9 +2,14 @@
 
 from __future__ import annotations
 
+import csv
+import io
+import json
 import uuid
+from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
+from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exceptions import ConflictError, NotFoundError
@@ -62,6 +67,86 @@ async def list_customers(
         total=total,
         skip=skip,
         limit=limit,
+    )
+
+
+@router.get("/export.csv")
+async def export_customers_csv(
+    search: str | None = None,
+    branch_id: uuid.UUID | None = None,
+    is_active: bool | None = None,
+    max_rows: int = Query(10000, ge=1, le=100000),
+    current: CurrentUser = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> StreamingResponse:
+    service = _service(session)
+    batch_size = 500
+
+    async def _row_batches():
+        offset = 0
+        remaining = max_rows
+        while remaining > 0:
+            page_size = min(batch_size, remaining)
+            items, _ = await service.list(
+                current.organization_id,
+                skip=offset,
+                limit=page_size,
+                search=search,
+                branch_id=branch_id,
+                is_active=is_active,
+            )
+            if not items:
+                return
+            for c in items:
+                yield c
+            offset += len(items)
+            if len(items) < page_size:
+                return
+            remaining -= len(items)
+
+    async def _generate():
+        buffer = io.StringIO()
+        writer = csv.writer(buffer)
+        writer.writerow(
+            [
+                "id",
+                "created_at",
+                "full_name",
+                "email",
+                "phone",
+                "branch_id",
+                "is_active",
+                "attributes",
+            ]
+        )
+        yield buffer.getvalue()
+        buffer.seek(0)
+        buffer.truncate(0)
+
+        async for c in _row_batches():
+            writer.writerow(
+                [
+                    str(c.id),
+                    c.created_at.isoformat() if c.created_at else "",
+                    c.full_name or "",
+                    c.email or "",
+                    c.phone or "",
+                    str(c.branch_id) if c.branch_id else "",
+                    "true" if c.is_active else "false",
+                    json.dumps(c.attributes, ensure_ascii=False)
+                    if c.attributes
+                    else "",
+                ]
+            )
+            yield buffer.getvalue()
+            buffer.seek(0)
+            buffer.truncate(0)
+
+    filename = f"customers_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}.csv"
+    return StreamingResponse(
+        _generate(),
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
 
 

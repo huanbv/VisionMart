@@ -18,6 +18,7 @@ import {
 import {
   BarChartOutlined,
   DeleteOutlined,
+  DownloadOutlined,
   EditOutlined,
   PlusOutlined,
 } from "@ant-design/icons";
@@ -29,6 +30,7 @@ import {
   type Customer,
   type CustomerStats,
   deleteCustomer,
+  exportCustomersCsv,
   getCustomerStats,
   listCustomers,
   updateCustomer,
@@ -84,6 +86,26 @@ export default function CustomersPage() {
       message.error("Không tải được khách hàng");
     } finally {
       setLoading(false);
+    }
+  };
+
+  const onExport = async () => {
+    try {
+      const blob = await exportCustomersCsv({
+        search: search || undefined,
+        branch_id: branchFilter,
+        is_active: activeOnly ? true : undefined,
+      });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `customers_${new Date().toISOString()}.csv`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+    } catch {
+      message.error("Không xuất được CSV");
     }
   };
 
@@ -278,6 +300,12 @@ export default function CustomersPage() {
               Thêm khách
             </Button>
           )}
+          <Button
+            icon={<DownloadOutlined />}
+            onClick={() => void onExport()}
+          >
+            Xuất CSV
+          </Button>
         </Space>
       }
     >
