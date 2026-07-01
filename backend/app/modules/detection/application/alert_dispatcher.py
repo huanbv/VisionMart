@@ -7,6 +7,7 @@ import logging
 import redis.asyncio as aioredis
 
 from app.config.settings import Settings
+from app.core.metrics import ALERTS_SENT_TOTAL
 from app.modules.camera.infrastructure.models import Camera
 from app.modules.detection.infrastructure.models import DetectionEvent
 from app.modules.notification.application.services import NotificationService
@@ -112,6 +113,10 @@ class DetectionAlertDispatcher:
                         "model": event.model,
                     },
                 )
+                ALERTS_SENT_TOTAL.labels(
+                    camera_id=str(event.camera_id),
+                    class_name=class_name,
+                ).inc()
                 sent += 1
         finally:
             await redis_client.aclose()

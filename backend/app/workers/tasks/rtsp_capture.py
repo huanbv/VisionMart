@@ -13,6 +13,11 @@ import logging
 import uuid
 
 from app.config.settings import get_settings
+from app.core.metrics import (
+    DETECTION_EVENTS_TOTAL,
+    DETECTION_OBJECTS_TOTAL,
+    RTSP_CAPTURES_TOTAL,
+)
 from app.database.session import SessionLocal
 from app.modules.camera.infrastructure.repositories import (
     SqlAlchemyCameraRepository,
@@ -48,6 +53,7 @@ async def _capture_one(
             open_timeout_ms=get_settings().RTSP_CAPTURE_OPEN_TIMEOUT_MS,
         )
     except AIEngineError as exc:
+        RTSP_CAPTURES_TOTAL.labels(outcome="error").inc()
         return str(camera.id), f"capture-failed: {exc}"
 
     frame_b64 = result.pop("frame_base64", None)
@@ -72,6 +78,12 @@ async def _capture_one(
         image_key=image_key,
     )
     await dispatcher.dispatch(event, camera)
+    RTSP_CAPTURES_TOTAL.labels(outcome="ok").inc()
+    DETECTION_EVENTS_TOTAL.labels(camera_id=str(camera.id)).inc()
+    for det in event.detections or []:
+        if isinstance(det, dict):
+            cls = str(det.get("class_name") or "unknown")
+            DETECTION_OBJECTS_TOTAL.labels(class_name=cls).inc()
     return str(camera.id), f"ok:{event.detection_count}"
 
 

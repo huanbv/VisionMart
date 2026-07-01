@@ -14,6 +14,11 @@ from typing import Any
 from fastapi import APIRouter, File, HTTPException, Query, UploadFile, status
 from PIL import Image, UnidentifiedImageError
 
+from app.metrics import (
+    DETECT_REQUESTS_TOTAL,
+    DETECTED_OBJECTS_TOTAL,
+    INFERENCE_LATENCY,
+)
 from app.services.yolo_detector import YoloDetector
 
 logger = logging.getLogger("ai-engine.detect")
@@ -71,6 +76,7 @@ async def detect(
             detections = await detector.detect(content)
             model_name = detector.model_name
         except Exception as exc:  # noqa: BLE001
+            DETECT_REQUESTS_TOTAL.labels(outcome="error").inc()
             logger.exception("YOLO inference failed")
             raise HTTPException(
                 status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -78,6 +84,13 @@ async def detect(
             ) from exc
 
     elapsed_ms = round((time.perf_counter() - started) * 1000, 2)
+    INFERENCE_LATENCY.labels(model=model_name, endpoint="detect").observe(
+        elapsed_ms / 1000.0
+    )
+    DETECT_REQUESTS_TOTAL.labels(outcome="ok").inc()
+    for det in detections:
+        cls = str(det.get("class_name") or "unknown")
+        DETECTED_OBJECTS_TOTAL.labels(class_name=cls).inc()
 
     return {
         "model": model_name,

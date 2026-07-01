@@ -13,6 +13,11 @@ import numpy as np
 from fastapi import APIRouter, HTTPException, status
 from pydantic import BaseModel, Field
 
+from app.metrics import (
+    CAPTURE_REQUESTS_TOTAL,
+    DETECTED_OBJECTS_TOTAL,
+    INFERENCE_LATENCY,
+)
 from app.services.yolo_detector import YoloDetector
 
 logger = logging.getLogger("ai-engine.capture")
@@ -51,6 +56,7 @@ async def capture(payload: CaptureRequest) -> dict[str, Any]:
             _grab_frame, payload.stream_url, payload.open_timeout_ms
         )
     except Exception as exc:  # noqa: BLE001
+        CAPTURE_REQUESTS_TOTAL.labels(outcome="error").inc()
         raise HTTPException(
             status.HTTP_502_BAD_GATEWAY, detail=str(exc)
         ) from exc
@@ -93,6 +99,13 @@ async def capture(payload: CaptureRequest) -> dict[str, Any]:
             ) from exc
 
     elapsed_ms = round((time.perf_counter() - started) * 1000, 2)
+    INFERENCE_LATENCY.labels(model=model_name, endpoint="capture").observe(
+        elapsed_ms / 1000.0
+    )
+    CAPTURE_REQUESTS_TOTAL.labels(outcome="ok").inc()
+    for det in detections:
+        cls = str(det.get("class_name") or "unknown")
+        DETECTED_OBJECTS_TOTAL.labels(class_name=cls).inc()
     return {
         "model": model_name,
         "image": {
