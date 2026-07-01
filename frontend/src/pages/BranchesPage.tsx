@@ -220,7 +220,7 @@ export default function BranchesPage() {
         open={drawerOpen}
         onClose={() => setDrawerOpen(false)}
         width={480}
-        destroyOnClose
+        destroyOnHidden
       >
         <Form form={form} layout="vertical" onFinish={onSubmit}>
           <Form.Item

@@ -390,7 +390,7 @@ export default function InventoryPage() {
         open={adjustOpen}
         onClose={() => setAdjustOpen(false)}
         width={460}
-        destroyOnClose
+        destroyOnHidden
       >
         <Form form={adjustForm} layout="vertical" onFinish={onAdjust}>
           <Form.Item
@@ -444,7 +444,7 @@ export default function InventoryPage() {
         open={transferOpen}
         onClose={() => setTransferOpen(false)}
         width={460}
-        destroyOnClose
+        destroyOnHidden
       >
         <Form form={transferForm} layout="vertical" onFinish={onTransfer}>
           <Form.Item

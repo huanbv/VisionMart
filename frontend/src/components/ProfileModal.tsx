@@ -55,7 +55,7 @@ export default function ProfileModal({ open, onClose }: Props) {
       confirmLoading={submitting}
       onOk={() => void handleOk()}
       onCancel={onClose}
-      destroyOnClose
+      destroyOnHidden
       width={640}
     >
       <Form form={form} layout="vertical" preserve={false}>

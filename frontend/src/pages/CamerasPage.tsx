@@ -510,7 +510,7 @@ export default function CamerasPage() {
         open={drawerOpen}
         onClose={() => setDrawerOpen(false)}
         width={520}
-        destroyOnClose
+        destroyOnHidden
       >
         <Form form={form} layout="vertical" onFinish={onSubmit}>
           <Form.Item

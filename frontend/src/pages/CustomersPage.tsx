@@ -328,7 +328,7 @@ export default function CustomersPage() {
         open={drawerOpen}
         onClose={() => setDrawerOpen(false)}
         width={460}
-        destroyOnClose
+        destroyOnHidden
       >
         <Form form={form} layout="vertical" onFinish={onSubmit}>
           <Form.Item label="Họ tên" name="full_name">
