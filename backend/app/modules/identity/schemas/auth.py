@@ -22,6 +22,10 @@ class ChangePasswordRequest(BaseModel):
     new_password: str = Field(min_length=8, max_length=128)
 
 
+class UpdateProfileRequest(BaseModel):
+    full_name: str | None = Field(default=None, max_length=255)
+
+
 class TokenResponse(BaseModel):
     access_token: str
     refresh_token: str

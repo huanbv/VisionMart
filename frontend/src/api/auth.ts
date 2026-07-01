@@ -44,6 +44,15 @@ export async function me(): Promise<CurrentUser> {
   return data;
 }
 
+export async function updateProfile(
+  fullName: string | null,
+): Promise<CurrentUser> {
+  const { data } = await apiClient.patch<CurrentUser>("/auth/me", {
+    full_name: fullName,
+  });
+  return data;
+}
+
 export async function changePassword(
   currentPassword: string,
   newPassword: string,

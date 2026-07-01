@@ -23,6 +23,7 @@ from app.modules.identity.schemas.auth import (
     LoginRequest,
     RefreshRequest,
     TokenResponse,
+    UpdateProfileRequest,
 )
 
 router = APIRouter(prefix="/auth", tags=["auth"])
@@ -136,6 +137,35 @@ async def me(
         is_superuser=user.is_superuser,
         roles=roles,
         last_login_at=user.last_login_at,
+    )
+
+
+@router.patch("/me", response_model=CurrentUserResponse)
+async def update_me(
+    payload: UpdateProfileRequest,
+    current: CurrentUser = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+    settings: Settings = Depends(get_settings),
+) -> CurrentUserResponse:
+    users = SqlAlchemyUserRepository(session)
+    user = await users.get_by_id(current.user_id)
+    if user is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="User not found")
+    full_name = (payload.full_name or "").strip() or None
+    user.full_name = full_name
+    await users.save(user)
+    service = _build_service(session, settings)
+    refreshed, roles = await service.get_current_user(current.user_id)
+    return CurrentUserResponse(
+        id=refreshed.id,
+        organization_id=refreshed.organization_id,
+        email=refreshed.email,
+        username=refreshed.username,
+        full_name=refreshed.full_name,
+        is_active=refreshed.is_active,
+        is_superuser=refreshed.is_superuser,
+        roles=roles,
+        last_login_at=refreshed.last_login_at,
     )
 
 

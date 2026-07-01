@@ -27,6 +27,7 @@ import { Link, Outlet, useLocation, useNavigate } from "react-router-dom";
 import { useAuth } from "@/contexts/AuthContext";
 import ChangePasswordModal from "@/components/ChangePasswordModal";
 import NotificationBell from "@/components/NotificationBell";
+import ProfileModal from "@/components/ProfileModal";
 import { logoutAll } from "@/api/auth";
 
 const { Header, Sider, Content } = Layout;
@@ -138,6 +139,7 @@ export default function AppLayout() {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
   const [passwordModalOpen, setPasswordModalOpen] = useState(false);
+  const [profileModalOpen, setProfileModalOpen] = useState(false);
   const location = useLocation();
 
   const selectedKey = useMemo(() => {
@@ -190,7 +192,12 @@ export default function AppLayout() {
           <Space>
             <NotificationBell />
             <Avatar icon={<UserOutlined />} />
-            <Typography.Text strong>{user?.email}</Typography.Text>
+            <Typography.Link
+              strong
+              onClick={() => setProfileModalOpen(true)}
+            >
+              {user?.full_name || user?.email}
+            </Typography.Link>
             <Button
               icon={<KeyOutlined />}
               onClick={() => setPasswordModalOpen(true)}
@@ -221,6 +228,10 @@ export default function AppLayout() {
       <ChangePasswordModal
         open={passwordModalOpen}
         onClose={() => setPasswordModalOpen(false)}
+      />
+      <ProfileModal
+        open={profileModalOpen}
+        onClose={() => setProfileModalOpen(false)}
       />
     </Layout>
   );
