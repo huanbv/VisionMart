@@ -47,7 +47,7 @@ def _resolve(value: object, unset: bool) -> object:
 @router.get("", response_model=CustomerListResponse)
 async def list_customers(
     skip: int = Query(0, ge=0),
-    limit: int = Query(50, ge=1, le=200),
+    limit: int = Query(50, ge=1, le=500),
     search: str | None = None,
     branch_id: uuid.UUID | None = None,
     is_active: bool | None = None,
