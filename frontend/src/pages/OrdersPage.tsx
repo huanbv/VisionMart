@@ -11,13 +11,14 @@ import {
   Tag,
   message,
 } from "antd";
-import { CloseCircleOutlined, EyeOutlined } from "@ant-design/icons";
+import { CloseCircleOutlined, DownloadOutlined, EyeOutlined } from "@ant-design/icons";
 import type { ColumnsType } from "antd/es/table";
 import type { Dayjs } from "dayjs";
 
 import { listBranches, type Branch } from "@/api/tenancy";
 import {
   cancelOrder,
+  exportOrdersCsv,
   getOrder,
   listOrders,
   type OrderDetail,
@@ -120,6 +121,27 @@ export default function OrdersPage() {
     }
   };
 
+  const onExport = async () => {
+    try {
+      const blob = await exportOrdersCsv({
+        branch_id: branchFilter,
+        status: statusFilter,
+        date_from: dateRange?.[0]?.startOf("day").toISOString(),
+        date_to: dateRange?.[1]?.endOf("day").toISOString(),
+      });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `orders_${new Date().toISOString()}.csv`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+    } catch {
+      message.error("Không xuất được CSV");
+    }
+  };
+
   const columns: ColumnsType<OrderSummary> = [
     { title: "Mã đơn", dataIndex: "code", width: 180 },
     { title: "Chi nhánh", dataIndex: "branch_name", width: 200 },
@@ -198,6 +220,9 @@ export default function OrdersPage() {
               setDateRange(v as [Dayjs, Dayjs] | null);
             }}
           />
+          <Button icon={<DownloadOutlined />} onClick={() => void onExport()}>
+            Xuất CSV
+          </Button>
         </Space>
       }
     >

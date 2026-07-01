@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import csv
+import io
 import uuid
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exceptions import ConflictError, NotFoundError, ValidationError
@@ -121,6 +124,92 @@ async def list_orders(
         total=total,
         skip=skip,
         limit=limit,
+    )
+
+
+@router.get("/export.csv")
+async def export_orders_csv(
+    branch_id: uuid.UUID | None = None,
+    order_status: OrderStatus | None = Query(None, alias="status"),
+    date_from: datetime | None = None,
+    date_to: datetime | None = None,
+    search: str | None = None,
+    max_rows: int = Query(10000, ge=1, le=100000),
+    current: CurrentUser = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> StreamingResponse:
+    service = _service(session)
+    batch_size = 500
+
+    async def _row_batches():
+        offset = 0
+        remaining = max_rows
+        while remaining > 0:
+            page_size = min(batch_size, remaining)
+            rows, _ = await service.list(
+                current.organization_id,
+                skip=offset,
+                limit=page_size,
+                branch_id=branch_id,
+                status=order_status,
+                date_from=date_from,
+                date_to=date_to,
+                search=search,
+            )
+            if not rows:
+                return
+            for order, branch in rows:
+                yield order, branch
+            offset += len(rows)
+            if len(rows) < page_size:
+                return
+            remaining -= len(rows)
+
+    async def _generate():
+        buffer = io.StringIO()
+        writer = csv.writer(buffer)
+        writer.writerow(
+            [
+                "id",
+                "code",
+                "created_at",
+                "paid_at",
+                "branch_code",
+                "branch_name",
+                "customer_id",
+                "status",
+                "currency",
+                "total_amount",
+            ]
+        )
+        yield buffer.getvalue()
+        buffer.seek(0)
+        buffer.truncate(0)
+
+        async for order, branch in _row_batches():
+            writer.writerow(
+                [
+                    str(order.id),
+                    order.code,
+                    order.created_at.isoformat() if order.created_at else "",
+                    order.paid_at.isoformat() if order.paid_at else "",
+                    branch.code,
+                    branch.name,
+                    str(order.customer_id) if order.customer_id else "",
+                    order.status.value if hasattr(order.status, "value") else str(order.status),
+                    order.currency,
+                    str(order.total_amount),
+                ]
+            )
+            yield buffer.getvalue()
+            buffer.seek(0)
+            buffer.truncate(0)
+
+    filename = f"orders_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}.csv"
+    return StreamingResponse(
+        _generate(),
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
 
 

@@ -78,6 +78,21 @@ export async function listOrders(params: {
   return data;
 }
 
+export async function exportOrdersCsv(params: {
+  branch_id?: string;
+  status?: OrderStatus;
+  date_from?: string;
+  date_to?: string;
+  search?: string;
+  max_rows?: number;
+}): Promise<Blob> {
+  const { data } = await apiClient.get<Blob>("/orders/export.csv", {
+    params,
+    responseType: "blob",
+  });
+  return data;
+}
+
 export async function getOrder(id: string): Promise<OrderDetail> {
   const { data } = await apiClient.get<OrderDetail>(`/orders/${id}`);
   return data;
