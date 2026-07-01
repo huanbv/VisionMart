@@ -141,3 +141,19 @@ class SqlAlchemyCameraRepository:
         )
         row = (await self._session.execute(stmt)).one()
         return int(row[0] or 0), int(row[1] or 0), int(row[2] or 0)
+
+    async def list_active_with_stream(
+        self, *, limit: int = 100
+    ) -> list[Camera]:
+        stmt = (
+            select(Camera)
+            .where(
+                Camera.is_deleted.is_(False),
+                Camera.is_active.is_(True),
+                Camera.stream_url.isnot(None),
+                func.length(Camera.stream_url) > 0,
+            )
+            .order_by(Camera.created_at.asc())
+            .limit(limit)
+        )
+        return list((await self._session.execute(stmt)).scalars().all())

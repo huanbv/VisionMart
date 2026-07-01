@@ -44,3 +44,26 @@ class AIEngineClient:
         except httpx.HTTPError as exc:
             logger.warning("ai-engine detect failed: %s", exc)
             raise AIEngineError(str(exc)) from exc
+
+    async def capture(
+        self,
+        *,
+        stream_url: str,
+        model: str | None = None,
+        open_timeout_ms: int = 5000,
+    ) -> dict[str, Any]:
+        url = f"{self._base_url}/capture"
+        payload = {
+            "stream_url": stream_url,
+            "open_timeout_ms": open_timeout_ms,
+        }
+        if model:
+            payload["model"] = model
+        try:
+            async with httpx.AsyncClient(timeout=self._timeout) as client:
+                resp = await client.post(url, json=payload)
+                resp.raise_for_status()
+                return resp.json()
+        except httpx.HTTPError as exc:
+            logger.warning("ai-engine capture failed: %s", exc)
+            raise AIEngineError(str(exc)) from exc

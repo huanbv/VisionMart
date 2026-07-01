@@ -75,6 +75,12 @@ class Settings(BaseSettings):
     DETECTION_ALERT_CLASSES: str = "person"
     DETECTION_ALERT_DEDUP_SECONDS: int = 60
 
+    # ---- RTSP auto-capture ----
+    RTSP_CAPTURE_ENABLED: bool = False
+    RTSP_CAPTURE_INTERVAL_SECONDS: int = 60
+    RTSP_CAPTURE_MAX_CAMERAS: int = 20
+    RTSP_CAPTURE_OPEN_TIMEOUT_MS: int = 5000
+
     # ---- MinIO ----
     MINIO_ENDPOINT: str = "minio:9000"
     MINIO_ROOT_USER: str = "visionmart"

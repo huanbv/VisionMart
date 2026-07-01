@@ -13,7 +13,10 @@ celery_app = Celery(
     "visionmart",
     broker=_settings.CELERY_BROKER_URL,
     backend=_settings.CELERY_RESULT_BACKEND,
-    include=["app.workers.tasks.alerts"],
+    include=[
+        "app.workers.tasks.alerts",
+        "app.workers.tasks.rtsp_capture",
+    ],
 )
 
 celery_app.conf.update(
@@ -29,6 +32,12 @@ celery_app.conf.update(
         "alerts-scan-all": {
             "task": "alerts.scan_all",
             "schedule": schedule(run_every=_settings.ALERT_SCAN_INTERVAL_SECONDS),
+        },
+        "rtsp-scan-all": {
+            "task": "rtsp.scan_all",
+            "schedule": schedule(
+                run_every=_settings.RTSP_CAPTURE_INTERVAL_SECONDS
+            ),
         },
     },
 )
