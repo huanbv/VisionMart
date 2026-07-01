@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config.settings import Settings, get_settings
 from app.core.exceptions import NotFoundError, UnauthorizedError
+from app.core.rate_limit import enforce as enforce_rate_limit
 from app.database.session import get_session
 from app.dependencies.auth import CurrentUser, get_current_user
 from app.modules.identity.application.auth_service import AuthService
@@ -46,6 +47,13 @@ async def login(
     session: AsyncSession = Depends(get_session),
     settings: Settings = Depends(get_settings),
 ) -> TokenResponse:
+    await enforce_rate_limit(
+        request,
+        bucket="auth:login",
+        limit=settings.AUTH_LOGIN_RATE_LIMIT,
+        window_seconds=settings.AUTH_LOGIN_RATE_WINDOW_SECONDS,
+        settings=settings,
+    )
     service = _build_service(session, settings)
     try:
         _, tokens = await service.authenticate(
@@ -71,6 +79,13 @@ async def refresh(
     session: AsyncSession = Depends(get_session),
     settings: Settings = Depends(get_settings),
 ) -> TokenResponse:
+    await enforce_rate_limit(
+        request,
+        bucket="auth:refresh",
+        limit=settings.AUTH_REFRESH_RATE_LIMIT,
+        window_seconds=settings.AUTH_REFRESH_RATE_WINDOW_SECONDS,
+        settings=settings,
+    )
     service = _build_service(session, settings)
     try:
         tokens = await service.refresh(

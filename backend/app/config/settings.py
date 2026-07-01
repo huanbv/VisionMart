@@ -76,6 +76,12 @@ class Settings(BaseSettings):
     DETECTION_ALERT_DEDUP_SECONDS: int = 60
     DETECTION_ALERT_FALLBACK_ROLE_CODE: str = "org_admin"
 
+    # ---- Auth rate limiting ----
+    AUTH_LOGIN_RATE_LIMIT: int = 10
+    AUTH_LOGIN_RATE_WINDOW_SECONDS: int = 300
+    AUTH_REFRESH_RATE_LIMIT: int = 60
+    AUTH_REFRESH_RATE_WINDOW_SECONDS: int = 300
+
     # ---- RTSP auto-capture ----
     RTSP_CAPTURE_ENABLED: bool = False
     RTSP_CAPTURE_INTERVAL_SECONDS: int = 60
