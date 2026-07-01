@@ -122,3 +122,18 @@ export async function listMovements(
   );
   return data;
 }
+
+export async function exportMovementsCsv(params: {
+  branch_id?: string;
+  product_id?: string;
+  movement_type?: MovementType;
+  date_from?: string;
+  date_to?: string;
+  max_rows?: number;
+}): Promise<Blob> {
+  const { data } = await apiClient.get<Blob>("/inventory/movements/export.csv", {
+    params,
+    responseType: "blob",
+  });
+  return data;
+}

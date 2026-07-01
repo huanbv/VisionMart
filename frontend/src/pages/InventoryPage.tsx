@@ -15,6 +15,7 @@ import {
   message,
 } from "antd";
 import {
+  DownloadOutlined,
   HistoryOutlined,
   PlusOutlined,
   SettingOutlined,
@@ -26,6 +27,7 @@ import { listBranches, type Branch } from "@/api/tenancy";
 import { listProducts, type Product } from "@/api/catalog";
 import {
   adjustInventory,
+  exportMovementsCsv,
   type InventoryRow,
   listInventory,
   listMovements,
@@ -234,6 +236,24 @@ export default function InventoryPage() {
     }
   };
 
+  const onExportMovements = async () => {
+    try {
+      const blob = await exportMovementsCsv({
+        branch_id: branchFilter,
+      });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `stock_movements_${new Date().toISOString()}.csv`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+    } catch {
+      message.error("Không xuất được CSV");
+    }
+  };
+
   const columns: ColumnsType<InventoryRow> = [
     { title: "SKU", dataIndex: "product_sku", width: 130 },
     { title: "Sản phẩm", dataIndex: "product_name" },
@@ -341,6 +361,12 @@ export default function InventoryPage() {
               </Button>
             </>
           )}
+          <Button
+            icon={<DownloadOutlined />}
+            onClick={() => void onExportMovements()}
+          >
+            Xuất lịch sử CSV
+          </Button>
         </Space>
       }
     >

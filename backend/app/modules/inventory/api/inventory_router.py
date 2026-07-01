@@ -2,9 +2,13 @@
 
 from __future__ import annotations
 
+import csv
+import io
 import uuid
+from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exceptions import ConflictError, NotFoundError, ValidationError
@@ -15,7 +19,7 @@ from app.modules.catalog.infrastructure.repositories import (
     SqlAlchemyProductRepository,
 )
 from app.modules.inventory.application.services import InventoryService
-from app.modules.inventory.infrastructure.models import Inventory
+from app.modules.inventory.infrastructure.models import Inventory, StockMovementType
 from app.modules.inventory.infrastructure.repositories import (
     SqlAlchemyInventoryRepository,
     SqlAlchemyStockMovementRepository,
@@ -223,4 +227,96 @@ async def list_movements(
         total=total,
         skip=skip,
         limit=limit,
+    )
+
+
+@router.get("/movements/export.csv")
+async def export_movements_csv(
+    branch_id: uuid.UUID | None = None,
+    product_id: uuid.UUID | None = None,
+    movement_type: StockMovementType | None = None,
+    date_from: datetime | None = None,
+    date_to: datetime | None = None,
+    max_rows: int = Query(10000, ge=1, le=100000),
+    current: CurrentUser = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> StreamingResponse:
+    movements = SqlAlchemyStockMovementRepository(session)
+    batch_size = 500
+
+    async def _row_batches():
+        offset = 0
+        remaining = max_rows
+        while remaining > 0:
+            page_size = min(batch_size, remaining)
+            rows = await movements.list_for_org(
+                current.organization_id,
+                skip=offset,
+                limit=page_size,
+                branch_id=branch_id,
+                product_id=product_id,
+                movement_type=movement_type,
+                date_from=date_from,
+                date_to=date_to,
+            )
+            if not rows:
+                return
+            for row in rows:
+                yield row
+            offset += len(rows)
+            if len(rows) < page_size:
+                return
+            remaining -= len(rows)
+
+    async def _generate():
+        buffer = io.StringIO()
+        writer = csv.writer(buffer)
+        writer.writerow(
+            [
+                "id",
+                "created_at",
+                "branch_code",
+                "branch_name",
+                "product_sku",
+                "product_name",
+                "movement_type",
+                "delta",
+                "quantity_after",
+                "reason",
+                "reference",
+                "performed_by",
+            ]
+        )
+        yield buffer.getvalue()
+        buffer.seek(0)
+        buffer.truncate(0)
+
+        async for movement, product, branch in _row_batches():
+            writer.writerow(
+                [
+                    str(movement.id),
+                    movement.created_at.isoformat() if movement.created_at else "",
+                    branch.code,
+                    branch.name,
+                    product.sku,
+                    product.name,
+                    movement.movement_type.value
+                    if hasattr(movement.movement_type, "value")
+                    else str(movement.movement_type),
+                    movement.delta,
+                    movement.quantity_after,
+                    movement.reason or "",
+                    movement.reference or "",
+                    str(movement.performed_by) if movement.performed_by else "",
+                ]
+            )
+            yield buffer.getvalue()
+            buffer.seek(0)
+            buffer.truncate(0)
+
+    filename = f"stock_movements_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}.csv"
+    return StreamingResponse(
+        _generate(),
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )

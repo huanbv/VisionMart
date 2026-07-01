@@ -3,12 +3,17 @@
 from __future__ import annotations
 
 import uuid
+from datetime import datetime
 
 from sqlalchemy import and_, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.modules.catalog.infrastructure.models import Product
-from app.modules.inventory.infrastructure.models import Inventory, StockMovement
+from app.modules.inventory.infrastructure.models import (
+    Inventory,
+    StockMovement,
+    StockMovementType,
+)
 from app.modules.tenancy.infrastructure.models import Branch
 
 
@@ -155,3 +160,39 @@ class SqlAlchemyStockMovementRepository:
             .all()
         )
         return list(items), int(total)
+
+    async def list_for_org(
+        self,
+        organization_id: uuid.UUID,
+        *,
+        skip: int = 0,
+        limit: int = 500,
+        branch_id: uuid.UUID | None = None,
+        product_id: uuid.UUID | None = None,
+        movement_type: StockMovementType | None = None,
+        date_from: datetime | None = None,
+        date_to: datetime | None = None,
+    ) -> list[tuple[StockMovement, Product, Branch]]:
+        stmt = (
+            select(StockMovement, Product, Branch)
+            .join(Product, Product.id == StockMovement.product_id)
+            .join(Branch, Branch.id == StockMovement.branch_id)
+            .where(StockMovement.organization_id == organization_id)
+        )
+        if branch_id is not None:
+            stmt = stmt.where(StockMovement.branch_id == branch_id)
+        if product_id is not None:
+            stmt = stmt.where(StockMovement.product_id == product_id)
+        if movement_type is not None:
+            stmt = stmt.where(StockMovement.movement_type == movement_type)
+        if date_from is not None:
+            stmt = stmt.where(StockMovement.created_at >= date_from)
+        if date_to is not None:
+            stmt = stmt.where(StockMovement.created_at <= date_to)
+        stmt = (
+            stmt.order_by(StockMovement.created_at.desc())
+            .offset(skip)
+            .limit(limit)
+        )
+        rows = (await self._session.execute(stmt)).all()
+        return [(r[0], r[1], r[2]) for r in rows]
