@@ -10,6 +10,7 @@ import asyncio
 import io
 import logging
 from datetime import timedelta
+from urllib.parse import urlparse, urlunparse
 
 from minio import Minio
 from minio.error import S3Error
@@ -55,6 +56,44 @@ class MinioStorage:
             )
         return self._presign_client
 
+    def _rewrite_url(self, signed_url: str) -> str:
+        """Rewrite the host (and optional path prefix) of a presigned URL.
+
+        The minio SDK always signs URLs against the host it was configured
+        with. When ``MINIO_PUBLIC_ENDPOINT`` differs from ``MINIO_ENDPOINT``
+        (e.g. internal ``minio:9000`` vs. public ``localhost:9000`` or a
+        reverse-proxied path), the signature is still valid for the original
+        host, so we must rewrite the URL to point at the public endpoint
+        while keeping the query string (which carries the signature).
+        """
+        public = self._settings.MINIO_PUBLIC_ENDPOINT
+        if not public:
+            return signed_url
+
+        parsed = urlparse(signed_url)
+        public_parsed = urlparse(f"//{public}")
+        new_netloc = public_parsed.netloc or public_parsed.path
+        new_scheme = public_parsed.scheme or parsed.scheme
+
+        # Optional path prefix (e.g. when MinIO is reverse-proxied under
+        # ``/visionmart/``). The SDK signs against the bucket path, so we
+        # need to inject the prefix here.
+        path_prefix = self._settings.MINIO_PUBLIC_PATH_PREFIX.rstrip("/")
+        new_path = parsed.path
+        if path_prefix and not new_path.startswith(path_prefix + "/"):
+            new_path = f"{path_prefix}{new_path}"
+
+        return urlunparse(
+            (
+                new_scheme,
+                new_netloc,
+                new_path,
+                parsed.params,
+                parsed.query,
+                parsed.fragment,
+            )
+        )
+
     async def put(
         self, key: str, data: bytes, content_type: str = "application/octet-stream"
     ) -> str:
@@ -79,11 +118,12 @@ class MinioStorage:
         def _sign() -> str:
             self._get_client()
             client = self._get_presign_client()
-            return client.presigned_get_object(
+            url = client.presigned_get_object(
                 self._settings.MINIO_BUCKET,
                 key,
                 expires=timedelta(seconds=expires_seconds),
             )
+            return self._rewrite_url(url)
 
         try:
             return await asyncio.to_thread(_sign)
@@ -120,3 +160,4 @@ class MinioStorage:
             return len(keys) - len(errors)
 
         return await asyncio.to_thread(_delete_many)
+

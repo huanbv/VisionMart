@@ -112,6 +112,9 @@ class Settings(BaseSettings):
     MINIO_USE_SSL: bool = False
     MINIO_PUBLIC_ENDPOINT: str | None = None
     MINIO_PUBLIC_USE_SSL: bool = True
+    # Optional path prefix when MinIO is reverse-proxied (e.g. "/visionmart").
+    # Leave empty when MINIO_PUBLIC_ENDPOINT points directly at MinIO.
+    MINIO_PUBLIC_PATH_PREFIX: str = ""
 
     @property
     def cors_origins_list(self) -> list[str]:
