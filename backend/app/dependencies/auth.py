@@ -8,9 +8,8 @@ from typing import Callable
 
 from fastapi import Depends, Header, HTTPException, status
 
-from app.config.settings import Settings, get_settings
 from app.core.exceptions import UnauthorizedError
-from app.modules.identity.application.jwt_service import JWTService
+from app.modules.identity.application.jwt_service import get_jwt_service
 
 
 @dataclass(frozen=True)
@@ -22,7 +21,6 @@ class CurrentUser:
 
 def get_current_user(
     authorization: str | None = Header(default=None),
-    settings: Settings = Depends(get_settings),
 ) -> CurrentUser:
     if not authorization or not authorization.lower().startswith("bearer "):
         raise HTTPException(
@@ -32,7 +30,7 @@ def get_current_user(
         )
     token = authorization.split(" ", 1)[1].strip()
     try:
-        claims = JWTService(settings).verify_access_token(token)
+        claims = get_jwt_service().verify_access_token(token)
     except UnauthorizedError as exc:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,

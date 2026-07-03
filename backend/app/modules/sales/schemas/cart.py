@@ -21,6 +21,10 @@ class CartLine(BaseModel):
     subtotal: Decimal
     added_via: str
     source_event_id: str | None = None
+    # AI's detection confidence for this pickup (1.0 for manually-added
+    # lines). Never guaranteed-correct — see CartResponse.overall_confidence
+    # and Principle 2: every AI prediction is probabilistic.
+    confidence: float = 1.0
     added_at: datetime
 
 
@@ -37,6 +41,10 @@ class CartResponse(BaseModel):
     total_amount: Decimal
     currency: str
     lines: list[CartLine]
+    # Value-weighted average of line confidences — a quick "should staff
+    # double-check this before confirming?" signal. Not persisted; computed
+    # fresh from `lines` each time (see cart_service.compute_overall_confidence).
+    overall_confidence: float = 1.0
     expires_at: datetime | None
     converted_at: datetime | None
     created_at: datetime
@@ -71,3 +79,43 @@ class CartCheckoutResponse(BaseModel):
     order_code: str
     total_amount: Decimal
     currency: str
+
+
+class CartCheckoutQrResponse(BaseModel):
+    """For the staff-facing checkout-zone screen: the confirm link + a
+    ready-to-render SVG QR code encoding it."""
+
+    cart_id: uuid.UUID
+    checkout_token: str
+    confirm_url: str
+    qr_svg: str
+    expires_at: datetime | None
+
+
+class PublicBillLine(BaseModel):
+    product_name: str
+    sku: str
+    quantity: int
+    unit_price: Decimal
+    subtotal: Decimal
+
+
+class PublicBillResponse(BaseModel):
+    """What a customer sees after scanning the checkout QR — deliberately
+    minimal, no internal ids beyond the cart's own public-facing status."""
+
+    status: CartStatus
+    lines: list[PublicBillLine]
+    total_amount: Decimal
+    currency: str
+    checkout_requested_at: datetime | None
+    expires_at: datetime | None
+    order_code: str | None = None
+    paid_at: datetime | None = None
+
+
+class PublicConfirmResponse(BaseModel):
+    order_code: str
+    total_amount: Decimal
+    currency: str
+    paid_at: datetime | None

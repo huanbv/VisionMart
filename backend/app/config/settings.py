@@ -82,6 +82,17 @@ class Settings(BaseSettings):
     AUTH_REFRESH_RATE_LIMIT: int = 60
     AUTH_REFRESH_RATE_WINDOW_SECONDS: int = 300
 
+    # ---- Public /shop/* rate limiting ----
+    # /shop/checkout/{token} and its confirm/cancel actions require no
+    # login (the token itself is the credential — see PUBLIC_APP_BASE_URL
+    # above), so unlike every other mutating endpoint in this API they're
+    # reachable by anyone who can guess or intercept a token, or who just
+    # wants to hammer the endpoint. Same IP-keyed fixed-window limiter as
+    # /auth/*, mirrored here rather than shared 1:1 since a checkout-token
+    # guesser and a login brute-forcer are different threat profiles.
+    SHOP_CHECKOUT_RATE_LIMIT: int = 30
+    SHOP_CHECKOUT_RATE_WINDOW_SECONDS: int = 60
+
     # ---- RTSP auto-capture ----
     RTSP_CAPTURE_ENABLED: bool = False
     RTSP_CAPTURE_INTERVAL_SECONDS: int = 60
@@ -100,6 +111,49 @@ class Settings(BaseSettings):
     CART_SWEEPER_INTERVAL_SECONDS: int = 60
     CART_AI_MIN_CONFIDENCE: float = 0.6
 
+    # ---- AI-assisted checkout: human confirmation required ----
+    # AI detection ends at "pending checkout" — checkout_initiated freezes
+    # the cart into PENDING_CHECKOUT (bill generated, nothing charged yet)
+    # instead of billing instantly. AI never calls the payment gateway and
+    # never confirms a sale; a human always does, one of two ways:
+    #   * the customer confirms via a QR code (encodes PUBLIC_APP_BASE_URL +
+    #     /shop/checkout/{token}) shown on a customer-facing screen, or
+    #   * staff confirm on the customer's behalf for walk-ins without a phone.
+    # If nobody confirms within the timeout, the cart reverts to ACTIVE so
+    # the shopper can keep shopping / retry — this is NOT an autonomous
+    # "walk out and get charged" system; every sale requires an explicit
+    # confirmation step.
+    CART_CHECKOUT_CONFIRM_TIMEOUT_MINUTES: int = 5
+    # Public origin used to build the QR/confirm link shown to customers.
+    # Must be reachable from a customer's own phone (not an internal Docker
+    # hostname) — e.g. https://visionmart.thehuan.com
+    PUBLIC_APP_BASE_URL: str = "https://visionmart.thehuan.com"
+
+    # ---- Cross-camera visitor linking (anonymous journey tracking) ----
+    # Heuristic v1: no real appearance/ReID model. When a track is seen for
+    # the first time on a given camera, we hand it the most recently active
+    # "global visitor" for the same branch if one was last seen within this
+    # window (customer walking from one camera's view into another's).
+    # Two shoppers who both cross camera boundaries within this window can
+    # be misattributed to each other — see visitor_linker.py docstring.
+    VISITOR_HANDOFF_WINDOW_SECONDS: int = 20
+    VISITOR_TRACK_TTL_SECONDS: int = 90
+    VISITOR_ACTIVE_TTL_SECONDS: int = 600
+
+    # ---- Continuous frame pipeline (product pickup/return + checkout AI) ----
+    # Separate from RTSP_CAPTURE_* (which only does generic detection+alerts
+    # every RTSP_CAPTURE_INTERVAL_SECONDS via /capture). This drives the real
+    # tracking + cart automation pipeline via /ai/frame, so it needs a much
+    # shorter interval to catch pickup events — keep camera count conservative,
+    # each camera holds its own full YOLO model in ai-engine RAM (see
+    # person_tracker.py).
+    FRAME_PIPELINE_ENABLED: bool = False
+    FRAME_PIPELINE_INTERVAL_SECONDS: int = 3
+    FRAME_PIPELINE_MAX_CAMERAS: int = 8
+    FRAME_PIPELINE_MIN_CONFIDENCE: float = 0.4
+    FRAME_PIPELINE_RECOGNIZE_FACE: bool = False
+    FRAME_PIPELINE_OPEN_TIMEOUT_MS: int = 4000
+
     # ---- Payment gateway ----
     PAYMENT_GATEWAY: str = "simulated"
     PAYMENT_SIMULATE_SUCCESS_RATE: float = 1.0
@@ -115,6 +169,12 @@ class Settings(BaseSettings):
     # Optional path prefix when MinIO is reverse-proxied (e.g. "/visionmart").
     # Leave empty when MINIO_PUBLIC_ENDPOINT points directly at MinIO.
     MINIO_PUBLIC_PATH_PREFIX: str = ""
+    # Explicit bucket region. The minio SDK otherwise auto-detects the region
+    # by calling GET /{bucket}?location= *without* a trailing slash, which
+    # commonly doesn't match reverse-proxy path rules (e.g. an nginx
+    # `location /visionmart/ { ... }` block only matches paths ending in a
+    # slash) and gets misrouted. Setting this explicitly skips that lookup.
+    MINIO_REGION: str = "us-east-1"
 
     @property
     def cors_origins_list(self) -> list[str]:
@@ -133,6 +193,25 @@ class Settings(BaseSettings):
                 )
             if self.APP_DEBUG:
                 raise ValueError("APP_DEBUG must be false in production.")
+            # `AI_ENGINE_API_KEY` is the *only* auth guarding /api/v1/ai/cart-events
+            # (creates orders) and /api/v1/ai/customers/by-face-ref (returns
+            # customer PII). The default value is published in .env.example, so
+            # leaving it unchanged in production lets anyone on the internet call
+            # those endpoints unauthenticated.
+            if (
+                self.AI_ENGINE_API_KEY.strip().lower() in _INSECURE_SECRETS
+                or self.AI_ENGINE_API_KEY == "change-me-ai-engine-key"
+            ):
+                raise ValueError(
+                    "AI_ENGINE_API_KEY must be set to a strong, non-default value in production "
+                    "(it is the only auth on the /ai/cart-events and /ai/customers/by-face-ref endpoints)."
+                )
+            if self.MINIO_ROOT_PASSWORD.strip().lower() in _INSECURE_SECRETS or (
+                self.MINIO_ROOT_PASSWORD == "visionmart-minio"
+            ):
+                raise ValueError(
+                    "MINIO_ROOT_PASSWORD must be set to a strong, non-default value in production."
+                )
         return self
 
 

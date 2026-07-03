@@ -149,22 +149,28 @@ class OrderService:
                     f"need {needed}, have {available}"
                 )
 
-        code = await self._orders.next_code(organization_id)
         now = datetime.now(timezone.utc)
-        order = Order(
-            organization_id=organization_id,
-            branch_id=branch_id,
-            customer_id=customer_id,
-            employee_id=None,
-            cart_id=None,
-            code=code,
-            status=OrderStatus.PAID,
-            total_amount=total,
-            currency="VND",
-            paid_at=now,
-            notes=notes,
-        )
-        order = await self._orders.add(order)
+
+        def _build_order(code: str) -> Order:
+            return Order(
+                organization_id=organization_id,
+                branch_id=branch_id,
+                customer_id=customer_id,
+                employee_id=None,
+                cart_id=None,
+                code=code,
+                status=OrderStatus.PAID,
+                total_amount=total,
+                currency="VND",
+                paid_at=now,
+                notes=notes,
+            )
+
+        # Same next_code() collision risk as CheckoutService — two manual
+        # orders created in the same instant can compute the same code.
+        # See SqlAlchemyOrderRepository.add_with_unique_code.
+        order = await self._orders.add_with_unique_code(organization_id, _build_order)
+        code = order.code
 
         for line, unit_price, subtotal in normalized:
             item = OrderItem(

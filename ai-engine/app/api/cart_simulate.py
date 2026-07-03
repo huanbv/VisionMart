@@ -18,12 +18,14 @@ from datetime import datetime, timezone
 from typing import Literal
 
 import httpx
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
+
+from app.security import require_api_key
 
 logger = logging.getLogger("ai-engine.cart")
 
-router = APIRouter(prefix="/cart", tags=["cart"])
+router = APIRouter(prefix="/cart", tags=["cart"], dependencies=[Depends(require_api_key)])
 
 
 class CartEventSimulation(BaseModel):

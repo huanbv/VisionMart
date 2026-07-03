@@ -11,7 +11,7 @@ import logging
 import time
 from typing import Any
 
-from fastapi import APIRouter, File, HTTPException, Query, UploadFile, status
+from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
 from PIL import Image, UnidentifiedImageError
 
 from app.metrics import (
@@ -19,11 +19,12 @@ from app.metrics import (
     DETECTED_OBJECTS_TOTAL,
     INFERENCE_LATENCY,
 )
+from app.security import require_api_key
 from app.services.yolo_detector import YoloDetector
 
 logger = logging.getLogger("ai-engine.detect")
 
-router = APIRouter(tags=["detection"])
+router = APIRouter(tags=["detection"], dependencies=[Depends(require_api_key)])
 
 
 def _stub_detections(width: int, height: int) -> list[dict[str, Any]]:

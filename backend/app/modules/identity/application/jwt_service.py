@@ -6,12 +6,13 @@ import secrets
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
 from jose import JWTError, jwt
 
-from app.config.settings import Settings
+from app.config.settings import Settings, get_settings
 from app.core.exceptions import UnauthorizedError
 
 
@@ -79,3 +80,16 @@ class JWTService:
     def generate_refresh_secret() -> str:
         """URL-safe random secret embedded in the opaque refresh token."""
         return secrets.token_urlsafe(48)
+
+
+@lru_cache(maxsize=1)
+def get_jwt_service() -> JWTService:
+    """Process-wide cached JWTService.
+
+    JWTService.__init__ does a synchronous disk read of both RSA key files.
+    Several call sites (the per-request auth dependency, every notification/
+    cart websocket connection) used to construct a fresh JWTService each
+    time, re-reading both files off disk on every call. The keys don't
+    change without a process restart, so cache the one instance instead.
+    """
+    return JWTService(get_settings())

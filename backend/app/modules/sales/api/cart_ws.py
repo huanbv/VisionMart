@@ -13,9 +13,8 @@ import uuid
 
 from fastapi import APIRouter, Query, WebSocket, WebSocketDisconnect, status
 
-from app.config.settings import get_settings
 from app.core.realtime import open_pubsub
-from app.modules.identity.application.jwt_service import JWTService
+from app.modules.identity.application.jwt_service import get_jwt_service
 from app.modules.sales.application.cart_realtime import cart_channel
 
 logger = logging.getLogger(__name__)
@@ -29,8 +28,7 @@ async def carts_ws(
     token: str = Query(...),
     branch_id: uuid.UUID = Query(...),
 ) -> None:
-    settings = get_settings()
-    jwt = JWTService(settings)
+    jwt = get_jwt_service()
     try:
         claims = jwt.verify_access_token(token)
     except Exception:

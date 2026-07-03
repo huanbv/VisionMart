@@ -10,7 +10,7 @@ from typing import Any
 
 import cv2  # type: ignore[import-not-found]
 import numpy as np
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
 
 from app.metrics import (
@@ -18,11 +18,12 @@ from app.metrics import (
     DETECTED_OBJECTS_TOTAL,
     INFERENCE_LATENCY,
 )
+from app.security import require_api_key
 from app.services.yolo_detector import YoloDetector
 
 logger = logging.getLogger("ai-engine.capture")
 
-router = APIRouter(tags=["capture"])
+router = APIRouter(tags=["capture"], dependencies=[Depends(require_api_key)])
 
 
 class CaptureRequest(BaseModel):

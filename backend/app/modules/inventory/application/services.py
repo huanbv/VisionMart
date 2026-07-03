@@ -83,7 +83,11 @@ class InventoryService:
         if branch is None:
             raise NotFoundError("Branch not found")
 
-        inv = await self._inventories.get_by_product_branch(
+        # Locked read — see get_by_product_branch_for_update docstring:
+        # without the lock, two concurrent adjust() calls (e.g. checkout
+        # deduction racing a manual stock correction) can both read the same
+        # quantity and one silently overwrites the other's change.
+        inv = await self._inventories.get_by_product_branch_for_update(
             organization_id, product_id, branch_id
         )
         if inv is None:

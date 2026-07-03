@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import uuid
-from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -11,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.exceptions import ConflictError, NotFoundError, ValidationError
 from app.database.session import get_session
 from app.dependencies.auth import CurrentUser, get_current_user
+from app.dependencies.providers import get_event_bus
 from app.modules.catalog.infrastructure.repositories import (
     SqlAlchemyProductRepository,
 )
@@ -19,7 +19,12 @@ from app.modules.inventory.infrastructure.repositories import (
     SqlAlchemyInventoryRepository,
     SqlAlchemyStockMovementRepository,
 )
-from app.modules.sales.application.cart_service import CartService
+from app.modules.sales.application import cart_realtime as _cart_realtime  # noqa: F401
+from app.modules.sales.application.cart_service import (
+    CartService,
+    compute_overall_confidence,
+)
+from app.modules.sales.application.checkout_service import CheckoutService
 from app.modules.sales.application.payment import build_payment_gateway
 from app.modules.sales.infrastructure.models import CartStatus, ShoppingCart
 from app.modules.sales.infrastructure.repositories import (
@@ -29,6 +34,7 @@ from app.modules.sales.infrastructure.repositories import (
 )
 from app.modules.sales.schemas.cart import (
     CartAddLineRequest,
+    CartCheckoutQrResponse,
     CartCheckoutResponse,
     CartCreateRequest,
     CartLine,
@@ -38,33 +44,42 @@ from app.modules.sales.schemas.cart import (
 from app.modules.tenancy.infrastructure.repositories import (
     SqlAlchemyBranchRepository,
 )
+from app.services.qr import render_qr_svg
 
 router = APIRouter(prefix="/carts", tags=["sales"])
 
 
 def build_cart_service(session: AsyncSession) -> CartService:
+    return CartService(
+        carts=SqlAlchemyCartRepository(session),
+        inventories=SqlAlchemyInventoryRepository(session),
+        products=SqlAlchemyProductRepository(session),
+        branches=SqlAlchemyBranchRepository(session),
+        event_bus=get_event_bus(),
+    )
+
+
+def build_checkout_service(session: AsyncSession) -> CheckoutService:
     inventory_service = InventoryService(
         SqlAlchemyInventoryRepository(session),
         SqlAlchemyStockMovementRepository(session),
         SqlAlchemyProductRepository(session),
         SqlAlchemyBranchRepository(session),
     )
-    return CartService(
+    return CheckoutService(
         carts=SqlAlchemyCartRepository(session),
         inventories=SqlAlchemyInventoryRepository(session),
         inventory_service=inventory_service,
-        products=SqlAlchemyProductRepository(session),
-        branches=SqlAlchemyBranchRepository(session),
         orders=SqlAlchemyOrderRepository(session),
         order_items=SqlAlchemyOrderItemRepository(session),
+        event_bus=get_event_bus(),
         payment_gateway=build_payment_gateway(),
     )
 
 
 def _cart_to_response(cart: ShoppingCart) -> CartResponse:
-    lines: list[CartLine] = []
-    for raw in cart.items or []:
-        lines.append(CartLine.model_validate(raw))
+    raw_lines = cart.items or []
+    lines: list[CartLine] = [CartLine.model_validate(raw) for raw in raw_lines]
     return CartResponse(
         id=cart.id,
         organization_id=cart.organization_id,
@@ -76,6 +91,7 @@ def _cart_to_response(cart: ShoppingCart) -> CartResponse:
         total_amount=cart.total_amount,
         currency=cart.currency,
         lines=lines,
+        overall_confidence=compute_overall_confidence(raw_lines),
         expires_at=cart.expires_at,
         converted_at=cart.converted_at,
         created_at=cart.created_at,
@@ -155,6 +171,7 @@ async def add_cart_line(
             unit_price=payload.unit_price,
             added_via=payload.added_via,
             source_event_id=payload.source_event_id,
+            confidence=1.0,  # a staff member typing this in IS the ground truth
         )
     except NotFoundError as e:
         raise HTTPException(status.HTTP_404_NOT_FOUND, str(e))
@@ -188,7 +205,7 @@ async def checkout_cart(
     session: AsyncSession = Depends(get_session),
 ) -> CartCheckoutResponse:
     try:
-        cart, order = await build_cart_service(session).checkout(
+        cart, order = await build_checkout_service(session).checkout(
             current.organization_id, cart_id, performed_by=current.user_id
         )
     except NotFoundError as e:
@@ -202,6 +219,77 @@ async def checkout_cart(
         total_amount=order.total_amount,
         currency=order.currency,
     )
+
+
+@router.get("/{cart_id}/checkout-qr", response_model=CartCheckoutQrResponse)
+async def get_checkout_qr(
+    cart_id: uuid.UUID,
+    current: CurrentUser = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> CartCheckoutQrResponse:
+    """For the checkout-zone customer-facing screen: shows this so the
+    shopper can scan it with their own phone to review + confirm their
+    bill. Only meaningful while the cart is PENDING_CHECKOUT."""
+    checkout_service = build_checkout_service(session)
+    try:
+        cart = await checkout_service.get(current.organization_id, cart_id)
+    except NotFoundError as e:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, str(e))
+    if cart.status != CartStatus.PENDING_CHECKOUT or not cart.checkout_token:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "Cart is not awaiting checkout confirmation",
+        )
+    confirm_url = checkout_service.build_confirm_url(cart.checkout_token)
+    return CartCheckoutQrResponse(
+        cart_id=cart.id,
+        checkout_token=cart.checkout_token,
+        confirm_url=confirm_url,
+        qr_svg=render_qr_svg(confirm_url),
+        expires_at=cart.expires_at,
+    )
+
+
+@router.post("/{cart_id}/confirm-checkout", response_model=CartCheckoutResponse)
+async def confirm_checkout_staff(
+    cart_id: uuid.UUID,
+    current: CurrentUser = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> CartCheckoutResponse:
+    """Staff confirms on behalf of a walk-in customer who has no phone/QR —
+    staff's own login + presence is the confirmation here."""
+    try:
+        cart, order = await build_checkout_service(session).confirm_checkout_staff(
+            current.organization_id, cart_id, performed_by=current.user_id
+        )
+    except NotFoundError as e:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, str(e))
+    except (ValidationError, ConflictError) as e:
+        raise HTTPException(status.HTTP_409_CONFLICT, str(e))
+    return CartCheckoutResponse(
+        cart_id=cart.id,
+        order_id=order.id,
+        order_code=order.code,
+        total_amount=order.total_amount,
+        currency=order.currency,
+    )
+
+
+@router.post("/{cart_id}/cancel-checkout", response_model=CartResponse)
+async def cancel_checkout(
+    cart_id: uuid.UUID,
+    current: CurrentUser = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> CartResponse:
+    try:
+        cart = await build_checkout_service(session).cancel_pending_checkout(
+            current.organization_id, cart_id
+        )
+    except NotFoundError as e:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, str(e))
+    except ConflictError as e:
+        raise HTTPException(status.HTTP_409_CONFLICT, str(e))
+    return _cart_to_response(cart)
 
 
 @router.post("/{cart_id}/abandon", response_model=CartResponse)

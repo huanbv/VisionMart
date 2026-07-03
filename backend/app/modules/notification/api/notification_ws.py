@@ -14,10 +14,9 @@ from fastapi import APIRouter, Query, WebSocket, WebSocketDisconnect, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.config.settings import get_settings
 from app.core.realtime import open_pubsub
 from app.database.session import SessionLocal
-from app.modules.identity.application.jwt_service import JWTService
+from app.modules.identity.application.jwt_service import get_jwt_service
 from app.modules.identity.infrastructure.models import UserRole
 
 logger = logging.getLogger(__name__)
@@ -38,8 +37,7 @@ async def _user_role_ids(
 async def notifications_ws(
     websocket: WebSocket, token: str = Query(...)
 ) -> None:
-    settings = get_settings()
-    jwt = JWTService(settings)
+    jwt = get_jwt_service()
     try:
         claims = jwt.verify_access_token(token)
     except Exception:

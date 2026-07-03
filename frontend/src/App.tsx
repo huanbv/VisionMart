@@ -21,6 +21,7 @@ import PosPage from "@/pages/PosPage";
 import ProductsPage from "@/pages/ProductsPage";
 import ReportsPage from "@/pages/ReportsPage";
 import RolesPage from "@/pages/RolesPage";
+import ShopCheckoutPage from "@/pages/ShopCheckoutPage";
 import UsersPage from "@/pages/UsersPage";
 import { RequireAuth } from "@/routes/RequireAuth";
 
@@ -28,6 +29,9 @@ export default function App() {
   return (
     <Routes>
       <Route path="/login" element={<LoginPage />} />
+      {/* Public, unauthenticated: reached by scanning the checkout QR from
+          a customer's own phone — no staff login involved. */}
+      <Route path="/shop/:token" element={<ShopCheckoutPage />} />
       <Route
         element={
           <RequireAuth>

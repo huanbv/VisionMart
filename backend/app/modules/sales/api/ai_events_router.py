@@ -16,12 +16,25 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config.settings import Settings, get_settings
 from app.database.session import get_session
 from app.modules.camera.infrastructure.models import Camera
+from app.modules.catalog.infrastructure.repositories import (
+    SqlAlchemyProductRepository,
+)
 from app.modules.customer.infrastructure.models import Customer
-from app.modules.sales.api.cart_router import build_cart_service
+from app.modules.sales.api.cart_router import build_cart_service, build_checkout_service
+from app.modules.sales.application.ai_cart_event_service import AiCartEventService
 from app.modules.sales.schemas.ai_events import (
     AICartEventRequest,
     AICartEventResponse,
 )
+
+
+def build_ai_cart_event_service(session: AsyncSession) -> AiCartEventService:
+    return AiCartEventService(
+        cart_service=build_cart_service(session),
+        checkout_service=build_checkout_service(session),
+        products=SqlAlchemyProductRepository(session),
+    )
+
 
 router = APIRouter(prefix="/ai", tags=["ai-cart"])
 
@@ -68,12 +81,15 @@ async def ingest_cart_event(
     event: AICartEventRequest,
     session: AsyncSession = Depends(get_session),
 ) -> AICartEventResponse:
-    service = build_cart_service(session)
+    service = build_ai_cart_event_service(session)
     reason, cart, order = await service.apply_ai_event(event)
-    accepted = reason == "accepted"
+    accepted = reason in ("accepted", "accepted_pending_confirmation")
     return AICartEventResponse(
         accepted=accepted,
-        reason=None if accepted else reason,
+        # Keep the "pending confirmation" nuance visible to the AI engine /
+        # caller even though the event was accepted — it did NOT result in
+        # an instant charge like a plain "accepted" used to.
+        reason=None if reason == "accepted" else reason,
         cart_id=cart.id if cart else None,
         order_id=order.id if order else None,
     )

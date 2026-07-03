@@ -37,6 +37,7 @@ class MinioStorage:
                 access_key=self._settings.MINIO_ROOT_USER,
                 secret_key=self._settings.MINIO_ROOT_PASSWORD,
                 secure=self._settings.MINIO_USE_SSL,
+                region=self._settings.MINIO_REGION,
             )
             bucket = self._settings.MINIO_BUCKET
             if not self._client.bucket_exists(bucket):
@@ -48,11 +49,16 @@ class MinioStorage:
         if not public:
             return self._get_client()
         if self._presign_client is None:
+            # `region` is passed explicitly so the SDK skips its
+            # auto-detection call (GET /{bucket}?location=), which many
+            # reverse-proxy path rules don't route correctly (see
+            # Settings.MINIO_REGION docstring).
             self._presign_client = Minio(
                 public,
                 access_key=self._settings.MINIO_ROOT_USER,
                 secret_key=self._settings.MINIO_ROOT_PASSWORD,
                 secure=self._settings.MINIO_PUBLIC_USE_SSL,
+                region=self._settings.MINIO_REGION,
             )
         return self._presign_client
 
@@ -129,6 +135,17 @@ class MinioStorage:
             return await asyncio.to_thread(_sign)
         except S3Error as exc:
             logger.exception("MinIO presign failed: %s", key)
+            raise ObjectStorageError(str(exc)) from exc
+        except Exception as exc:  # noqa: BLE001
+            # minio-py raises plain urllib3/requests exceptions (e.g.
+            # MaxRetryError, ConnectionError) — not S3Error — when it can't
+            # even reach the endpoint (wrong host, DNS failure, refused
+            # connection, misrouted reverse proxy). Those previously escaped
+            # uncaught and turned a single broken image link into a 500 for
+            # the whole /ai/training/images request. Treat them the same as
+            # an S3Error: caller degrades to preview_url=None instead of
+            # crashing.
+            logger.exception("MinIO presign failed (non-S3 error): %s", key)
             raise ObjectStorageError(str(exc)) from exc
 
     async def delete(self, key: str) -> None:

@@ -7,13 +7,14 @@ import os
 import threading
 from typing import Any
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
+from app.security import require_api_key
 from app.services import object_storage as storage
 from app.services import trainer
 
-router = APIRouter(prefix="/ai", tags=["ai-training"])
+router = APIRouter(prefix="/ai", tags=["ai-training"], dependencies=[Depends(require_api_key)])
 logger = logging.getLogger("ai-engine.api.training")
 
 

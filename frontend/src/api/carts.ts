@@ -1,6 +1,10 @@
 import { apiClient } from "./client";
 
-export type CartStatus = "active" | "abandoned" | "converted";
+export type CartStatus =
+  | "active"
+  | "abandoned"
+  | "converted"
+  | "pending_checkout";
 export type CartSource = "ai_vision" | "manual" | "mobile_app";
 
 export interface CartLine {
@@ -13,6 +17,10 @@ export interface CartLine {
   subtotal: string;
   added_via: string;
   source_event_id: string | null;
+  // AI's detection confidence for this pickup (1.0 for manually-added
+  // lines). Every AI prediction is probabilistic — never treat as ground
+  // truth without a way to review it.
+  confidence: number;
   added_at: string;
 }
 
@@ -27,6 +35,7 @@ export interface Cart {
   total_amount: string;
   currency: string;
   lines: CartLine[];
+  overall_confidence: number;
   expires_at: string | null;
   converted_at: string | null;
   created_at: string;
@@ -107,5 +116,38 @@ export async function checkoutCart(cartId: string): Promise<CartCheckoutResponse
 
 export async function abandonCart(cartId: string): Promise<Cart> {
   const { data } = await apiClient.post<Cart>(`/carts/${cartId}/abandon`, {});
+  return data;
+}
+
+export interface CartCheckoutQrResponse {
+  cart_id: string;
+  checkout_token: string;
+  confirm_url: string;
+  qr_svg: string;
+  expires_at: string | null;
+}
+
+export async function getCheckoutQr(cartId: string): Promise<CartCheckoutQrResponse> {
+  const { data } = await apiClient.get<CartCheckoutQrResponse>(
+    `/carts/${cartId}/checkout-qr`,
+  );
+  return data;
+}
+
+export async function confirmCheckoutStaff(
+  cartId: string,
+): Promise<CartCheckoutResponse> {
+  const { data } = await apiClient.post<CartCheckoutResponse>(
+    `/carts/${cartId}/confirm-checkout`,
+    {},
+  );
+  return data;
+}
+
+export async function cancelCheckout(cartId: string): Promise<Cart> {
+  const { data } = await apiClient.post<Cart>(
+    `/carts/${cartId}/cancel-checkout`,
+    {},
+  );
   return data;
 }

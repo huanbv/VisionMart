@@ -1,11 +1,11 @@
-"""Application service for the Shopping Cart aggregate.
+"""Application service for the Shopping Cart aggregate — shopping lifecycle
+only (create, add/remove line, abandon).
 
-Responsibilities:
-  * Manage the lifecycle of `ShoppingCart` (create, add/remove line, checkout, abandon).
-  * Enforce inventory reservation via `reserved_quantity`.
-  * Apply AI-emitted events (product picked up / returned / checkout initiated).
-  * Convert a cart to an `Order` at checkout, atomically deducting inventory.
-  * Publish realtime updates for WebSocket subscribers.
+Freeze/confirm/payment concerns live in `checkout_service.py`; translating
+AI-emitted proposals into calls on this service lives in
+`ai_cart_event_service.py`. This split keeps each class responsible for one
+thing: this one never touches a payment gateway or an Order, and knows
+nothing about AI event schemas.
 """
 
 from __future__ import annotations
@@ -16,41 +16,23 @@ from decimal import Decimal
 from typing import Any
 
 from app.config.settings import get_settings
-from app.core.exceptions import ConflictError, NotFoundError, ValidationError
+from app.core.events import EventBus
+from app.core.exceptions import NotFoundError
 from app.modules.catalog.infrastructure.models import Product
 from app.modules.catalog.infrastructure.repositories import (
     SqlAlchemyProductRepository,
 )
-from app.modules.inventory.application.services import InventoryService
-from app.modules.inventory.infrastructure.models import (
-    Inventory,
-    StockMovementType,
-)
 from app.modules.inventory.infrastructure.repositories import (
     SqlAlchemyInventoryRepository,
 )
-from app.modules.sales.application.cart_realtime import publish_cart_update
-from app.modules.sales.application.payment import (
-    PaymentGateway,
-    SimulatedPaymentGateway,
-)
+from app.modules.sales.application import cart_lookup, inventory_reservation
+from app.modules.sales.domain import events as sales_events
 from app.modules.sales.infrastructure.models import (
     CartSource,
     CartStatus,
-    Order,
-    OrderItem,
-    OrderStatus,
     ShoppingCart,
 )
-from app.modules.sales.infrastructure.repositories import (
-    SqlAlchemyCartRepository,
-    SqlAlchemyOrderItemRepository,
-    SqlAlchemyOrderRepository,
-)
-from app.modules.sales.schemas.ai_events import (
-    AICartEventRequest,
-    AICartEventType,
-)
+from app.modules.sales.infrastructure.repositories import SqlAlchemyCartRepository
 from app.modules.tenancy.infrastructure.repositories import (
     SqlAlchemyBranchRepository,
 )
@@ -60,27 +42,44 @@ def _now() -> datetime:
     return datetime.now(timezone.utc)
 
 
+def compute_overall_confidence(lines: list[dict[str, Any]]) -> float:
+    """Value-weighted average confidence across a cart's lines — a
+    low-confidence detection on an expensive item should pull the overall
+    score down more than the same uncertainty on a cheap one. Manually
+    added lines (added_via != "ai") default to 1.0 (staff certainty).
+    Returns 1.0 for an empty cart (nothing to be unsure about)."""
+    if not lines:
+        return 1.0
+    total_weight = Decimal("0")
+    weighted_sum = Decimal("0")
+    for li in lines:
+        weight = Decimal(str(li.get("subtotal", "0")))
+        confidence = Decimal(str(li.get("confidence", 1.0)))
+        weighted_sum += weight * confidence
+        total_weight += weight
+    if total_weight == 0:
+        # All-zero-value lines (shouldn't normally happen) — fall back to a
+        # plain average so we don't divide by zero.
+        avg = sum(Decimal(str(li.get("confidence", 1.0))) for li in lines) / len(lines)
+        return float(avg)
+    return float(weighted_sum / total_weight)
+
+
 class CartService:
     def __init__(
         self,
         carts: SqlAlchemyCartRepository,
         inventories: SqlAlchemyInventoryRepository,
-        inventory_service: InventoryService,
         products: SqlAlchemyProductRepository,
         branches: SqlAlchemyBranchRepository,
-        orders: SqlAlchemyOrderRepository,
-        order_items: SqlAlchemyOrderItemRepository,
-        payment_gateway: PaymentGateway | None = None,
+        event_bus: EventBus,
     ) -> None:
         self._carts = carts
         self._inventories = inventories
-        self._inventory_service = inventory_service
         self._products = products
         self._branches = branches
-        self._orders = orders
-        self._order_items = order_items
+        self._events = event_bus
         self._settings = get_settings()
-        self._payment = payment_gateway or SimulatedPaymentGateway()
 
     # ------------------------------------------------------------------
     # Query
@@ -102,13 +101,15 @@ class CartService:
             limit=limit,
         )
 
-    async def get(
-        self, organization_id: uuid.UUID, cart_id: uuid.UUID
-    ) -> ShoppingCart:
-        cart = await self._carts.get_by_id(organization_id, cart_id)
-        if cart is None:
-            raise NotFoundError("Cart not found")
-        return cart
+    async def get(self, organization_id: uuid.UUID, cart_id: uuid.UUID) -> ShoppingCart:
+        return await cart_lookup.get_cart(self._carts, organization_id, cart_id)
+
+    async def get_open_cart_for_session(
+        self, organization_id: uuid.UUID, branch_id: uuid.UUID, session_id: str
+    ) -> ShoppingCart | None:
+        return await self._carts.get_open_for_session(
+            organization_id, branch_id, session_id
+        )
 
     # ------------------------------------------------------------------
     # Commands
@@ -133,9 +134,7 @@ class CartService:
             if existing is not None:
                 return existing
 
-        expires_at = _now() + timedelta(
-            minutes=self._settings.CART_EXPIRATION_MINUTES
-        )
+        expires_at = _now() + timedelta(minutes=self._settings.CART_EXPIRATION_MINUTES)
         cart = ShoppingCart(
             organization_id=organization_id,
             branch_id=branch_id,
@@ -151,7 +150,7 @@ class CartService:
         cart = await self._carts.add(cart)
         await self._carts.commit()
         await self._carts.refresh(cart)
-        await self._publish(cart, action="created")
+        await self._events.publish(sales_events.cart_created(cart))
         return cart
 
     async def add_line(
@@ -164,13 +163,17 @@ class CartService:
         unit_price: Decimal | None,
         added_via: str,
         source_event_id: str | None,
+        global_track_id: str | None = None,
+        confidence: float = 1.0,
     ) -> ShoppingCart:
-        cart = await self._require_open_cart(organization_id, cart_id)
+        cart = await cart_lookup.require_active(self._carts, organization_id, cart_id)
         product = await self._products.get_by_id(organization_id, product_id)
         if product is None:
             raise NotFoundError("Product not found")
 
-        await self._reserve(organization_id, cart.branch_id, product_id, quantity)
+        await inventory_reservation.reserve(
+            self._inventories, organization_id, cart.branch_id, product_id, quantity
+        )
 
         lines = list(cart.items or [])
         price = unit_price if unit_price is not None else product.unit_price
@@ -180,16 +183,16 @@ class CartService:
             unit_price=Decimal(str(price)),
             added_via=added_via,
             source_event_id=source_event_id,
+            global_track_id=global_track_id,
+            confidence=confidence,
         )
         lines.append(line)
         cart.items = lines
         cart.total_amount = self._sum_total(lines)
-        cart.expires_at = _now() + timedelta(
-            minutes=self._settings.CART_EXPIRATION_MINUTES
-        )
+        cart.expires_at = _now() + timedelta(minutes=self._settings.CART_EXPIRATION_MINUTES)
         await self._carts.commit()
         await self._carts.refresh(cart)
-        await self._publish(cart, action="line_added")
+        await self._events.publish(sales_events.cart_line_added(cart))
         return cart
 
     async def remove_line(
@@ -198,13 +201,14 @@ class CartService:
         cart_id: uuid.UUID,
         line_id: str,
     ) -> ShoppingCart:
-        cart = await self._require_open_cart(organization_id, cart_id)
+        cart = await cart_lookup.require_active(self._carts, organization_id, cart_id)
         lines = list(cart.items or [])
         target = next((li for li in lines if li.get("line_id") == line_id), None)
         if target is None:
             raise NotFoundError("Cart line not found")
 
-        await self._release(
+        await inventory_reservation.release(
+            self._inventories,
             organization_id,
             cart.branch_id,
             uuid.UUID(target["product_id"]),
@@ -215,95 +219,15 @@ class CartService:
         cart.total_amount = self._sum_total(lines)
         await self._carts.commit()
         await self._carts.refresh(cart)
-        await self._publish(cart, action="line_removed")
+        await self._events.publish(sales_events.cart_line_removed(cart))
         return cart
 
-    async def checkout(
-        self,
-        organization_id: uuid.UUID,
-        cart_id: uuid.UUID,
-        *,
-        performed_by: uuid.UUID | None,
-    ) -> tuple[ShoppingCart, Order]:
-        cart = await self._require_open_cart(organization_id, cart_id)
-        lines = list(cart.items or [])
-        if not lines:
-            raise ValidationError("Cart is empty")
-
-        payment = await self._payment.charge(
-            cart_id=cart.id,
-            amount=cart.total_amount,
-            currency=cart.currency,
-            customer_id=cart.customer_id,
-        )
-        if not payment.success:
-            raise ConflictError(
-                f"Payment declined by {payment.gateway}: {payment.error or 'unknown'}"
-            )
-
-        code = await self._orders.next_code(organization_id)
-        now = _now()
-        order = Order(
-            organization_id=organization_id,
-            branch_id=cart.branch_id,
-            customer_id=cart.customer_id,
-            employee_id=None,
-            cart_id=cart.id,
-            code=code,
-            status=OrderStatus.PAID,
-            total_amount=cart.total_amount,
-            currency=cart.currency,
-            paid_at=now,
-            notes="Auto-checkout via AI cart" if cart.source == CartSource.AI_VISION else None,
-            payment_gateway=payment.gateway,
-            payment_reference=payment.reference,
-            payment_status=payment.status,
-        )
-        order = await self._orders.add(order)
-
-        for li in lines:
-            product_id = uuid.UUID(li["product_id"])
-            quantity = int(li["quantity"])
-            unit_price = Decimal(str(li["unit_price"]))
-            subtotal = Decimal(str(li["subtotal"]))
-            item = OrderItem(
-                order_id=order.id,
-                product_id=product_id,
-                quantity=quantity,
-                unit_price=unit_price,
-                discount_amount=Decimal("0"),
-                subtotal=subtotal,
-            )
-            await self._order_items.add(item)
-            await self._release(
-                organization_id, cart.branch_id, product_id, quantity
-            )
-            await self._inventory_service.adjust(
-                organization_id,
-                product_id=product_id,
-                branch_id=cart.branch_id,
-                delta=-quantity,
-                movement_type=StockMovementType.OUT,
-                reason=f"Cart checkout {code}",
-                reference=code,
-                performed_by=performed_by,
-            )
-
-        cart.status = CartStatus.CONVERTED
-        cart.converted_at = now
-        await self._carts.commit()
-        await self._carts.refresh(cart)
-        order = await self._orders.refresh_with_items(order)
-        await self._publish(cart, action="converted", order_id=str(order.id), order_code=order.code)
-        return cart, order
-
-    async def abandon(
-        self, organization_id: uuid.UUID, cart_id: uuid.UUID
-    ) -> ShoppingCart:
-        cart = await self._require_open_cart(organization_id, cart_id)
+    async def abandon(self, organization_id: uuid.UUID, cart_id: uuid.UUID) -> ShoppingCart:
+        cart = await cart_lookup.require_active(self._carts, organization_id, cart_id)
         for li in cart.items or []:
             try:
-                await self._release(
+                await inventory_reservation.release(
+                    self._inventories,
                     organization_id,
                     cart.branch_id,
                     uuid.UUID(li["product_id"]),
@@ -314,171 +238,12 @@ class CartService:
         cart.status = CartStatus.ABANDONED
         await self._carts.commit()
         await self._carts.refresh(cart)
-        await self._publish(cart, action="abandoned")
+        await self._events.publish(sales_events.cart_abandoned(cart))
         return cart
-
-    # ------------------------------------------------------------------
-    # AI event application
-    # ------------------------------------------------------------------
-    async def apply_ai_event(
-        self, event: AICartEventRequest
-    ) -> tuple[str, ShoppingCart | None, Order | None]:
-        if event.confidence < self._settings.CART_AI_MIN_CONFIDENCE:
-            return "rejected_low_confidence", None, None
-
-        session_id = f"track:{event.track_id}"
-
-        if event.event_type == AICartEventType.PRODUCT_PICKED_UP:
-            product = await self._resolve_product(
-                event.organization_id, event.product_id, event.product_sku
-            )
-            if product is None:
-                return "rejected_unknown_product", None, None
-            cart = await self._get_or_create_ai_cart(
-                event.organization_id,
-                event.branch_id,
-                session_id,
-                event.customer_id,
-            )
-            try:
-                cart = await self.add_line(
-                    event.organization_id,
-                    cart.id,
-                    product_id=product.id,
-                    quantity=event.quantity,
-                    unit_price=None,
-                    added_via="ai",
-                    source_event_id=event.event_id,
-                )
-            except ConflictError:
-                return "rejected_insufficient_stock", cart, None
-            return "accepted", cart, None
-
-        if event.event_type == AICartEventType.PRODUCT_RETURNED:
-            cart = await self._carts.get_open_for_session(
-                event.organization_id, event.branch_id, session_id
-            )
-            if cart is None:
-                return "rejected_no_cart", None, None
-            product = await self._resolve_product(
-                event.organization_id, event.product_id, event.product_sku
-            )
-            if product is None:
-                return "rejected_unknown_product", cart, None
-            match = next(
-                (
-                    li
-                    for li in reversed(list(cart.items or []))
-                    if li.get("product_id") == str(product.id)
-                ),
-                None,
-            )
-            if match is None:
-                return "rejected_line_not_found", cart, None
-            cart = await self.remove_line(
-                event.organization_id, cart.id, match["line_id"]
-            )
-            return "accepted", cart, None
-
-        if event.event_type == AICartEventType.CHECKOUT_INITIATED:
-            cart = await self._carts.get_open_for_session(
-                event.organization_id, event.branch_id, session_id
-            )
-            if cart is None or not (cart.items or []):
-                return "rejected_empty_cart", cart, None
-            cart, order = await self.checkout(
-                event.organization_id, cart.id, performed_by=None
-            )
-            return "accepted", cart, order
-
-        return "rejected_unknown_event", None, None
 
     # ------------------------------------------------------------------
     # Helpers
     # ------------------------------------------------------------------
-    async def _require_open_cart(
-        self, organization_id: uuid.UUID, cart_id: uuid.UUID
-    ) -> ShoppingCart:
-        cart = await self.get(organization_id, cart_id)
-        if cart.status != CartStatus.ACTIVE:
-            raise ConflictError(f"Cart is not active (status={cart.status.value})")
-        return cart
-
-    async def _get_or_create_ai_cart(
-        self,
-        organization_id: uuid.UUID,
-        branch_id: uuid.UUID,
-        session_id: str,
-        customer_id: uuid.UUID | None,
-    ) -> ShoppingCart:
-        existing = await self._carts.get_open_for_session(
-            organization_id, branch_id, session_id
-        )
-        if existing is not None:
-            return existing
-        return await self.create(
-            organization_id,
-            branch_id=branch_id,
-            customer_id=customer_id,
-            session_id=session_id,
-            source=CartSource.AI_VISION,
-        )
-
-    async def _resolve_product(
-        self,
-        organization_id: uuid.UUID,
-        product_id: uuid.UUID | None,
-        sku: str | None,
-    ) -> Product | None:
-        if product_id is not None:
-            return await self._products.get_by_id(organization_id, product_id)
-        if sku:
-            items, _ = await self._products.list_for_org(
-                organization_id, skip=0, limit=1, search=sku, is_active=True
-            )
-            for item in items:
-                if item.sku.lower() == sku.lower():
-                    return item
-        return None
-
-    async def _reserve(
-        self,
-        organization_id: uuid.UUID,
-        branch_id: uuid.UUID,
-        product_id: uuid.UUID,
-        quantity: int,
-    ) -> None:
-        inv = await self._inventories.get_by_product_branch(
-            organization_id, product_id, branch_id
-        )
-        if inv is None:
-            raise ConflictError("Product is not stocked at this branch")
-        available = inv.quantity - inv.reserved_quantity
-        if available < quantity:
-            raise ConflictError(
-                f"Insufficient stock: need {quantity}, available {available}"
-            )
-        inv.reserved_quantity = inv.reserved_quantity + quantity
-        await self._inventories.commit()
-        await self._inventories.refresh(inv)
-
-    async def _release(
-        self,
-        organization_id: uuid.UUID,
-        branch_id: uuid.UUID,
-        product_id: uuid.UUID,
-        quantity: int,
-    ) -> None:
-        inv = await self._inventories.get_by_product_branch(
-            organization_id, product_id, branch_id
-        )
-        if inv is None:
-            return
-        new_reserved = max(0, inv.reserved_quantity - quantity)
-        inv.reserved_quantity = new_reserved
-        await self._inventories.commit()
-        await self._inventories.refresh(inv)
-
     def _build_line(
         self,
         product: Product,
@@ -487,6 +252,8 @@ class CartService:
         unit_price: Decimal,
         added_via: str,
         source_event_id: str | None,
+        global_track_id: str | None = None,
+        confidence: float = 1.0,
     ) -> dict[str, Any]:
         subtotal = unit_price * quantity
         return {
@@ -499,6 +266,17 @@ class CartService:
             "subtotal": str(subtotal),
             "added_via": added_via,
             "source_event_id": source_event_id,
+            # Best-effort anonymous cross-camera visitor id — see
+            # visitor_linker.py. Not authoritative for billing (cart
+            # identity is scoped per camera-local track), only for
+            # reconstructing a shopper's journey across cameras.
+            "global_track_id": global_track_id,
+            # AI's detection confidence for this pickup (1.0 for
+            # manually/staff-added lines, where a human is already the
+            # source of truth). Never treated as guaranteed-correct — see
+            # compute_overall_confidence() and the confidence warning shown
+            # to staff before they confirm a checkout.
+            "confidence": float(confidence),
             "added_at": _now().isoformat(),
         }
 
@@ -507,24 +285,3 @@ class CartService:
         for li in lines:
             total += Decimal(str(li.get("subtotal", "0")))
         return total
-
-    async def _publish(
-        self, cart: ShoppingCart, *, action: str, **extra: Any
-    ) -> None:
-        payload = {
-            "type": "cart_update",
-            "action": action,
-            "cart_id": str(cart.id),
-            "branch_id": str(cart.branch_id),
-            "status": cart.status.value,
-            "source": cart.source.value,
-            "total_amount": str(cart.total_amount),
-            "currency": cart.currency,
-            "line_count": len(cart.items or []),
-            "updated_at": (cart.updated_at or _now()).isoformat(),
-        }
-        payload.update(extra)
-        try:
-            await publish_cart_update(cart.branch_id, payload)
-        except Exception:
-            pass

@@ -108,6 +108,40 @@ class SqlAlchemyInventoryRepository:
         )
         return (await self._session.execute(stmt)).scalar_one_or_none()
 
+    async def get_by_product_branch_for_update(
+        self,
+        organization_id: uuid.UUID,
+        product_id: uuid.UUID,
+        branch_id: uuid.UUID,
+    ) -> Inventory | None:
+        """Same as ``get_by_product_branch`` but takes a row lock (SELECT ...
+        FOR UPDATE).
+
+        Callers that read ``quantity``/``reserved_quantity``, check
+        availability, then write back a new value (reservation, checkout
+        deduction, manual adjustment, transfer) must use this instead of the
+        plain read — otherwise two concurrent requests for the same
+        product+branch can both read the same stock level before either
+        commits, both pass the availability check, and both write, resulting
+        in oversold/negative-available stock. The lock only blocks other
+        writers of the *same* inventory row; different products/branches are
+        unaffected.
+        """
+        stmt = (
+            select(Inventory)
+            .join(Product, Product.id == Inventory.product_id)
+            .where(
+                and_(
+                    Inventory.product_id == product_id,
+                    Inventory.branch_id == branch_id,
+                    Product.organization_id == organization_id,
+                    Inventory.is_deleted.is_(False),
+                )
+            )
+            .with_for_update()
+        )
+        return (await self._session.execute(stmt)).scalar_one_or_none()
+
     async def add(self, inventory: Inventory) -> Inventory:
         self._session.add(inventory)
         await self._session.flush()

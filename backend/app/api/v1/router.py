@@ -22,6 +22,7 @@ from app.modules.reports.api.reports_router import router as reports_router
 from app.modules.sales.api.ai_events_router import router as ai_events_router
 from app.modules.sales.api.cart_router import router as cart_router
 from app.modules.sales.api.order_router import router as order_router
+from app.modules.sales.api.shop_router import router as shop_router
 from app.modules.tenancy.api.branch_router import router as branch_router
 from app.modules.tenancy.api.organization_router import router as organization_router
 
@@ -36,6 +37,7 @@ api_router.include_router(product_router)
 api_router.include_router(inventory_router)
 api_router.include_router(order_router)
 api_router.include_router(cart_router)
+api_router.include_router(shop_router)
 api_router.include_router(ai_events_router)
 api_router.include_router(customer_router)
 api_router.include_router(employee_router)

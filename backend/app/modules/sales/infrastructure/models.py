@@ -37,6 +37,10 @@ class CartStatus(str, enum.Enum):
     ACTIVE = "active"
     ABANDONED = "abandoned"
     CONVERTED = "converted"
+    # AI detected checkout_initiated (or staff pressed checkout on an
+    # AI cart): bill is frozen, nothing charged yet. Waiting for the
+    # customer to confirm via QR, or staff to confirm on their behalf.
+    PENDING_CHECKOUT = "pending_checkout"
 
 
 class CartSource(str, enum.Enum):
@@ -95,6 +99,17 @@ class ShoppingCart(Entity):
         DateTime(timezone=True), nullable=True
     )
     converted_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    # Opaque, unguessable credential for the customer-facing confirm page
+    # (`GET/POST /shop/checkout/{token}`). Only set while status is
+    # PENDING_CHECKOUT; the QR code shown at the checkout zone encodes a URL
+    # containing this token. Not a customer identity — just proof "the
+    # person confirming is looking at this specific bill".
+    checkout_token: Mapped[str | None] = mapped_column(
+        String(64), nullable=True, index=True
+    )
+    checkout_requested_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
 

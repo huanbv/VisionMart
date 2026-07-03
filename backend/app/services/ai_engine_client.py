@@ -28,6 +28,10 @@ class AIEngineClient:
     def __init__(self, base_url: str | None = None, timeout: float = 30.0) -> None:
         self._base_url = (base_url or get_settings().AI_ENGINE_BASE_URL).rstrip("/")
         self._timeout = timeout
+        # AI Engine endpoints require this shared secret (see
+        # ai-engine/app/security.py) so an attacker who can reach the
+        # service can't trigger inference/training/capture for free.
+        self._headers = {"X-AI-Engine-Key": get_settings().AI_ENGINE_API_KEY}
 
     async def detect(
         self,
@@ -42,7 +46,9 @@ class AIEngineClient:
         params = {"model": model} if model else None
         try:
             async with httpx.AsyncClient(timeout=self._timeout) as client:
-                resp = await client.post(url, files=files, params=params)
+                resp = await client.post(
+                    url, files=files, params=params, headers=self._headers
+                )
                 resp.raise_for_status()
                 return resp.json()
         except httpx.HTTPError as exc:
@@ -73,7 +79,9 @@ class AIEngineClient:
             data["camera_id"] = camera_id
         try:
             async with httpx.AsyncClient(timeout=self._timeout) as client:
-                resp = await client.post(url, files=files, data=data)
+                resp = await client.post(
+                    url, files=files, data=data, headers=self._headers
+                )
                 resp.raise_for_status()
                 return resp.json()
         except httpx.HTTPError as exc:
@@ -96,7 +104,7 @@ class AIEngineClient:
             payload["model"] = model
         try:
             async with httpx.AsyncClient(timeout=self._timeout) as client:
-                resp = await client.post(url, json=payload)
+                resp = await client.post(url, json=payload, headers=self._headers)
                 resp.raise_for_status()
                 return resp.json()
         except httpx.HTTPError as exc:
@@ -130,7 +138,7 @@ class AIEngineClient:
         }
         try:
             async with httpx.AsyncClient(timeout=self._timeout) as client:
-                resp = await client.post(url, json=payload)
+                resp = await client.post(url, json=payload, headers=self._headers)
                 resp.raise_for_status()
                 return resp.json()
         except httpx.HTTPError as exc:
@@ -141,7 +149,7 @@ class AIEngineClient:
         url = f"{self._base_url}/ai/train/{job_id}"
         try:
             async with httpx.AsyncClient(timeout=self._timeout) as client:
-                resp = await client.get(url)
+                resp = await client.get(url, headers=self._headers)
                 if resp.status_code == 404:
                     raise AIEngineNotFoundError(f"job {job_id} not found")
                 resp.raise_for_status()
@@ -167,7 +175,7 @@ class AIEngineClient:
         }
         try:
             async with httpx.AsyncClient(timeout=self._timeout) as client:
-                resp = await client.post(url, json=payload)
+                resp = await client.post(url, json=payload, headers=self._headers)
                 resp.raise_for_status()
                 return resp.json()
         except httpx.HTTPError as exc:

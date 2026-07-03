@@ -13,7 +13,7 @@ from app.core.rate_limit import enforce as enforce_rate_limit
 from app.database.session import get_session
 from app.dependencies.auth import CurrentUser, get_current_user
 from app.modules.identity.application.auth_service import AuthService
-from app.modules.identity.application.jwt_service import JWTService
+from app.modules.identity.application.jwt_service import get_jwt_service
 from app.modules.identity.application.password_hasher import PasswordHasher
 from app.modules.identity.infrastructure.repositories import (
     SqlAlchemyRefreshTokenRepository,
@@ -42,7 +42,7 @@ def _build_service(
         users=SqlAlchemyUserRepository(session),
         refresh_tokens=SqlAlchemyRefreshTokenRepository(session),
         password_hasher=PasswordHasher(),
-        jwt_service=JWTService(settings),
+        jwt_service=get_jwt_service(),
     )
 
 
