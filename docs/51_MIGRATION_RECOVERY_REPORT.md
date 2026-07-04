@@ -313,7 +313,51 @@ kỳ file `schema.sql`, backup, hay thao tác SQL thủ công nào. Đã xác mi
 bằng thực thi thật (không mô phỏng), hai lần độc lập, trên hai database
 trống khác nhau, cho cùng một kết quả.
 
-## 10. Bước tiếp theo (tuỳ chọn, chưa thực hiện)
+## 10. Xác nhận thực tế trên production (Megahost VPS, 2026-07-04)
+
+Sau khi commit chứa fix (`f8837f4 "Fix Alembic base migration and
+production deployment"`) được đẩy lên `main`/tag `v1.0.0`, bạn đã chạy lại
+`scripts/setup-production.sh` thật trên VPS Megahost. Log thực tế:
+
+```
+==> Applying database migrations (alembic upgrade head)
+INFO  [alembic.runtime.migration] Running upgrade  -> 6fa79a26c4de, initial schema (recovered)
+INFO  [alembic.runtime.migration] Running upgrade 6fa79a26c4de -> 7a1b3c5d9e0f, add stock_movements table
+...
+INFO  [alembic.runtime.migration] Running upgrade 1bcd2e3f4a56 -> 2f4a6c8e0b13, cart pending_checkout status + checkout token
+  OK Migrations applied
+```
+
+Đúng 13 bước, đúng thứ tự, đúng như đã xác minh trong sandbox ở mục 6-7 —
+**không phải mô phỏng, đây là lần chạy thật trên hạ tầng production.**
+
+Hai điểm cần làm rõ trong log bạn gửi, để tránh hiểu nhầm là còn lỗi:
+
+1. **Chuỗi log `ERROR: relation "cameras"/"organizations"/"shopping_carts"
+   does not exist`** (từ `14:11:41` đến `14:53:19`) — đây là log **lịch sử
+   còn sót lại từ lần deploy hỏng trước đó** (trước khi commit `f8837f4`
+   tồn tại). `docker compose ps` cho thấy container `postgres` đã
+   `Up 42 minutes` — tức là container Postgres này được giữ nguyên từ lần
+   chạy `setup-production.sh` thất bại trước, khi backend liên tục poll
+   những bảng chưa tồn tại. `docker compose logs -f` phát lại toàn bộ log
+   cũ trước khi tail log mới. Migration thật của lần chạy này diễn ra
+   *sau* toàn bộ các dòng lỗi đó, qua container tạm
+   `visionmart-backend-run-...`, và thành công.
+2. **`doctor` báo `FAIL: Backup directory ready` (`/var/backups/visionmart`
+   không tồn tại)** — không liên quan đến Alembic/migration, đây là kiểm
+   tra thư mục backup của DevOps toolkit (nằm ngoài phạm vi "chỉ sửa
+   migration nền tảng" được giao). 5 mục `WARNING` còn lại (chưa có
+   camera, monitoring chưa mount Docker socket, chưa có báo cáo
+   evaluation, thư mục log evaluation chưa tạo, bucket MinIO chưa tạo)
+   đều là trạng thái bình thường của một lần cài đặt mới, không liên quan
+   migration.
+
+**Kết luận:** đây là bằng chứng thực tế, độc lập với môi trường sandbox
+của tôi, xác nhận đúng những gì mục 9 đã kết luận — VPS mới có thể khởi
+tạo schema hoàn chỉnh chỉ bằng Alembic, sự cố `KeyError: '6fa79a26c4de'`
+ban đầu đã được giải quyết triệt để.
+
+## 11. Bước tiếp theo (tuỳ chọn, chưa thực hiện)
 
 Nếu muốn schema khớp 100% với ORM (bao gồm cả 2 index bị thiếu ở mục 8),
 tôi có thể thêm một migration mới, số 14, `down_revision =
