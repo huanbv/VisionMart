@@ -594,6 +594,14 @@ sản xuất: [docs/46_DEPLOYMENT_VALIDATION.md](46_DEPLOYMENT_VALIDATION.md).
 - Deployment Validation (doctor, readiness, health score, production safety audit):
   [docs/46_DEPLOYMENT_VALIDATION.md](46_DEPLOYMENT_VALIDATION.md)
 - Operational Monitoring: [docs/19_MONITORING.md](19_MONITORING.md)
+- **Final DevOps & Deployment Toolkit** (16 script tự động hoá phần lớn
+  quy trình thủ công trong tài liệu này -- setup, update, backup/restore,
+  logs, maintenance mode, cleanup, status/version, health-check/doctor,
+  secrets, TLS renewal):
+  [docs/47_PRODUCTION_SETUP.md](47_PRODUCTION_SETUP.md),
+  [docs/48_OPERATIONS_GUIDE.md](48_OPERATIONS_GUIDE.md),
+  [docs/49_DISASTER_RECOVERY.md](49_DISASTER_RECOVERY.md),
+  [docs/50_SCRIPT_REFERENCE.md](50_SCRIPT_REFERENCE.md)
 
 ---
 

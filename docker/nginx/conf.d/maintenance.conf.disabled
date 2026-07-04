@@ -1,0 +1,30 @@
+# VisionMart -- Maintenance mode template (DevOps Toolkit Part 10).
+#
+# Disabled by default: the ".disabled" suffix keeps this OUT of
+# docker/nginx/nginx.conf's `include /etc/nginx/conf.d/*.conf;` glob, so
+# it has zero effect until scripts/maintenance-mode.sh copies it to
+# "maintenance.conf" (matching the glob) after moving the real
+# "default.conf" aside to "default.conf.disabled". scripts/exit-
+# maintenance.sh reverses both steps. Internal services (backend,
+# celery, postgres, ai-engine, ...) are never touched by this -- only
+# nginx's external-facing routing changes, and only nginx is reloaded
+# (not restarted), so existing keep-alive connections drain gracefully.
+server {
+    listen 80;
+    server_name _;
+
+    add_header X-Content-Type-Options "nosniff" always;
+
+    # Keep health checks (uptime monitors, load balancers) answering
+    # truthfully during planned maintenance instead of also going 503.
+    location = /health {
+        access_log off;
+        default_type application/json;
+        return 200 '{"status":"maintenance"}';
+    }
+
+    location / {
+        default_type text/html;
+        return 503 '<!doctype html><html lang="en"><head><meta charset="utf-8"><title>VisionMart - Maintenance</title><meta name="viewport" content="width=device-width, initial-scale=1"></head><body style="font-family:-apple-system,Segoe UI,Roboto,sans-serif;text-align:center;padding:96px 24px;color:#1f2937;background:#f9fafb"><h1 style="font-size:28px;margin-bottom:12px">VisionMart is under maintenance</h1><p style="font-size:16px;color:#4b5563">We are performing scheduled maintenance and will be back shortly.<br>Please try again in a few minutes.</p></body></html>';
+    }
+}
