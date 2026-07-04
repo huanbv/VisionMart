@@ -14,6 +14,7 @@ export default defineConfig({
     host: true,
     port: 3000,
     strictPort: true,
+    allowedHosts: ["visionmart.thehuan.com", "localhost"],
   },
   preview: {
     port: 3000,
