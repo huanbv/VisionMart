@@ -3,3 +3,9 @@ pytest-asyncio==0.24.0
 black==24.10.0
 ruff==0.7.0
 isort==5.13.2
+
+# Optional: enables CPU/RAM sampling in scripts/benchmark_vision_pipeline.py
+# (OpenCV Integration Sprint 1). The script runs fine without it — it just
+# skips the CPU%/RSS columns — so this is dev/benchmarking-only, not a
+# runtime dependency.
+psutil==6.1.0

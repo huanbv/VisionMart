@@ -18,6 +18,7 @@ from app.modules.identity.api.role_router import router as role_router
 from app.modules.identity.api.user_router import router as user_router
 from app.modules.inventory.api.inventory_router import router as inventory_router
 from app.modules.notification.api.notification_router import router as notification_router
+from app.modules.ops_monitoring.api.router import router as ops_monitoring_router
 from app.modules.reports.api.reports_router import router as reports_router
 from app.modules.sales.api.ai_events_router import router as ai_events_router
 from app.modules.sales.api.cart_router import router as cart_router
@@ -48,3 +49,4 @@ api_router.include_router(audit_router)
 api_router.include_router(reports_router)
 api_router.include_router(detection_router)
 api_router.include_router(ai_training_router)
+api_router.include_router(ops_monitoring_router)

@@ -22,6 +22,7 @@ import ProductsPage from "@/pages/ProductsPage";
 import ReportsPage from "@/pages/ReportsPage";
 import RolesPage from "@/pages/RolesPage";
 import ShopCheckoutPage from "@/pages/ShopCheckoutPage";
+import SystemHealthPage from "@/pages/SystemHealthPage";
 import UsersPage from "@/pages/UsersPage";
 import { RequireAuth } from "@/routes/RequireAuth";
 
@@ -59,9 +60,9 @@ export default function App() {
         <Route path="/roles" element={<RolesPage />} />
         <Route path="/audit-logs" element={<AuditLogsPage />} />
         <Route path="/reports" element={<ReportsPage />} />
+        <Route path="/system-health" element={<SystemHealthPage />} />
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
   );
 }
-

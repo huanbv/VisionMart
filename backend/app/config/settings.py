@@ -70,6 +70,10 @@ class Settings(BaseSettings):
     # ---- AI Engine ----
     AI_ENGINE_BASE_URL: str = "http://ai-engine:8100"
 
+    # ---- Operational Monitoring (read-only proxy target; see monitoring/) ----
+    MONITORING_SERVICE_URL: str = "http://monitoring:8200"
+    MONITORING_API_TOKEN: str = "change-me-monitoring-token"
+
     # ---- Detection alerts ----
     DETECTION_ALERT_MIN_CONFIDENCE: float = 0.7
     DETECTION_ALERT_CLASSES: str = "person"
@@ -211,6 +215,22 @@ class Settings(BaseSettings):
             ):
                 raise ValueError(
                     "MINIO_ROOT_PASSWORD must be set to a strong, non-default value in production."
+                )
+            # `MONITORING_API_TOKEN` must match the same value configured on the
+            # standalone `monitoring` service (monitoring/config.py's
+            # MONITORING_API_TOKEN) — this backend uses it server-side, in
+            # app/modules/ops_monitoring/api/router.py, to authenticate to
+            # monitoring on the frontend's behalf. Leaving the shared default
+            # would let anyone who can reach the monitoring service directly
+            # (bypassing this backend) read operational data with the
+            # published default token.
+            if (
+                self.MONITORING_API_TOKEN.strip().lower() in _INSECURE_SECRETS
+                or self.MONITORING_API_TOKEN == "change-me-monitoring-token"
+            ):
+                raise ValueError(
+                    "MONITORING_API_TOKEN must be set to a strong, non-default value in production "
+                    "(and must match the monitoring service's own MONITORING_API_TOKEN)."
                 )
         return self
 

@@ -6,10 +6,16 @@
 name: visionmart
 
 x-logging: &default-logging
-  driver: json-file
+  # "local" (Docker >= 20.10) instead of "json-file": same max-size/max-file
+  # rotation semantics, but rotated files are stored compressed on disk —
+  # gives every service (backend, ai-engine, celery, frontend, nginx,
+  # monitoring) gzip-equivalent log compression with zero application code
+  # changes. `docker logs <container>` works exactly the same either way.
+  # See docs/18_LOGGING.md for the full log-management design.
+  driver: local
   options:
-    max-size: "10m"
-    max-file: "3"
+    max-size: "${LOG_MAX_FILE_SIZE:-100m}"
+    max-file: "${LOG_MAX_FILES:-5}"
 
 x-restart: &default-restart
   restart: unless-stopped
@@ -198,6 +204,107 @@ services:
     networks: [visionmart-net]
     logging: *default-logging
 
+  # ----------------------------------------------------------
+  # Operational Monitoring (read-only; see monitoring/__init__.py)
+  # ----------------------------------------------------------
+  monitoring:
+    build:
+      context: .
+      dockerfile: monitoring/Dockerfile
+    image: visionmart/monitoring:dev
+    container_name: visionmart-monitoring
+    <<: *default-restart
+    env_file: .env
+    environment:
+      MONITORING_BACKEND_URL: http://backend:8000
+      MONITORING_AI_ENGINE_URL: http://ai-engine:8100
+      MONITORING_SQLITE_PATH: /data/monitoring.db
+      MONITORING_LOG_DIR: /data/logs
+      MONITORING_EVALUATION_REPORTS_DIR: /app/repo/evaluation_results
+    depends_on:
+      backend:   { condition: service_started }
+      ai-engine: { condition: service_started }
+      redis:     { condition: service_healthy }
+    volumes:
+      - ./monitoring:/app/monitoring
+      - monitoring_data:/data
+      # Read-only: lets the (optional) Evaluation signal in the Health Score
+      # / Production Readiness Report see evaluation_results/, and lets the
+      # Release Information endpoint read release_info.json if generated
+      # (see scripts/generate_release_info.py). Monitoring never writes here.
+      - .:/app/repo:ro
+      # Optional: uncomment to enable Docker-container health checks (§ requirement 4).
+      # - /var/run/docker.sock:/var/run/docker.sock:ro
+    ports:
+      - "${MONITORING_PORT:-8200}:8200"
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8200/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    networks: [visionmart-net]
+    logging: *default-logging
+
+  # ----------------------------------------------------------
+  # Automatic Backup (read-only against production; see backup/__init__.py)
+  # ----------------------------------------------------------
+  # Optional in-stack scheduler. Most VPS deployments are equally well
+  # served by host cron calling `docker compose run --rm backup-once`
+  # once a day (see docs/43_BACKUP_RECOVERY.md) instead of running this
+  # always-on container — both paths call the exact same
+  # `python -m backup.cli` command, so pick whichever fits your ops
+  # preference. Enable with: `docker compose --profile backup up -d backup`.
+  backup:
+    build:
+      context: .
+      dockerfile: backup/Dockerfile
+    image: visionmart/backup:dev
+    container_name: visionmart-backup
+    profiles: ["backup"]
+    <<: *default-restart
+    env_file: .env
+    environment:
+      DATABASE_URL: ${DATABASE_URL}
+      MONITORING_SQLITE_PATH: /data/monitoring.db
+      BACKUP_EVALUATION_REPORTS_DIR: /app/repo/evaluation_results
+      BACKUP_REPO_ROOT: /app/repo
+      BACKUP_DIR: /backups
+      BACKUP_LOG_DIR: /data/logs
+    depends_on:
+      postgres: { condition: service_healthy }
+    volumes:
+      - .:/app/repo:ro
+      - monitoring_data:/data:ro
+      - backups_data:/backups
+    networks: [visionmart-net]
+    logging: *default-logging
+
+  # One-shot variant of the same image for host-cron-triggered manual/daily
+  # runs: `docker compose run --rm backup-once` (never left running).
+  backup-once:
+    build:
+      context: .
+      dockerfile: backup/Dockerfile
+    image: visionmart/backup:dev
+    container_name: visionmart-backup-once
+    profiles: ["backup-once"]
+    env_file: .env
+    environment:
+      DATABASE_URL: ${DATABASE_URL}
+      MONITORING_SQLITE_PATH: /data/monitoring.db
+      BACKUP_EVALUATION_REPORTS_DIR: /app/repo/evaluation_results
+      BACKUP_REPO_ROOT: /app/repo
+      BACKUP_DIR: /backups
+      BACKUP_LOG_DIR: /data/logs
+    command: ["python", "-m", "backup.cli", "run"]
+    volumes:
+      - .:/app/repo:ro
+      - monitoring_data:/data:ro
+      - backups_data:/backups
+    networks: [visionmart-net]
+    logging: *default-logging
+
   nginx:
     image: nginx:1.27-alpine
     container_name: visionmart-nginx
@@ -226,3 +333,5 @@ volumes:
   minio_data:
   ai_engine_weights:
   ai_engine_training:
+  monitoring_data:
+  backups_data:

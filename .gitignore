@@ -71,3 +71,29 @@ logs/
 
 # ===== Docker =====
 *.pid
+
+# ===== Production Hardening (backup / evaluation / release info) =====
+# Generated per build/deploy by scripts/generate_release_info.py -- never
+# a source-of-truth file, regenerate instead of committing.
+/release_info.json
+# Local evaluation run output (evaluation/cli.py's default --output-dir).
+evaluation_results/
+# Local backup output if BACKUP_DIR points inside the repo during testing.
+/backups/
+*.sha256
+# Backup archives can land anywhere BACKUP_DIR points to (not just
+# /backups/, e.g. during local testing) -- never commit an actual backup.
+visionmart-backup-*.zip
+# Rotated + gzip-compressed log files from monitoring/backup/evaluation's
+# RotatingFileHandler (e.g. monitoring.log.1.gz) if MONITORING_LOG_DIR/
+# BACKUP_LOG_DIR/EVALUATION_LOG_DIR ever point inside the repo locally.
+*.log.*.gz
+
+# ===== Versioning (Release Candidate) =====
+# NOTE: VERSION, CHANGELOG.md, and RELEASE_NOTES_*.md are intentionally
+# NOT ignored -- they are source-of-truth / release artifacts that must be
+# committed. Listed here only as a reminder not to add them above by
+# mistake when editing this file.
+
+# ===== Local Docker Compose overrides =====
+docker-compose.override.yml

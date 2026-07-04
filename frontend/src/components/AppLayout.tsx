@@ -13,6 +13,7 @@ import {
   ExperimentOutlined,
   EyeOutlined,
   FileTextOutlined,
+  HeartOutlined,
   KeyOutlined,
   LogoutOutlined,
   SafetyOutlined,
@@ -144,6 +145,11 @@ const MENU_ITEMS = [
     key: "/reports",
     icon: <BarChartOutlined />,
     label: <Link to="/reports">Báo cáo</Link>,
+  },
+  {
+    key: "/system-health",
+    icon: <HeartOutlined />,
+    label: <Link to="/system-health">Giám sát hệ thống</Link>,
   },
 ];
 

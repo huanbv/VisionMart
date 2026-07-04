@@ -412,6 +412,15 @@ cat backup/db.dump | docker compose exec -T postgres \
 mc mirror /var/lib/visionmart/backup/<TS>/minio s3/visionmart
 ```
 
+> **Đã thay thế bởi hệ thống backup tự động (`backup/`, Release Candidate).**
+> Quy trình cron thủ công ở §13.1/§13.2 vẫn hoạt động nếu bạn đã dùng nó
+> từ trước, nhưng **không tương thích định dạng** với hệ thống mới (khác
+> tên file, khác cấu trúc bên trong: `db.dump` custom-format vs
+> `postgres.sql` plain-SQL trong zip có checksum). Triển khai mới nên dùng
+> `backup/` — xem [docs/43_BACKUP_RECOVERY.md](43_BACKUP_RECOVERY.md) và
+> §18 bên dưới — **không trộn lẫn hai hệ thống** cho cùng một chuỗi backup
+> (chọn một, dùng nhất quán).
+
 ---
 
 ## 14. Quan sát & vận hành
@@ -490,7 +499,84 @@ Khuyến nghị bổ sung khi production lâu dài (xem
 
 ---
 
-## 18. Tham chiếu
+## 18. Production Readiness (Release Candidate) — bổ sung trước khi go-live
+
+Bốn khả năng dưới đây được thêm ở giai đoạn "Final Production Readiness"
+(additive, không sửa Cart/Checkout/Payment/Event Bus/CV/DB schema). Tài
+liệu chi tiết từng phần nằm ở các file riêng — mục này chỉ tóm tắt bước
+triển khai trên VPS.
+
+### 18.1 Backup tự động (`backup/`)
+
+```bash
+# Backup một lần thủ công
+docker compose run --rm backup-once
+
+# Hoặc bật scheduler chạy nền theo BACKUP_CRON_SCHEDULE (mặc định 02:00 hàng ngày)
+docker compose --profile backup up -d backup
+
+# Liệt kê / kiểm tra backup
+docker compose run --rm backup-once python -m backup.cli list
+docker compose run --rm backup-once python -m backup.cli verify --file /backups/visionmart-backup-<ts>.zip
+```
+
+Chi tiết đầy đủ, định dạng archive, và **quy trình restore** (destructive,
+cần xác nhận thủ công): [docs/43_BACKUP_RECOVERY.md](43_BACKUP_RECOVERY.md).
+
+### 18.2 Log rotation (Docker `local` driver + Python service logs)
+
+Không cần hành động thêm — `docker-compose.yml`'s `x-logging` anchor đã
+áp dụng driver `local` (nén tự động, `max-size`/`max-file` theo
+`LOG_MAX_FILE_SIZE`/`LOG_MAX_FILES` trong `.env`) cho mọi service. 3
+service Python độc lập (`monitoring`, `backup`, `evaluation`) tự xoay
+vòng + gzip log file riêng của chúng. Chi tiết:
+[docs/18_LOGGING.md](18_LOGGING.md).
+
+### 18.3 Health Score & Release Information
+
+Đã hiển thị sẵn trên trang **"Giám sát hệ thống"** (`/system-health`) sau
+khi đăng nhập admin — không cần cấu hình thêm. Xem
+[docs/19_MONITORING.md](19_MONITORING.md#health-score--release-information-release-candidate)
+và [docs/44_VERSIONING.md](44_VERSIONING.md).
+
+Chạy `scripts/generate_release_info.py` ở bước build/deploy (§10) để
+Release Information hiển thị đúng git commit/build time thay vì
+"unknown":
+
+```bash
+python3 scripts/generate_release_info.py
+# ghi ra ./release_info.json — mount sẵn vào container monitoring qua
+# volume ".:/app/repo:ro" (đã có trong docker-compose.yml)
+```
+
+### 18.4 Doctor command & Production Readiness Report
+
+Chạy trước/sau mỗi lần deploy để xác nhận cấu hình:
+
+```bash
+docker compose exec monitoring python -m visionmart doctor
+echo $?   # 0 = không có FAIL nghiêm trọng, 1 = có FAIL cần xử lý trước khi tiếp tục
+```
+
+Report đầy đủ (JSON, cùng dữ liệu doctor dùng) cũng có qua API:
+`GET /api/v1/ops-monitoring/readiness` (JWT admin) hoặc trực tiếp
+`docker compose exec monitoring python -m visionmart readiness`.
+
+Chi tiết từng check, cách diễn giải PASS/WARNING/FAIL, và audit an toàn
+sản xuất: [docs/46_DEPLOYMENT_VALIDATION.md](46_DEPLOYMENT_VALIDATION.md).
+
+### 18.5 Checklist bổ sung trước go-live
+
+- [ ] `docker compose exec monitoring python -m visionmart doctor` trả về exit code 0 (hoặc chỉ còn WARNING đã review).
+- [ ] Đã chạy `docker compose run --rm backup-once` ít nhất một lần thành công, `verify` trả PASS.
+- [ ] `docker compose --profile backup up -d backup` đang chạy (nếu dùng scheduler trong-stack) HOẶC cron host đã cấu hình `backup-once`.
+- [ ] `scripts/generate_release_info.py` đã chạy ở bước build hiện tại (Release Information không còn "unknown").
+- [ ] Trang `/system-health` hiển thị Health Score ở trạng thái Healthy/Warning (không phải Critical/Offline liên tục).
+- [ ] `LOG_MAX_FILE_SIZE`/`LOG_MAX_FILES` trong `.env` phù hợp dung lượng đĩa VPS thực tế.
+
+---
+
+## 19. Tham chiếu
 
 - Kiến trúc deploy đầy đủ (Tier 1 / Tier 2, CI/CD, branching, backup matrix):
   [docs/07_DEPLOYMENT_PLAN.md](docs/07_DEPLOYMENT_PLAN.md)
@@ -502,6 +588,12 @@ Khuyến nghị bổ sung khi production lâu dài (xem
   [docs/02_SOFTWARE_ARCHITECTURE.md](docs/02_SOFTWARE_ARCHITECTURE.md)
 - Kịch bản demo & MVP:
   [docs/MVP_DEMO_PLAN.md](docs/MVP_DEMO_PLAN.md)
+- Backup & Recovery (hệ thống mới, tự động): [docs/43_BACKUP_RECOVERY.md](43_BACKUP_RECOVERY.md)
+- Logging & log rotation: [docs/18_LOGGING.md](18_LOGGING.md)
+- Versioning & Release Information: [docs/44_VERSIONING.md](44_VERSIONING.md)
+- Deployment Validation (doctor, readiness, health score, production safety audit):
+  [docs/46_DEPLOYMENT_VALIDATION.md](46_DEPLOYMENT_VALIDATION.md)
+- Operational Monitoring: [docs/19_MONITORING.md](19_MONITORING.md)
 
 ---
 

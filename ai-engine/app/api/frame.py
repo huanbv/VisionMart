@@ -47,7 +47,7 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, s
 
 from app.security import require_api_key
 from app.services.face_recognizer import get_face_recognizer
-from app.services.person_tracker import TrackedObject, track_frame
+from app.services.person_tracker import TrackedObject, get_last_vision_result, track_frame
 from app.services.product_mapper import map_class_to_sku
 
 logger = logging.getLogger("ai-engine.frame")
@@ -236,8 +236,21 @@ async def process_frame(
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Empty image upload")
 
     camera_key = str(camera_id) if camera_id else f"{organization_id}:{branch_id}"
+
+    # Fetched here (rather than after track_frame, as before this Sprint)
+    # only so `is_checkout_zone` can be forwarded into track_frame for a
+    # more informative debug overlay label — the value itself and every
+    # other use of `camera_info` below is unchanged.
+    camera_info: dict[str, Any] | None = None
+    if camera_id is not None:
+        camera_info = await _fetch_camera(camera_id)
+
     try:
-        detections = await track_frame(content, camera_key)
+        detections = await track_frame(
+            content,
+            camera_key,
+            is_checkout_zone=bool(camera_info and camera_info.get("is_checkout_zone")),
+        )
     except ValueError as exc:
         raise HTTPException(status.HTTP_415_UNSUPPORTED_MEDIA_TYPE, str(exc))
     except Exception as exc:  # noqa: BLE001
@@ -270,10 +283,6 @@ async def process_frame(
                 customer_id = await _lookup_customer_by_face(
                     organization_id, match.face_embedding_ref
                 )
-
-    camera_info: dict[str, Any] | None = None
-    if camera_id is not None:
-        camera_info = await _fetch_camera(camera_id)
 
     now = time.time()
     _cleanup_stale_state(now)
@@ -401,4 +410,9 @@ async def process_frame(
         "is_checkout_zone": bool(camera_info and camera_info.get("is_checkout_zone")),
         "customer_id": str(customer_id) if customer_id else None,
         "emitted_events": emitted,
+        # Additive/optional — present only when at least one vision/
+        # ENABLE_* flag is on for this frame (see person_tracker.py). Old
+        # clients that don't know this key simply ignore it; nothing above
+        # this line changed shape or meaning.
+        "vision": get_last_vision_result(camera_key),
     }
