@@ -4,7 +4,7 @@
 #
 # Chạy 1 LẦN trên VPS Ubuntu, từ BÊN TRONG thư mục repo đã có code:
 #
-#   cd /var/opt/VisionMart        # (hoặc nơi bạn đặt code)
+#   cd /var/opt/visionmart        # (hoặc nơi bạn đặt code)
 #   sudo bash scripts/setup-vps.sh
 #
 # Script tự làm toàn bộ:
@@ -88,6 +88,27 @@ if [ -f scripts/generate-secrets.sh ]; then
   bash scripts/generate-secrets.sh --yes || warn "generate-secrets.sh báo lỗi -- kiểm tra lại .env / secrets/ bằng tay."
 fi
 
+# generate-secrets.sh coi các placeholder trong .env.example là "already set"
+# nên KHÔNG sinh mới -> backend production từ chối khởi động (pydantic
+# validator trong settings.py). Ép sinh giá trị mạnh cho secret còn ở
+# mặc định không an toàn:
+fix_secret() {
+  local key="$1" cur low
+  cur="$(grep "^${key}=" .env | cut -d= -f2-)"
+  low="$(printf '%s' "$cur" | tr '[:upper:]' '[:lower:]')"
+  case "$low" in
+    ''|change-me*|secret|visionmart-minio)
+      sed -i "s|^${key}=.*|${key}=$(openssl rand -hex 32)|" .env
+      ok "${key}: đã sinh giá trị mạnh (thay placeholder mặc định)"
+      ;;
+  esac
+}
+fix_secret BACKEND_SECRET_KEY
+fix_secret AI_ENGINE_API_KEY
+fix_secret MONITORING_API_TOKEN
+fix_secret MINIO_ROOT_PASSWORD
+fix_secret SEED_ADMIN_PASSWORD
+
 # Vá các giá trị production (chỉ sửa nếu key tồn tại trong .env)
 set_env() { grep -q "^$1=" .env && sed -i "s|^$1=.*|$1=$2|" .env; }
 set_env APP_ENV               "production"
@@ -128,12 +149,13 @@ else
     if [ -n "${DNS_IP}" ] && [ "${DNS_IP}" != "${VPS_IP}" ]; then
       warn "DNS ${DOMAIN} -> ${DNS_IP} nhưng IP VPS là ${VPS_IP}. Certbot có thể fail."
     fi
-    # Port 80 phải trống khi dùng standalone
+    # Port 80 phải trống khi dùng standalone. Hook phải là lệnh trong
+    # PATH -> bọc trong "bash -c" (certbot validate hook trước khi chạy).
     docker compose stop nginx >/dev/null 2>&1 || true
     if certbot certonly --standalone -d "${DOMAIN}" \
          --agree-tos -m "${LE_EMAIL}" --no-eff-email --non-interactive \
-         --pre-hook  "cd ${APP_DIR} && docker compose stop nginx || true" \
-         --post-hook "cd ${APP_DIR} && docker compose start nginx || true"; then
+         --pre-hook  "bash -c 'cd ${APP_DIR} && docker compose stop nginx || true'" \
+         --post-hook "bash -c 'cd ${APP_DIR} && docker compose start nginx || true'"; then
       ok "Đã cấp chứng chỉ (tự gia hạn qua certbot.timer)."
       HAVE_CERT=1
     else
@@ -225,16 +247,21 @@ log "Khởi động stack"
 docker compose up -d --remove-orphans || die "docker compose up FAIL."
 
 log "Chờ postgres/backend healthy (tối đa 3 phút)"
+st="starting"
 for i in $(seq 1 36); do
   st="$(docker inspect -f '{{.State.Health.Status}}' visionmart-backend 2>/dev/null || echo starting)"
   [ "$st" = "healthy" ] && break
   sleep 5
 done
-[ "${st:-}" = "healthy" ] && ok "Backend healthy" || warn "Backend chưa healthy -- xem: docker compose logs --tail 50 backend"
+if [ "$st" = "healthy" ]; then
+  ok "Backend healthy"
+else
+  warn "Backend chưa healthy -- xem: docker compose logs --tail 50 backend"
+fi
 
 # ----------------------- 7. Migrate + seed ---------------------------
 log "Migrate database (alembic upgrade head)"
-docker compose run --rm backend alembic upgrade head || die "Migration FAIL -- xem lỗi phía trên."
+docker compose run --rm backend alembic upgrade head || die "Migration FAIL -- xem loi phia tren."
 ok "Database schema OK"
 
 log "Seed organization/roles/admin (idempotent)"
@@ -250,5 +277,6 @@ else
   ok "Truy cập: http://${DOMAIN} (chưa có SSL -- chạy lại script sau khi DNS trỏ đúng)"
 fi
 ADMIN_PW="$(grep '^SEED_ADMIN_PASSWORD=' .env | cut -d= -f2-)"
-ok "Admin: $(grep '^SEED_ADMIN_EMAIL=' .env | cut -d= -f2-) / ${ADMIN_PW:-<xem .env>}"
+ADMIN_EMAIL="$(grep '^SEED_ADMIN_EMAIL=' .env | cut -d= -f2-)"
+ok "Admin: ${ADMIN_EMAIL} / ${ADMIN_PW:-(xem .env)}"
 echo "  Lệnh hữu ích: docker compose ps | logs -f backend | restart nginx"
