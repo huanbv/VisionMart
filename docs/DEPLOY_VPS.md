@@ -7,7 +7,7 @@
 | Hạng mục       | Giá trị                                           |
 | -------------- | ------------------------------------------------- |
 | Domain         | `visionmart.thehuan.com`                          |
-| VPS IP         | `103.149.86.23`                                   |
+| VPS IP         | `160.22.122.88`                                   |
 | OS             | Ubuntu 22.04 LTS                                  |
 | SSH user       | `root`                                            |
 | Deploy mode    | Docker Compose (single-host, Tier 1)              |
@@ -22,7 +22,7 @@
 
 ## 0. Yêu cầu trước khi bắt đầu
 
-- Đã trỏ DNS record **A** `visionmart.thehuan.com → 103.149.86.23` (TTL ≤ 300s).
+- Đã trỏ DNS record **A** `visionmart.thehuan.com → 160.22.122.88` (TTL ≤ 300s).
 - Đã có quyền SSH root vào VPS bằng key (khuyến nghị) hoặc password.
 - VPS tối thiểu: **4 vCPU / 8 GB RAM / 80 GB SSD** cho demo CPU-only.
   Khuyến nghị **8 vCPU / 16 GB RAM / 200 GB SSD** nếu chạy 2–4 camera.
@@ -33,14 +33,14 @@
 ## 1. SSH vào VPS
 
 ```bash
-ssh root@103.149.86.23
+ssh root@160.22.122.88
 ```
 
 > Nếu chưa thiết lập key, sau khi vào lần đầu nên copy public key lên VPS:
 >
 > ```bash
 > # chạy ở máy local
-> ssh-copy-id root@103.149.86.23
+> ssh-copy-id root@160.22.122.88
 > ```
 
 ---
@@ -78,7 +78,7 @@ sed -i 's/^#\?PermitRootLogin.*/PermitRootLogin prohibit-password/' /etc/ssh/ssh
 systemctl restart sshd
 ```
 
-> Từ bước này trở đi, login bằng `ssh deploy@103.149.86.23` và dùng `sudo`.
+> Từ bước này trở đi, login bằng `ssh deploy@160.22.122.88` và dùng `sudo`.
 
 ---
 
@@ -501,110 +501,4 @@ Khuyến nghị bổ sung khi production lâu dài (xem
 
 ## 18. Production Readiness (Release Candidate) — bổ sung trước khi go-live
 
-Bốn khả năng dưới đây được thêm ở giai đoạn "Final Production Readiness"
-(additive, không sửa Cart/Checkout/Payment/Event Bus/CV/DB schema). Tài
-liệu chi tiết từng phần nằm ở các file riêng — mục này chỉ tóm tắt bước
-triển khai trên VPS.
-
-### 18.1 Backup tự động (`backup/`)
-
-```bash
-# Backup một lần thủ công
-docker compose run --rm backup-once
-
-# Hoặc bật scheduler chạy nền theo BACKUP_CRON_SCHEDULE (mặc định 02:00 hàng ngày)
-docker compose --profile backup up -d backup
-
-# Liệt kê / kiểm tra backup
-docker compose run --rm backup-once python -m backup.cli list
-docker compose run --rm backup-once python -m backup.cli verify --file /backups/visionmart-backup-<ts>.zip
-```
-
-Chi tiết đầy đủ, định dạng archive, và **quy trình restore** (destructive,
-cần xác nhận thủ công): [docs/43_BACKUP_RECOVERY.md](43_BACKUP_RECOVERY.md).
-
-### 18.2 Log rotation (Docker `local` driver + Python service logs)
-
-Không cần hành động thêm — `docker-compose.yml`'s `x-logging` anchor đã
-áp dụng driver `local` (nén tự động, `max-size`/`max-file` theo
-`LOG_MAX_FILE_SIZE`/`LOG_MAX_FILES` trong `.env`) cho mọi service. 3
-service Python độc lập (`monitoring`, `backup`, `evaluation`) tự xoay
-vòng + gzip log file riêng của chúng. Chi tiết:
-[docs/18_LOGGING.md](18_LOGGING.md).
-
-### 18.3 Health Score & Release Information
-
-Đã hiển thị sẵn trên trang **"Giám sát hệ thống"** (`/system-health`) sau
-khi đăng nhập admin — không cần cấu hình thêm. Xem
-[docs/19_MONITORING.md](19_MONITORING.md#health-score--release-information-release-candidate)
-và [docs/44_VERSIONING.md](44_VERSIONING.md).
-
-Chạy `scripts/generate_release_info.py` ở bước build/deploy (§10) để
-Release Information hiển thị đúng git commit/build time thay vì
-"unknown":
-
-```bash
-python3 scripts/generate_release_info.py
-# ghi ra ./release_info.json — mount sẵn vào container monitoring qua
-# volume ".:/app/repo:ro" (đã có trong docker-compose.yml)
-```
-
-### 18.4 Doctor command & Production Readiness Report
-
-Chạy trước/sau mỗi lần deploy để xác nhận cấu hình:
-
-```bash
-docker compose exec monitoring python -m visionmart doctor
-echo $?   # 0 = không có FAIL nghiêm trọng, 1 = có FAIL cần xử lý trước khi tiếp tục
-```
-
-Report đầy đủ (JSON, cùng dữ liệu doctor dùng) cũng có qua API:
-`GET /api/v1/ops-monitoring/readiness` (JWT admin) hoặc trực tiếp
-`docker compose exec monitoring python -m visionmart readiness`.
-
-Chi tiết từng check, cách diễn giải PASS/WARNING/FAIL, và audit an toàn
-sản xuất: [docs/46_DEPLOYMENT_VALIDATION.md](46_DEPLOYMENT_VALIDATION.md).
-
-### 18.5 Checklist bổ sung trước go-live
-
-- [ ] `docker compose exec monitoring python -m visionmart doctor` trả về exit code 0 (hoặc chỉ còn WARNING đã review).
-- [ ] Đã chạy `docker compose run --rm backup-once` ít nhất một lần thành công, `verify` trả PASS.
-- [ ] `docker compose --profile backup up -d backup` đang chạy (nếu dùng scheduler trong-stack) HOẶC cron host đã cấu hình `backup-once`.
-- [ ] `scripts/generate_release_info.py` đã chạy ở bước build hiện tại (Release Information không còn "unknown").
-- [ ] Trang `/system-health` hiển thị Health Score ở trạng thái Healthy/Warning (không phải Critical/Offline liên tục).
-- [ ] `LOG_MAX_FILE_SIZE`/`LOG_MAX_FILES` trong `.env` phù hợp dung lượng đĩa VPS thực tế.
-
----
-
-## 19. Tham chiếu
-
-- Kiến trúc deploy đầy đủ (Tier 1 / Tier 2, CI/CD, branching, backup matrix):
-  [docs/07_DEPLOYMENT_PLAN.md](docs/07_DEPLOYMENT_PLAN.md)
-- Bảo mật, hardening, header, CORS, secret rotation:
-  [docs/08_SECURITY_GUIDELINE.md](docs/08_SECURITY_GUIDELINE.md)
-- Xác thực, JWT, JWKS rotation:
-  [docs/13_AUTHENTICATION.md](docs/13_AUTHENTICATION.md)
-- Tổng quan hệ thống & module:
-  [docs/02_SOFTWARE_ARCHITECTURE.md](docs/02_SOFTWARE_ARCHITECTURE.md)
-- Kịch bản demo & MVP:
-  [docs/MVP_DEMO_PLAN.md](docs/MVP_DEMO_PLAN.md)
-- Backup & Recovery (hệ thống mới, tự động): [docs/43_BACKUP_RECOVERY.md](43_BACKUP_RECOVERY.md)
-- Logging & log rotation: [docs/18_LOGGING.md](18_LOGGING.md)
-- Versioning & Release Information: [docs/44_VERSIONING.md](44_VERSIONING.md)
-- Deployment Validation (doctor, readiness, health score, production safety audit):
-  [docs/46_DEPLOYMENT_VALIDATION.md](46_DEPLOYMENT_VALIDATION.md)
-- Operational Monitoring: [docs/19_MONITORING.md](19_MONITORING.md)
-- **Final DevOps & Deployment Toolkit** (16 script tự động hoá phần lớn
-  quy trình thủ công trong tài liệu này -- setup, update, backup/restore,
-  logs, maintenance mode, cleanup, status/version, health-check/doctor,
-  secrets, TLS renewal):
-  [docs/47_PRODUCTION_SETUP.md](47_PRODUCTION_SETUP.md),
-  [docs/48_OPERATIONS_GUIDE.md](48_OPERATIONS_GUIDE.md),
-  [docs/49_DISASTER_RECOVERY.md](49_DISASTER_RECOVERY.md),
-  [docs/50_SCRIPT_REFERENCE.md](50_SCRIPT_REFERENCE.md)
-
----
-
-*Tài liệu này dành cho VPS đơn `103.149.86.23` phục vụ giai đoạn demo / MVP.
-Khi mở rộng đa node hoặc bật GPU, chuyển sang quy trình K8s Tier 2 trong
-[docs/07_DEPLOYMENT_PLAN.md](docs/07_DEPLOYMENT_PLAN.md).*
+Bốn khả năng dưới đây được thêm ở giai đoạn "Final Productio
