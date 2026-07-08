@@ -11,3 +11,8 @@ opencv-python-headless==4.10.0.84
 pandas==2.2.3
 openpyxl==3.1.5
 matplotlib==3.9.2
+# app.vision.roi.zones (imported transitively via ai-engine/app/vision,
+# see the Dockerfile's COPY ai-engine/app step) lazily `import yaml` for
+# one of the 7 PREPROCESSING_CONFIGS (the "ENABLE_ROI" one) -- pin to
+# the exact version ai-engine/requirements.txt already uses.
+PyYAML==6.0.2
