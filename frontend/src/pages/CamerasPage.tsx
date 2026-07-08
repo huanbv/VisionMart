@@ -22,6 +22,7 @@ import {
   message,
 } from "antd";
 import {
+  AppstoreOutlined,
   DeleteOutlined,
   EditOutlined,
   ExperimentOutlined,
@@ -70,6 +71,143 @@ interface FormValues {
   is_checkout_zone: boolean;
   alert_classes: string;
   alert_min_confidence: number | null;
+}
+
+/**
+ * One tile in the multi-camera grid wall (see "Xem dạng lưới" below).
+ * Each tile owns its own independent MJPEG connection -- opened on mount
+ * / whenever `detect` changes, always stopped on unmount -- so tiles can
+ * be added/removed/re-rendered freely by the parent grid without leaking
+ * connections. detectEveryN is higher than the single-camera live view's
+ * default (5 vs 3): with several tiles running YOLO at once the CPU cost
+ * multiplies, so the grid trades a bit of detection freshness for being
+ * able to hold more simultaneous streams before the VPS chokes.
+ */
+function CameraGridTile({
+  camera,
+  detect,
+}: {
+  camera: Camera;
+  detect: boolean;
+}) {
+  const [frame, setFrame] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    setFrame(null);
+    setError(null);
+    const handle = openMjpegStream(
+      camera.id,
+      (url) => setFrame(url),
+      (msg) => setError(msg),
+      { detect, detectEveryN: 5 },
+    );
+    return () => handle.stop();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [camera.id, detect]);
+
+  return (
+    <div
+      style={{
+        position: "relative",
+        width: "100%",
+        aspectRatio: "16 / 9",
+        background: "#000",
+        borderRadius: 4,
+        overflow: "hidden",
+      }}
+    >
+      {error ? (
+        <div
+          style={{
+            position: "absolute",
+            inset: 0,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            padding: 8,
+            textAlign: "center",
+          }}
+        >
+          <Typography.Text type="danger" style={{ fontSize: 12 }}>
+            {error}
+          </Typography.Text>
+        </div>
+      ) : frame ? (
+        <img
+          src={frame}
+          alt={camera.name}
+          style={{
+            width: "100%",
+            height: "100%",
+            objectFit: "cover",
+            display: "block",
+          }}
+        />
+      ) : (
+        <div
+          style={{
+            position: "absolute",
+            inset: 0,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+          }}
+        >
+          <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+            Đang kết nối...
+          </Typography.Text>
+        </div>
+      )}
+      <div
+        style={{
+          position: "absolute",
+          left: 0,
+          right: 0,
+          bottom: 0,
+          background: "rgba(0,0,0,0.55)",
+          color: "#fff",
+          fontSize: 12,
+          padding: "2px 8px",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          gap: 8,
+        }}
+      >
+        <span
+          style={{
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+            whiteSpace: "nowrap",
+          }}
+        >
+          {camera.name}
+        </span>
+        {frame && !error && (
+          <span
+            style={{
+              display: "inline-flex",
+              alignItems: "center",
+              gap: 4,
+              flexShrink: 0,
+            }}
+          >
+            <span
+              style={{
+                width: 6,
+                height: 6,
+                borderRadius: "50%",
+                background: "#ff4d4f",
+                display: "inline-block",
+              }}
+            />
+            LIVE
+          </span>
+        )}
+      </div>
+    </div>
+  );
 }
 
 export default function CamerasPage() {
@@ -391,6 +529,44 @@ export default function CamerasPage() {
     };
   }, []);
 
+  // CCTV-style "camera wall" -- shows every online camera live at once
+  // instead of opening them one by one. Each tile (CameraGridTile above)
+  // owns its own MJPEG connection, so closing the modal (destroyOnHidden
+  // unmounts every tile) is all the cleanup needed.
+  const [gridOpen, setGridOpen] = useState(false);
+  const [gridCameras, setGridCameras] = useState<Camera[]>([]);
+  const [gridLoading, setGridLoading] = useState(false);
+  // Off by default: N tiles running YOLO simultaneously multiplies CPU
+  // cost, unlike the single-camera live view where it's on by default.
+  const [gridDetect, setGridDetect] = useState(false);
+
+  const openGrid = async () => {
+    setGridOpen(true);
+    setGridLoading(true);
+    try {
+      const res = await listCameras({ is_online: true, limit: 100 });
+      setGridCameras(res.items.filter((c) => c.is_active));
+    } catch {
+      message.error("Không tải được danh sách camera");
+    } finally {
+      setGridLoading(false);
+    }
+  };
+
+  const closeGrid = () => {
+    setGridOpen(false);
+    setGridCameras([]);
+  };
+
+  const gridCols =
+    gridCameras.length <= 1
+      ? 1
+      : gridCameras.length <= 4
+        ? 2
+        : gridCameras.length <= 9
+          ? 3
+          : 4;
+
   const columns: ColumnsType<Camera> = [
     {
       title: "Trạng thái",
@@ -582,6 +758,9 @@ export default function CamerasPage() {
                 loadStats();
               }}
             />
+            <Button icon={<AppstoreOutlined />} onClick={openGrid}>
+              Xem dạng lưới
+            </Button>
             {canEdit && (
               <Button
                 type="primary"
@@ -989,6 +1168,65 @@ export default function CamerasPage() {
                 alt="live"
                 style={{ width: "100%", display: "block" }}
               />
+            </div>
+          )}
+        </Space>
+      </Modal>
+
+      <Modal
+        title={
+          <Space>
+            <span>Xem dạng lưới — Camera đang online</span>
+            <Tag color="blue">{gridCameras.length} camera</Tag>
+          </Space>
+        }
+        open={gridOpen}
+        onCancel={closeGrid}
+        footer={[
+          <Button key="close" onClick={closeGrid}>
+            Đóng
+          </Button>,
+        ]}
+        width="90vw"
+        style={{ top: 20 }}
+        destroyOnHidden
+      >
+        <Space direction="vertical" style={{ width: "100%" }} size={12}>
+          <Space wrap>
+            <Switch
+              checked={gridDetect}
+              onChange={setGridDetect}
+              size="small"
+            />
+            <Typography.Text>Nhận diện AI trên toàn bộ lưới</Typography.Text>
+            <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+              Bật YOLO cho nhiều luồng cùng lúc tốn CPU hơn nhiều — chỉ bật
+              khi thật cần.
+            </Typography.Text>
+          </Space>
+          {gridLoading && (
+            <Typography.Text type="secondary">
+              Đang tải danh sách camera online...
+            </Typography.Text>
+          )}
+          {!gridLoading && gridCameras.length === 0 && (
+            <Typography.Text type="secondary">
+              Không có camera nào đang online.
+            </Typography.Text>
+          )}
+          {!gridLoading && gridCameras.length > 0 && (
+            <div
+              style={{
+                display: "grid",
+                gridTemplateColumns: `repeat(${gridCols}, 1fr)`,
+                gap: 8,
+                maxHeight: "75vh",
+                overflowY: "auto",
+              }}
+            >
+              {gridCameras.map((c) => (
+                <CameraGridTile key={c.id} camera={c} detect={gridDetect} />
+              ))}
             </div>
           )}
         </Space>
