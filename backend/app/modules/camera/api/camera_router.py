@@ -7,6 +7,7 @@ import uuid
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, UploadFile, File, status
+from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exceptions import ConflictError, NotFoundError, ValidationError
@@ -392,6 +393,42 @@ async def preview_camera_stream(
         "detections": result.get("detections", []),
         "frame_base64": result.get("frame_base64"),
     }
+
+
+@router.get("/{camera_id}/live")
+async def live_camera_stream(
+    camera_id: uuid.UUID,
+    current: CurrentUser = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> StreamingResponse:
+    """Continuous MJPEG live view — unlike /preview (one frame, then
+    closed), this keeps the connection open and streams frames until the
+    browser tab closes or the request is cancelled. Same JWT bearer auth
+    as every other route here; the frontend can't use a plain <img src>
+    (no way to attach the Authorization header to an <img> request), so
+    it fetches this manually and parses the multipart frames itself — see
+    frontend/src/utils/mjpegStream.ts.
+    """
+    service = _service(session)
+    try:
+        camera = await service.get(current.organization_id, camera_id)
+    except NotFoundError as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+
+    if not camera.stream_url:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            detail="Camera has no stream_url configured",
+        )
+
+    client = AIEngineClient()
+    return StreamingResponse(
+        client.live_stream(
+            stream_url=camera.stream_url,
+            open_timeout_ms=get_settings().RTSP_CAPTURE_OPEN_TIMEOUT_MS,
+        ),
+        media_type="multipart/x-mixed-replace; boundary=frame",
+    )
 
 
 @router.post("/{camera_id}/simulated-stream", response_model=CameraResponse)

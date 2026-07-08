@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   Badge,
   Button,
@@ -30,6 +30,7 @@ import {
   PlusOutlined,
   ReloadOutlined,
   VideoCameraAddOutlined,
+  VideoCameraOutlined,
   WifiOutlined,
 } from "@ant-design/icons";
 import type { ColumnsType } from "antd/es/table";
@@ -51,6 +52,7 @@ import {
   uploadSimulatedStream,
 } from "@/api/cameras";
 import { useAuth } from "@/contexts/AuthContext";
+import { openMjpegStream } from "@/utils/mjpegStream";
 
 const ADMIN_ROLES = new Set(["super_admin", "org_admin"]);
 const PAGE_SIZE = 20;
@@ -337,6 +339,45 @@ export default function CamerasPage() {
     setUploadFile(null);
   };
 
+  // True continuous MJPEG live view (as opposed to /preview's one-shot
+  // snapshot). Keeps a single mjpegStream connection open for as long as
+  // the modal is visible; liveStopRef lets closeLive() and the effect
+  // cleanup both reach the same "stop" function without re-renders
+  // racing each other.
+  const [liveFor, setLiveFor] = useState<Camera | null>(null);
+  const [liveFrame, setLiveFrame] = useState<string | null>(null);
+  const [liveError, setLiveError] = useState<string | null>(null);
+  const liveStopRef = useRef<(() => void) | null>(null);
+
+  const openLive = (row: Camera) => {
+    liveStopRef.current?.();
+    setLiveFor(row);
+    setLiveFrame(null);
+    setLiveError(null);
+    const handle = openMjpegStream(
+      row.id,
+      (url) => setLiveFrame(url),
+      (msg) => setLiveError(msg),
+    );
+    liveStopRef.current = handle.stop;
+  };
+
+  const closeLive = () => {
+    liveStopRef.current?.();
+    liveStopRef.current = null;
+    setLiveFor(null);
+    setLiveFrame(null);
+    setLiveError(null);
+  };
+
+  // Safety net: if the component unmounts (e.g. user navigates away)
+  // while a live view is open, don't leak the fetch connection.
+  useEffect(() => {
+    return () => {
+      liveStopRef.current?.();
+    };
+  }, []);
+
   const columns: ColumnsType<Camera> = [
     {
       title: "Trạng thái",
@@ -392,7 +433,7 @@ export default function CamerasPage() {
     },
     {
       title: "Hành động",
-      width: 250,
+      width: 290,
       fixed: "right",
       render: (_, row) => (
         <Space>
@@ -407,6 +448,12 @@ export default function CamerasPage() {
             icon={<EyeOutlined />}
             onClick={() => onPreview(row)}
             title="Xem thử luồng"
+          />
+          <Button
+            size="small"
+            icon={<VideoCameraOutlined />}
+            onClick={() => openLive(row)}
+            title="Xem trực tiếp"
           />
           <Button
             size="small"
@@ -879,6 +926,44 @@ export default function CamerasPage() {
               hiện {previewResult.detections.length} đối tượng.
             </Typography.Text>
           </Space>
+        )}
+      </Modal>
+
+      <Modal
+        title={liveFor ? `Xem trực tiếp — ${liveFor.name}` : "Xem trực tiếp"}
+        open={!!liveFor}
+        onCancel={closeLive}
+        footer={[
+          <Button key="close" onClick={closeLive}>
+            Đóng
+          </Button>,
+        ]}
+        width={720}
+        destroyOnHidden
+      >
+        {liveError && (
+          <Typography.Text type="danger">{liveError}</Typography.Text>
+        )}
+        {!liveError && !liveFrame && (
+          <Typography.Text type="secondary">
+            Đang kết nối luồng trực tiếp...
+          </Typography.Text>
+        )}
+        {!liveError && liveFrame && (
+          <div
+            style={{
+              width: "100%",
+              background: "#000",
+              borderRadius: 4,
+              overflow: "hidden",
+            }}
+          >
+            <img
+              src={liveFrame}
+              alt="live"
+              style={{ width: "100%", display: "block" }}
+            />
+          </div>
         )}
       </Modal>
 

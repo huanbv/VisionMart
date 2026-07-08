@@ -7,6 +7,7 @@ backend's domain code unaware of transport details.
 from __future__ import annotations
 
 import logging
+from collections.abc import AsyncIterator
 from typing import Any
 
 import httpx
@@ -109,6 +110,39 @@ class AIEngineClient:
                 return resp.json()
         except httpx.HTTPError as exc:
             logger.warning("ai-engine capture failed: %s", exc)
+            raise AIEngineError(str(exc)) from exc
+
+    async def live_stream(
+        self,
+        *,
+        stream_url: str,
+        fps: float = 8.0,
+        open_timeout_ms: int = 5000,
+    ) -> AsyncIterator[bytes]:
+        """Async-generator proxy for the ai-engine's continuous MJPEG
+        ``/live`` endpoint (app/api/live.py). Yields raw multipart chunk
+        bytes as they arrive and forwards them as-is -- the backend never
+        buffers a whole frame here, so a slow browser tab doesn't pile up
+        server-side memory. ``timeout=None`` because this connection is
+        meant to stay open for as long as someone is watching, not the
+        short request timeout every other method here uses.
+        """
+        url = f"{self._base_url}/live"
+        params = {
+            "stream_url": stream_url,
+            "fps": fps,
+            "open_timeout_ms": open_timeout_ms,
+        }
+        try:
+            async with httpx.AsyncClient(timeout=None) as client:
+                async with client.stream(
+                    "GET", url, params=params, headers=self._headers
+                ) as resp:
+                    resp.raise_for_status()
+                    async for chunk in resp.aiter_bytes():
+                        yield chunk
+        except httpx.HTTPError as exc:
+            logger.warning("ai-engine live stream failed: %s", exc)
             raise AIEngineError(str(exc)) from exc
 
     async def start_training(
