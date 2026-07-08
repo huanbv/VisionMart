@@ -180,6 +180,18 @@ class Settings(BaseSettings):
     # slash) and gets misrouted. Setting this explicitly skips that lookup.
     MINIO_REGION: str = "us-east-1"
 
+    # ---- Camera simulation (course project — no physical cameras yet) ----
+    # Uploaded demo videos (see camera_router.py's /simulated-stream
+    # endpoint) land in a *separate*, public-read MinIO bucket — never
+    # MINIO_BUCKET, which holds private snapshots — so the standalone
+    # "camera-sim-runner" container (docker-compose.yml) can loop them over
+    # plain HTTP without credentials. CAMERA_SIM_RTSP_HOST/PORT must match
+    # the "rtsp-sim" service's in-network name/port. See
+    # docs/21_CAMERA_MANAGER.md and docker-compose.yml's "camera-sim" block.
+    MINIO_CAMERA_SIM_BUCKET: str = "camera-sim"
+    CAMERA_SIM_RTSP_HOST: str = "rtsp-sim"
+    CAMERA_SIM_RTSP_PORT: int = 8554
+
     @property
     def cors_origins_list(self) -> list[str]:
         return [o.strip() for o in self.BACKEND_CORS_ORIGINS.split(",") if o.strip()]

@@ -29,6 +29,7 @@ import {
   InboxOutlined,
   PlusOutlined,
   ReloadOutlined,
+  VideoCameraAddOutlined,
   WifiOutlined,
 } from "@ant-design/icons";
 import type { ColumnsType } from "antd/es/table";
@@ -47,6 +48,7 @@ import {
   listCameras,
   previewCameraStream,
   updateCamera,
+  uploadSimulatedStream,
 } from "@/api/cameras";
 import { useAuth } from "@/contexts/AuthContext";
 
@@ -302,6 +304,39 @@ export default function CamerasPage() {
     setPreviewResult(null);
   };
 
+  // Course project — no camera thật: cho phép tải video demo lên, backend
+  // tự cấu hình luồng RTSP giả lập (camera-sim-runner) và cập nhật
+  // stream_url của camera này.
+  const [uploadFor, setUploadFor] = useState<Camera | null>(null);
+  const [uploadFile, setUploadFile] = useState<File | null>(null);
+  const [uploading, setUploading] = useState(false);
+
+  const onUploadSimulatedStream = async () => {
+    if (!uploadFor || !uploadFile) return;
+    setUploading(true);
+    try {
+      await uploadSimulatedStream(uploadFor.id, uploadFile);
+      message.success(
+        `Đã tải video lên — stream_url của '${uploadFor.name}' đã được cập nhật`,
+      );
+      setUploadFor(null);
+      setUploadFile(null);
+      load();
+      loadStats();
+    } catch (err: unknown) {
+      const d = (err as { response?: { data?: { detail?: unknown } } })
+        ?.response?.data?.detail;
+      message.error(typeof d === "string" ? d : "Tải video thất bại");
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  const closeUpload = () => {
+    setUploadFor(null);
+    setUploadFile(null);
+  };
+
   const columns: ColumnsType<Camera> = [
     {
       title: "Trạng thái",
@@ -357,7 +392,7 @@ export default function CamerasPage() {
     },
     {
       title: "Hành động",
-      width: 210,
+      width: 250,
       fixed: "right",
       render: (_, row) => (
         <Space>
@@ -372,6 +407,16 @@ export default function CamerasPage() {
             icon={<EyeOutlined />}
             onClick={() => onPreview(row)}
             title="Xem thử luồng"
+          />
+          <Button
+            size="small"
+            icon={<VideoCameraAddOutlined />}
+            disabled={!canEdit}
+            onClick={() => {
+              setUploadFor(row);
+              setUploadFile(null);
+            }}
+            title="Tải video demo lên (giả lập luồng camera)"
           />
           <Button
             size="small"
@@ -835,6 +880,59 @@ export default function CamerasPage() {
             </Typography.Text>
           </Space>
         )}
+      </Modal>
+
+      <Modal
+        title={
+          uploadFor
+            ? `Tải video demo lên — ${uploadFor.name}`
+            : "Tải video demo lên"
+        }
+        open={!!uploadFor}
+        onCancel={closeUpload}
+        footer={[
+          <Button key="close" onClick={closeUpload}>
+            Đóng
+          </Button>,
+          <Button
+            key="upload"
+            type="primary"
+            disabled={!uploadFile}
+            loading={uploading}
+            onClick={onUploadSimulatedStream}
+          >
+            Tải lên & áp dụng
+          </Button>,
+        ]}
+        width={520}
+      >
+        <Typography.Paragraph type="secondary">
+          Chưa có camera vật lý? Tải một video demo lên — hệ thống sẽ tự
+          động phát video này thành luồng RTSP giả lập và cập nhật lại
+          Stream URL của camera này (ghi đè giá trị hiện tại).
+        </Typography.Paragraph>
+        <Upload.Dragger
+          multiple={false}
+          accept="video/*,.mp4,.mov,.mkv,.avi,.webm"
+          beforeUpload={(file) => {
+            setUploadFile(file as File);
+            return false;
+          }}
+          onRemove={() => setUploadFile(null)}
+          fileList={
+            uploadFile
+              ? [{ uid: "1", name: uploadFile.name, status: "done" }]
+              : []
+          }
+        >
+          <p className="ant-upload-drag-icon">
+            <InboxOutlined />
+          </p>
+          <p className="ant-upload-text">Kéo thả hoặc bấm để chọn video</p>
+          <p className="ant-upload-hint">
+            MP4/MOV/MKV/AVI/WEBM, tối đa 200 MB
+          </p>
+        </Upload.Dragger>
       </Modal>
     </Space>
   );

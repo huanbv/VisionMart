@@ -211,3 +211,21 @@ export async function previewCameraStream(id: string): Promise<PreviewResult> {
   );
   return data;
 }
+
+// Course project — no physical cameras yet. Uploads a demo video that a
+// standalone camera-sim-runner service loops as an RTSP stream, and the
+// backend auto-updates this camera's stream_url to match. See
+// docs/21_CAMERA_MANAGER.md and docker-compose.yml's "camera-sim" block.
+export async function uploadSimulatedStream(
+  id: string,
+  file: File,
+): Promise<Camera> {
+  const form = new FormData();
+  form.append("video", file);
+  const { data } = await apiClient.post<Camera>(
+    `/cameras/${id}/simulated-stream`,
+    form,
+    { headers: { "Content-Type": "multipart/form-data" } },
+  );
+  return data;
+}

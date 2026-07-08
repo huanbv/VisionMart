@@ -216,6 +216,50 @@ services:
     logging: *default-logging
 
   # ----------------------------------------------------------
+  # Camera simulation (course project — no physical cameras yet)
+  # rtsp-sim (mediamtx) is a plain RTSP server. camera-sim-runner polls a
+  # public-read MinIO bucket (see backend Settings.MINIO_CAMERA_SIM_BUCKET
+  # / app/modules/camera/application/camera_sim.py) and loops whatever
+  # video was last uploaded via POST /cameras/{id}/simulated-stream
+  # (Cameras page -> "Tải video demo lên") as that camera's RTSP stream.
+  # No backend/ai-engine code changes needed beyond that endpoint --
+  # camera stream_url just points at rtsp://rtsp-sim:8554/cam-{camera_id}
+  # exactly like a real IP camera would (see docs/21_CAMERA_MANAGER.md).
+  # Optional: only starts with `docker compose --profile camera-sim up`.
+  # Remove this whole block (rtsp-sim/camera-sim-runner services +
+  # docker/camera-sim/) once real cameras are wired in -- nothing else in
+  # the stack depends on it.
+  # ----------------------------------------------------------
+  rtsp-sim:
+    image: bluenviron/mediamtx:latest
+    container_name: visionmart-rtsp-sim
+    profiles: ["camera-sim"]
+    <<: *default-restart
+    ports:
+      - "${RTSP_SIM_PORT:-8554}:8554"
+    networks: [visionmart-net]
+    logging: *default-logging
+
+  camera-sim-runner:
+    build:
+      context: ./docker/camera-sim
+      dockerfile: Dockerfile
+    image: visionmart/camera-sim-runner:dev
+    container_name: visionmart-camera-sim-runner
+    profiles: ["camera-sim"]
+    <<: *default-restart
+    environment:
+      MINIO_HOST: ${MINIO_ENDPOINT:-minio:9000}
+      MINIO_CAMERA_SIM_BUCKET: ${MINIO_CAMERA_SIM_BUCKET:-camera-sim}
+      CAMERA_SIM_RTSP_HOST: rtsp-sim
+      CAMERA_SIM_RTSP_PORT: "8554"
+    depends_on:
+      minio:    { condition: service_started }
+      rtsp-sim: { condition: service_started }
+    networks: [visionmart-net]
+    logging: *default-logging
+
+  # ----------------------------------------------------------
   # Operational Monitoring (read-only; see monitoring/__init__.py)
   # ----------------------------------------------------------
   monitoring:

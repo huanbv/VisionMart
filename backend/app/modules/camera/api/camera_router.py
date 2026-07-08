@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.exceptions import ConflictError, NotFoundError, ValidationError
 from app.database.session import get_session
 from app.dependencies.auth import CurrentUser, get_current_user, require_roles
+from app.modules.camera.application.camera_sim import CameraSimError, CameraSimStorage
 from app.modules.camera.application.services import CameraService
 from app.modules.camera.infrastructure.models import Camera
 from app.modules.camera.infrastructure.repositories import (
@@ -391,3 +392,44 @@ async def preview_camera_stream(
         "detections": result.get("detections", []),
         "frame_base64": result.get("frame_base64"),
     }
+
+
+@router.post("/{camera_id}/simulated-stream", response_model=CameraResponse)
+async def upload_simulated_stream(
+    camera_id: uuid.UUID,
+    video: UploadFile = File(...),
+    current: CurrentUser = Depends(require_roles("super_admin", "org_admin")),
+    session: AsyncSession = Depends(get_session),
+) -> CameraResponse:
+    """Course-project camera simulation (no physical cameras yet): uploads
+    a demo video, stores it in a public-read MinIO bucket, and points this
+    camera's stream_url at the standalone camera-sim-runner's RTSP loop
+    for it — same code path a real RTSP camera would use later. See
+    docs/21_CAMERA_MANAGER.md and docker-compose.yml's "camera-sim" block.
+    """
+    repo = SqlAlchemyCameraRepository(session)
+    service = CameraService(repo)
+    try:
+        await service.get(current.organization_id, camera_id)
+    except NotFoundError as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+
+    content = await video.read()
+
+    storage = CameraSimStorage(get_settings())
+    try:
+        stream_url = await storage.upload_video(
+            str(camera_id),
+            filename=video.filename or "video.mp4",
+            content=content,
+            content_type=video.content_type or "video/mp4",
+        )
+    except CameraSimError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+    try:
+        await service.update(current.organization_id, camera_id, stream_url=stream_url)
+    except NotFoundError as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+
+    return await _load_response(repo, service, current.organization_id, camera_id)
