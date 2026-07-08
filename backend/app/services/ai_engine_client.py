@@ -118,6 +118,8 @@ class AIEngineClient:
         stream_url: str,
         fps: float = 8.0,
         open_timeout_ms: int = 5000,
+        detect: bool = True,
+        detect_every_n: int = 3,
     ) -> AsyncIterator[bytes]:
         """Async-generator proxy for the ai-engine's continuous MJPEG
         ``/live`` endpoint (app/api/live.py). Yields raw multipart chunk
@@ -126,12 +128,19 @@ class AIEngineClient:
         server-side memory. ``timeout=None`` because this connection is
         meant to stay open for as long as someone is watching, not the
         short request timeout every other method here uses.
+
+        ``detect``/``detect_every_n`` are forwarded as-is to ai-engine,
+        which burns YOLO boxes + a small HUD directly into the frames
+        when enabled (see live.py) -- the backend never touches pixels
+        here, it's a pure byte pass-through either way.
         """
         url = f"{self._base_url}/live"
         params = {
             "stream_url": stream_url,
             "fps": fps,
             "open_timeout_ms": open_timeout_ms,
+            "detect": "true" if detect else "false",
+            "detect_every_n": detect_every_n,
         }
         try:
             async with httpx.AsyncClient(timeout=None) as client:

@@ -398,6 +398,8 @@ async def preview_camera_stream(
 @router.get("/{camera_id}/live")
 async def live_camera_stream(
     camera_id: uuid.UUID,
+    detect: bool = Query(default=True),
+    detect_every_n: int = Query(default=3, ge=1, le=15),
     current: CurrentUser = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
 ) -> StreamingResponse:
@@ -408,6 +410,10 @@ async def live_camera_stream(
     (no way to attach the Authorization header to an <img> request), so
     it fetches this manually and parses the multipart frames itself — see
     frontend/src/utils/mjpegStream.ts.
+
+    ``detect`` (default on) asks ai-engine to burn YOLO boxes + a small
+    HUD into the frames before they reach us — see live.py. Purely a
+    pass-through param; the backend never decodes a single frame here.
     """
     service = _service(session)
     try:
@@ -426,6 +432,8 @@ async def live_camera_stream(
         client.live_stream(
             stream_url=camera.stream_url,
             open_timeout_ms=get_settings().RTSP_CAPTURE_OPEN_TIMEOUT_MS,
+            detect=detect,
+            detect_every_n=detect_every_n,
         ),
         media_type="multipart/x-mixed-replace; boundary=frame",
     )

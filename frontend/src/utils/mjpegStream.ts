@@ -23,6 +23,13 @@ export interface MjpegStreamHandle {
   stop: () => void;
 }
 
+export interface MjpegStreamOptions {
+  /** Ask the backend/ai-engine to burn YOLO boxes + a HUD into the frames. Default true. */
+  detect?: boolean;
+  /** Run detection on every Nth captured frame (reused in between). Default 3. */
+  detectEveryN?: number;
+}
+
 function indexOfBytes(haystack: Uint8Array, needle: Uint8Array, from = 0): number {
   outer: for (let i = from; i <= haystack.length - needle.length; i++) {
     for (let j = 0; j < needle.length; j++) {
@@ -51,13 +58,20 @@ export function openMjpegStream(
   cameraId: string,
   onFrame: (objectUrl: string) => void,
   onError: (message: string) => void,
+  options: MjpegStreamOptions = {},
 ): MjpegStreamHandle {
   const controller = new AbortController();
   let stopped = false;
   let lastUrl: string | null = null;
 
   const baseURL = (import.meta.env.VITE_API_BASE_URL as string | undefined) ?? "/api/v1";
-  const url = `${baseURL}/cameras/${cameraId}/live`;
+  const detect = options.detect ?? true;
+  const detectEveryN = options.detectEveryN ?? 3;
+  const params = new URLSearchParams({
+    detect: String(detect),
+    detect_every_n: String(detectEveryN),
+  });
+  const url = `${baseURL}/cameras/${cameraId}/live?${params.toString()}`;
   const token = tokenStore.getAccess();
 
   const revokeLast = () => {

@@ -347,9 +347,14 @@ export default function CamerasPage() {
   const [liveFor, setLiveFor] = useState<Camera | null>(null);
   const [liveFrame, setLiveFrame] = useState<string | null>(null);
   const [liveError, setLiveError] = useState<string | null>(null);
+  // Whether ai-engine should burn YOLO boxes + a HUD (object count,
+  // inference ms, fps) into the frames — see live.py. On by default per
+  // the "muốn xem như phim viễn tưởng" ask; toggle-able in case a slower
+  // VPS makes it stutter, since YOLO inference is real CPU cost.
+  const [liveDetect, setLiveDetect] = useState(true);
   const liveStopRef = useRef<(() => void) | null>(null);
 
-  const openLive = (row: Camera) => {
+  const startLive = (row: Camera, detectOverride?: boolean) => {
     liveStopRef.current?.();
     setLiveFor(row);
     setLiveFrame(null);
@@ -358,8 +363,16 @@ export default function CamerasPage() {
       row.id,
       (url) => setLiveFrame(url),
       (msg) => setLiveError(msg),
+      { detect: detectOverride ?? liveDetect },
     );
     liveStopRef.current = handle.stop;
+  };
+
+  const openLive = (row: Camera) => startLive(row);
+
+  const onToggleLiveDetect = (checked: boolean) => {
+    setLiveDetect(checked);
+    if (liveFor) startLive(liveFor, checked);
   };
 
   const closeLive = () => {
@@ -941,30 +954,44 @@ export default function CamerasPage() {
         width={720}
         destroyOnHidden
       >
-        {liveError && (
-          <Typography.Text type="danger">{liveError}</Typography.Text>
-        )}
-        {!liveError && !liveFrame && (
-          <Typography.Text type="secondary">
-            Đang kết nối luồng trực tiếp...
-          </Typography.Text>
-        )}
-        {!liveError && liveFrame && (
-          <div
-            style={{
-              width: "100%",
-              background: "#000",
-              borderRadius: 4,
-              overflow: "hidden",
-            }}
-          >
-            <img
-              src={liveFrame}
-              alt="live"
-              style={{ width: "100%", display: "block" }}
+        <Space direction="vertical" style={{ width: "100%" }} size={12}>
+          <Space>
+            <Switch
+              checked={liveDetect}
+              onChange={onToggleLiveDetect}
+              size="small"
             />
-          </div>
-        )}
+            <Typography.Text>Nhận diện AI trực tiếp (YOLO)</Typography.Text>
+            <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+              Khung/nhãn + số liệu (số đối tượng, tốc độ suy luận, fps) được
+              vẽ trực tiếp lên hình.
+            </Typography.Text>
+          </Space>
+          {liveError && (
+            <Typography.Text type="danger">{liveError}</Typography.Text>
+          )}
+          {!liveError && !liveFrame && (
+            <Typography.Text type="secondary">
+              Đang kết nối luồng trực tiếp...
+            </Typography.Text>
+          )}
+          {!liveError && liveFrame && (
+            <div
+              style={{
+                width: "100%",
+                background: "#000",
+                borderRadius: 4,
+                overflow: "hidden",
+              }}
+            >
+              <img
+                src={liveFrame}
+                alt="live"
+                style={{ width: "100%", display: "block" }}
+              />
+            </div>
+          )}
+        </Space>
       </Modal>
 
       <Modal
