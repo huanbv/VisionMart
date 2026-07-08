@@ -295,10 +295,12 @@ services:
       # Release Information endpoint read release_info.json if generated
       # (see scripts/generate_release_info.py). Monitoring never writes here.
       - .:/app/repo:ro
-      # Read-only: lets the doctor "Backup directory ready" / "Recent
-      # backup exists" checks see the same archives the "backup" service
-      # writes -- see BACKUP_DIR override above.
-      - backups_data:/backups:ro
+      # NOT read-only: the doctor "Backup directory ready" check
+      # (visionmart/checks.py::_dir_writable) actively touches/removes a
+      # probe file to confirm the directory is writable, not just that it
+      # exists -- a :ro mount here always fails that probe. Monitoring
+      # never writes real backup content, only this ephemeral test file.
+      - backups_data:/backups
       # Optional: uncomment to enable Docker-container health checks (§ requirement 4).
       # - /var/run/docker.sock:/var/run/docker.sock:ro
     ports:
