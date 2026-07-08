@@ -197,6 +197,25 @@ server {
         proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto https;
         proxy_read_timeout 60s;
+        # POST /cameras/{id}/simulated-stream (camera-sim demo video
+        # upload) accepts up to 200 MB server-side.
+        client_max_body_size 200m;
+        client_body_timeout  120s;
+    }
+    # Camera live view (continuous MJPEG stream) -- must come before the
+    # /api/ block above: that ones proxy_read_timeout 60s and default
+    # buffering would kill/delay a long-lived streaming response, and is
+    # a common cause of ERR_HTTP2_PROTOCOL_ERROR in the browser for this
+    # kind of trickling, indefinitely-long response over HTTP/2.
+    location ~ ^/api/v1/cameras/[^/]+/live\$ {
+        proxy_pass http://backend:8000;
+        proxy_http_version 1.1;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto https;
+        proxy_buffering    off;
+        proxy_read_timeout 3600s;
     }
     location /ws/ {
         proxy_pass http://backend:8000;
