@@ -341,7 +341,11 @@ services:
       BACKUP_EVALUATION_REPORTS_DIR: /app/repo/evaluation_results
       BACKUP_REPO_ROOT: /app/repo
       BACKUP_DIR: /backups
-      BACKUP_LOG_DIR: /data/logs
+      # NOT /data/logs -- monitoring_data is mounted :ro below (backup only
+      # ever needs to *read* monitoring.db from it), so a log file written
+      # there crashes with "Read-only file system". backups_data is the
+      # one volume these services can actually write to.
+      BACKUP_LOG_DIR: /backups/logs
     depends_on:
       postgres: { condition: service_healthy }
     volumes:
@@ -367,7 +371,11 @@ services:
       BACKUP_EVALUATION_REPORTS_DIR: /app/repo/evaluation_results
       BACKUP_REPO_ROOT: /app/repo
       BACKUP_DIR: /backups
-      BACKUP_LOG_DIR: /data/logs
+      # NOT /data/logs -- monitoring_data is mounted :ro below (backup only
+      # ever needs to *read* monitoring.db from it), so a log file written
+      # there crashes with "Read-only file system". backups_data is the
+      # one volume these services can actually write to.
+      BACKUP_LOG_DIR: /backups/logs
     command: ["python", "-m", "backup.cli", "run"]
     volumes:
       - .:/app/repo:ro
