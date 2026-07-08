@@ -301,8 +301,11 @@ services:
       # exists -- a :ro mount here always fails that probe. Monitoring
       # never writes real backup content, only this ephemeral test file.
       - backups_data:/backups
-      # Optional: uncomment to enable Docker-container health checks (§ requirement 4).
-      # - /var/run/docker.sock:/var/run/docker.sock:ro
+      # Lets the doctor "Docker containers healthy" check (visionmart/checks.py)
+      # talk to the Docker Engine API from inside the container. Read-only --
+      # this only ever lists/inspects container state, never starts/stops
+      # anything.
+      - /var/run/docker.sock:/var/run/docker.sock:ro
     ports:
       - "${MONITORING_PORT:-8200}:8200"
     healthcheck:
@@ -370,6 +373,38 @@ services:
       - .:/app/repo:ro
       - monitoring_data:/data:ro
       - backups_data:/backups
+    networks: [visionmart-net]
+    logging: *default-logging
+
+  # ----------------------------------------------------------
+  # Evaluation Framework baseline report (see docs/EVALUATION_FRAMEWORK.md).
+  # One-off, profile-gated like backup-once -- produces the report the
+  # doctor's "Evaluation reports available" check is looking for at
+  # ./evaluation_results (read by monitoring/backup via their own
+  # `.:/app/repo:ro` mount at /app/repo/evaluation_results).
+  #
+  # Deliberately its own small image (python:3.11-slim, see
+  # evaluation/Dockerfile) rather than reusing ai-engine's -- the
+  # documented baseline/smoke-test command (`--synthetic-frames N`, no
+  # real footage needed) only needs numpy/opencv/pandas/matplotlib, not
+  # torch/ultralytics. Default command runs exactly that smoke test:
+  #   docker compose --profile evaluation run --rm evaluation
+  # For a full run against real data (optionally --with-yolo, which talks
+  # to the ai-engine container over HTTP -- see docs/EVALUATION_FRAMEWORK.md),
+  # override the command, e.g.:
+  #   docker compose --profile evaluation run --rm evaluation evaluate \
+  #     --input-kind rtsp --input rtsp://rtsp-sim:8554/cam-<id> \
+  #     --max-frames 200 --output-dir /app/evaluation_results
+  # ----------------------------------------------------------
+  evaluation:
+    build:
+      context: .
+      dockerfile: evaluation/Dockerfile
+    image: visionmart/evaluation:dev
+    container_name: visionmart-evaluation
+    profiles: ["evaluation"]
+    volumes:
+      - ./evaluation_results:/app/evaluation_results
     networks: [visionmart-net]
     logging: *default-logging
 
