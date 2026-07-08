@@ -276,6 +276,13 @@ services:
       MONITORING_SQLITE_PATH: /data/monitoring.db
       MONITORING_LOG_DIR: /data/logs
       MONITORING_EVALUATION_REPORTS_DIR: /app/repo/evaluation_results
+      # Matches the "backup"/"backup-once" services' own BACKUP_DIR=/backups
+      # override below -- the doctor "Backup directory ready" check reads
+      # BACKUP_DIR from *this* container's env, so it must point at the
+      # same backups_data volume the backup service actually writes to,
+      # not the host-facing .env default (/var/backups/visionmart), which
+      # nothing mounts here.
+      BACKUP_DIR: /backups
     depends_on:
       backend:   { condition: service_started }
       ai-engine: { condition: service_started }
@@ -288,6 +295,10 @@ services:
       # Release Information endpoint read release_info.json if generated
       # (see scripts/generate_release_info.py). Monitoring never writes here.
       - .:/app/repo:ro
+      # Read-only: lets the doctor "Backup directory ready" / "Recent
+      # backup exists" checks see the same archives the "backup" service
+      # writes -- see BACKUP_DIR override above.
+      - backups_data:/backups:ro
       # Optional: uncomment to enable Docker-container health checks (§ requirement 4).
       # - /var/run/docker.sock:/var/run/docker.sock:ro
     ports:
