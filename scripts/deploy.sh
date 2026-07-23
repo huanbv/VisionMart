@@ -15,18 +15,23 @@
 # Frontend is served by Vite/Nginx and picks up changes automatically;
 # this script does NOT touch the frontend container by default. Pass
 # --with-frontend to also rebuild the frontend image.
+#
+# ai-engine is rebuilt automatically when the pulled diff touches
+# ai-engine/ ; pass --with-ai-engine to force it.
 
 set -euo pipefail
 
 REPO_DIR="${REPO_DIR:-/var/www/visionmart}"
 COMPOSE="docker compose"
 WITH_FRONTEND=0
+WITH_AI_ENGINE=0
 
 for arg in "$@"; do
   case "$arg" in
     --with-frontend) WITH_FRONTEND=1 ;;
+    --with-ai-engine) WITH_AI_ENGINE=1 ;;
     -h|--help)
-      sed -n '2,18p' "$0"
+      sed -n '2,20p' "$0"
       exit 0
       ;;
     *)
@@ -61,6 +66,21 @@ fi
 SERVICES="backend celery-worker"
 if [ "$WITH_FRONTEND" -eq 1 ]; then
   SERVICES="$SERVICES frontend"
+fi
+
+# Rebuild ai-engine when its code changed. Previously this script only
+# ever rebuilt backend + celery-worker, so an ai-engine change silently
+# kept running the OLD image — and after a release that also adds backend
+# migrations (as v3 does), that leaves the two halves on different
+# versions, which is worse than not deploying at all. Detected from the
+# diff rather than always rebuilt, because the ai-engine image carries
+# torch/ultralytics and takes minutes to build.
+if [ "$WITH_AI_ENGINE" -eq 1 ]; then
+  SERVICES="$SERVICES ai-engine"
+elif [ "$BEFORE_SHA" != "$AFTER_SHA" ] && \
+     git --no-pager diff --name-only "$BEFORE_SHA" "$AFTER_SHA" | grep -q '^ai-engine/'; then
+  warn "ai-engine code changed — including it in this deploy"
+  SERVICES="$SERVICES ai-engine"
 fi
 
 log "Building images: $SERVICES"
