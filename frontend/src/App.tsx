@@ -3,6 +3,10 @@ import { Navigate, Route, Routes } from "react-router-dom";
 import AppLayout from "@/components/AppLayout";
 import AIAnalyticsPage from "@/pages/AIAnalyticsPage";
 import AiTrainingPage from "@/pages/AiTrainingPage";
+import PipelineTracePage from "@/pages/PipelineTracePage";
+import AiPipelineDashboardPage from "@/pages/AiPipelineDashboardPage";
+import VisionConfigPage from "@/pages/VisionConfigPage";
+import AiReviewPage from "@/pages/AiReviewPage";
 import AuditLogsPage from "@/pages/AuditLogsPage";
 import BranchesPage from "@/pages/BranchesPage";
 import CamerasPage from "@/pages/CamerasPage";
@@ -55,6 +59,10 @@ export default function App() {
         <Route path="/detections" element={<DetectionsPage />} />
         <Route path="/ai-analytics" element={<AIAnalyticsPage />} />
         <Route path="/ai-training" element={<AiTrainingPage />} />
+        <Route path="/pipeline-trace" element={<PipelineTracePage />} />
+        <Route path="/ai-pipeline" element={<AiPipelineDashboardPage />} />
+        <Route path="/vision-config" element={<VisionConfigPage />} />
+        <Route path="/ai-review" element={<AiReviewPage />} />
         <Route path="/notifications" element={<NotificationsPage />} />
         <Route path="/users" element={<UsersPage />} />
         <Route path="/roles" element={<RolesPage />} />

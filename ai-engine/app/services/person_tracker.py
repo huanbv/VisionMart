@@ -36,6 +36,18 @@ logger = logging.getLogger("ai-engine.person_tracker")
 _TRACKERS: dict[str, Any] = {}
 _LOCK = asyncio.Lock()
 
+# Shared-weights mode (SHARE_YOLO_WEIGHTS, the default): one model object
+# for the whole process instead of one per camera. See `_get_model`.
+_SHARED_MODEL: Any = None
+_SHARED_WEIGHTS: str | None = None
+# ByteTrack state stays per-camera even when the weights are shared —
+# sharing tracker state would merge two shoppers into one cart.
+_TRACKER_STATE: dict[str, Any] = {}
+_ACTIVE_CAMERA: dict[str, str] = {}
+# Serialises inference when one model serves many cameras: the tracker-state
+# swap plus the forward pass must not interleave between cameras.
+_MODEL_LOCK = asyncio.Lock()
+
 # Per-camera snapshot of the most recent frame's vision metadata (quality,
 # ROI zones, timings, optional debug-overlay JPEG). Additive/optional —
 # nothing reads this unless it explicitly asks via `get_last_vision_result`.
@@ -43,8 +55,18 @@ _LAST_VISION_RESULT: dict[str, dict[str, Any]] = {}
 
 
 def reset_trackers() -> None:
-    """Clear the per-camera tracker cache so YOLO_MODEL changes take effect."""
+    """Clear cached models so a YOLO_MODEL change takes effect.
+
+    Clears the shared model too — after a retrained weight is deployed the
+    process must pick it up, and leaving the old object cached would keep
+    serving the previous model until the next restart.
+    """
+    global _SHARED_MODEL, _SHARED_WEIGHTS
     _TRACKERS.clear()
+    _TRACKER_STATE.clear()
+    _ACTIVE_CAMERA.clear()
+    _SHARED_MODEL = None
+    _SHARED_WEIGHTS = None
 
 
 @dataclass(frozen=True)
@@ -67,14 +89,83 @@ class TrackedObject:
 
 
 def _get_model(camera_key: str):
+    """Return the YOLO model this camera should use.
+
+    Two modes, selected by ``SHARE_YOLO_WEIGHTS``:
+
+    **Shared (default).** One ``YOLO`` object for the whole process. The
+    weights are identical for every camera — the same ``YOLO_MODEL`` file
+    was being loaded N times — so N copies bought nothing but memory:
+    roughly 6 MB of parameters plus ~150-250 MB of resident CUDA/inference
+    context *per camera*. At 8 cameras that is over a gigabyte of duplicate
+    state, and it is the main reason RAM scaled with camera count.
+
+    Tracker state stays per-camera regardless of this setting. ultralytics
+    keeps ByteTrack state on the *model object*, keyed by nothing — so a
+    naively shared model would let two cameras' tracks overwrite each
+    other's ids, merging two different shoppers into one cart. The shared
+    path therefore serialises calls through ``_MODEL_LOCK`` and swaps the
+    per-camera tracker state in around each call (see
+    ``_use_camera_tracker``).
+
+    **Per-camera.** The previous behaviour, kept behind the flag: it
+    genuinely parallelises better on a multi-GPU box, where the memory is
+    available and the lock would be the bottleneck instead.
+    """
     from ultralytics import YOLO
 
-    if camera_key in _TRACKERS:
-        return _TRACKERS[camera_key]
+    cfg = get_vision_config()
     weights = os.getenv("YOLO_MODEL", "yolov8n.pt")
-    model = YOLO(weights)
-    _TRACKERS[camera_key] = model
-    return model
+
+    if not getattr(cfg, "share_yolo_weights", True):
+        if camera_key in _TRACKERS:
+            return _TRACKERS[camera_key]
+        model = YOLO(weights)
+        _TRACKERS[camera_key] = model
+        logger.info("YOLO loaded for camera=%s (per-camera mode)", camera_key)
+        return model
+
+    global _SHARED_MODEL, _SHARED_WEIGHTS
+    if _SHARED_MODEL is None or _SHARED_WEIGHTS != weights:
+        _SHARED_MODEL = YOLO(weights)
+        _SHARED_WEIGHTS = weights
+        logger.info("YOLO loaded once, shared across all cameras: %s", weights)
+    return _SHARED_MODEL
+
+
+def _use_camera_tracker(model, camera_key: str) -> None:
+    """Swap in this camera's ByteTrack state before a shared-model call.
+
+    ultralytics stores the active trackers on ``model.predictor.trackers``.
+    When one model serves several cameras, that list must be exchanged per
+    call or track ids from different cameras collide — and a collision here
+    is not cosmetic: ``frame.py`` derives the cart session id from the
+    track id, so two shoppers would share one cart.
+
+    Best-effort by design: if ultralytics changes where it keeps this (it
+    is not public API), the swap silently does nothing and tracking
+    degrades to what a single shared tracker gives — still correct
+    detections, just less stable ids. That is an acceptable failure; raising
+    here would take the camera offline over an internal-attribute rename.
+    """
+    predictor = getattr(model, "predictor", None)
+    if predictor is None:
+        return  # first call for this model — nothing to preserve yet
+    try:
+        current = getattr(predictor, "trackers", None)
+        if current is not None:
+            _TRACKER_STATE[_ACTIVE_CAMERA.get("key", camera_key)] = current
+        saved = _TRACKER_STATE.get(camera_key)
+        if saved is not None:
+            predictor.trackers = saved
+        elif current is not None:
+            # New camera on a warm model: clear rather than inherit, so it
+            # does not start life owning another camera's track ids.
+            predictor.trackers = None
+    except Exception:  # noqa: BLE001 — see docstring
+        logger.debug("tracker state swap unavailable", exc_info=True)
+    finally:
+        _ACTIVE_CAMERA["key"] = camera_key
 
 
 def get_last_vision_result(camera_key: str) -> dict[str, Any] | None:
@@ -130,12 +221,44 @@ def _build_overlay_jpeg_base64(
         return None
 
 
+@dataclass(frozen=True)
+class TrackingOutcome:
+    """Everything one tracked frame produced.
+
+    Exists because the SKU-classifier stage needs to crop from *the same*
+    preprocessed frame YOLO saw. Reading that frame back from a per-camera
+    global would race whenever two requests for one camera overlap (the
+    second would overwrite the first's frame before it was used), and
+    re-running preprocessing in the caller would pay the CLAHE/bilateral
+    cost twice. Returning it keeps the frame in the caller's own scope.
+    """
+
+    detections: list[TrackedObject]
+    frame_bgr: Any        # post ROI/enhancement — exactly what YOLO received
+    opencv_ms: float
+    yolo_bytetrack_ms: float
+
+
 async def track_frame(
     image_bytes: bytes,
     camera_key: str,
     *,
     is_checkout_zone: bool = False,
 ) -> list[TrackedObject]:
+    """Unchanged contract — see module docstring. Delegates to
+    :func:`track_frame_detailed` so both paths share one implementation."""
+    outcome = await track_frame_detailed(
+        image_bytes, camera_key, is_checkout_zone=is_checkout_zone
+    )
+    return outcome.detections
+
+
+async def track_frame_detailed(
+    image_bytes: bytes,
+    camera_key: str,
+    *,
+    is_checkout_zone: bool = False,
+) -> TrackingOutcome:
     cfg = get_vision_config()
 
     # Decode + optional ROI/enhancement/quality — see app/vision/pipeline.py.
@@ -186,8 +309,18 @@ async def track_frame(
         return out
 
     yolo_timer = StageTimer()
-    with yolo_timer:
-        detections = await loop.run_in_executor(None, _run)
+    if getattr(cfg, "share_yolo_weights", True):
+        # One model object serves every camera, so the tracker-state swap
+        # and the forward pass must be atomic with respect to other
+        # cameras — otherwise camera B's swap lands between camera A's swap
+        # and its inference, and A tracks with B's state.
+        async with _MODEL_LOCK:
+            _use_camera_tracker(model, camera_key)
+            with yolo_timer:
+                detections = await loop.run_in_executor(None, _run)
+    else:
+        with yolo_timer:
+            detections = await loop.run_in_executor(None, _run)
 
     record_pipeline_timing(
         camera_key,
@@ -234,4 +367,9 @@ async def track_frame(
         "debug_overlay_jpeg_base64": overlay_b64,
     }
 
-    return detections
+    return TrackingOutcome(
+        detections=detections,
+        frame_bgr=frame_bgr,
+        opencv_ms=vision_result.opencv_ms,
+        yolo_bytetrack_ms=yolo_timer.elapsed_ms,
+    )

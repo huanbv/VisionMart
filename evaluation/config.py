@@ -74,5 +74,9 @@ OPENCV_MODULES: tuple[OpenCvModule, ...] = (
     OpenCvModule("ENABLE_GAMMA", "Gamma Correction", {"GAMMA_VALUE": "1.5"}),
     OpenCvModule("ENABLE_GAUSSIAN_BLUR", "Gaussian Blur"),
     OpenCvModule("ENABLE_MEDIAN_BLUR", "Median Blur"),
+    OpenCvModule("ENABLE_BILATERAL", "Bilateral Filter (edge-preserving denoise)"),
+    OpenCvModule("ENABLE_UNSHARP_MASK", "Unsharp Masking (sharpening)", {"UNSHARP_AMOUNT": "0.6"}),
+    OpenCvModule("ENABLE_AUTO_GAMMA", "Auto Gamma (per-frame exposure correction)"),
+    OpenCvModule("ENABLE_ADAPTIVE_MEDIAN", "Adaptive Median (impulse noise)"),
     OpenCvModule("ENABLE_IMAGE_QUALITY", "Image Quality Analysis (incl. Blur Analysis)", {"ENABLE_BLUR_ANALYSIS": "true"}),
 )

@@ -46,6 +46,9 @@ class TrainingJobRead(BaseModel):
     metrics: dict | None
     weight_key: str | None
     error_message: str | None
+    # Null until this weight has been pushed live; the most recent value
+    # across jobs is what the regression gate compares against.
+    deployed_at: datetime | None = None
     created_at: datetime
     updated_at: datetime
     progress: str | None = None

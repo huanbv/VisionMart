@@ -19,6 +19,9 @@ class ProductResponse(BaseModel):
     description: str | None
     unit_price: Decimal
     currency: str
+    brand: str | None = None
+    volume_ml: int | None = None
+    weight_g: int | None = None
     attributes: dict | None
     image_url: str | None
     is_active: bool
@@ -43,6 +46,9 @@ class ProductCreate(BaseModel):
     description: str | None = None
     unit_price: Decimal = Field(default=Decimal("0"), ge=0)
     currency: str = Field(default="VND", min_length=3, max_length=3)
+    brand: str | None = Field(default=None, max_length=120)
+    volume_ml: int | None = Field(default=None, ge=0)
+    weight_g: int | None = Field(default=None, ge=0)
     attributes: dict | None = None
     image_url: str | None = Field(default=None, max_length=1024)
     is_active: bool = True
@@ -59,6 +65,10 @@ class ProductUpdate(BaseModel):
     description_unset: bool = False
     unit_price: Decimal | None = Field(default=None, ge=0)
     currency: str | None = Field(default=None, min_length=3, max_length=3)
+    brand: str | None = Field(default=None, max_length=120)
+    brand_unset: bool = False
+    volume_ml: int | None = Field(default=None, ge=0)
+    weight_g: int | None = Field(default=None, ge=0)
     attributes: dict | None = None
     attributes_unset: bool = False
     image_url: str | None = Field(default=None, max_length=1024)

@@ -5,11 +5,13 @@ from __future__ import annotations
 import logging
 import re
 import uuid
+from datetime import datetime, timezone
 from typing import Iterable
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.modules.ai_training.application.regression_gate import GateResult, evaluate
 from app.modules.ai_training.infrastructure.models import (
     TrainingImage,
     TrainingJob,
@@ -259,14 +261,60 @@ class TrainingService:
         )
         return rows, count
 
-    async def deploy_job(
+    async def _last_deployed_job(
+        self, organization_id: uuid.UUID, branch_id: uuid.UUID | None
+    ) -> TrainingJob | None:
+        """Baseline for the regression gate: the weight currently live for
+        this org/branch."""
+        stmt = (
+            select(TrainingJob)
+            .where(
+                TrainingJob.organization_id == organization_id,
+                TrainingJob.deployed_at.is_not(None),
+                TrainingJob.is_deleted.is_(False),
+            )
+            .order_by(TrainingJob.deployed_at.desc())
+            .limit(1)
+        )
+        if branch_id is not None:
+            stmt = stmt.where(TrainingJob.branch_id == branch_id)
+        return await self._session.scalar(stmt)
+
+    async def check_deploy(
         self, *, organization_id: uuid.UUID, job_id: uuid.UUID
+    ) -> GateResult:
+        """Run the regression gate without deploying — lets the UI warn
+        before the operator commits."""
+        job = await self._session.get(TrainingJob, job_id)
+        if job is None or job.organization_id != organization_id:
+            raise TrainingError("Job not found")
+        baseline = await self._last_deployed_job(organization_id, job.branch_id)
+        return evaluate(
+            candidate_metrics=job.metrics,
+            baseline_metrics=baseline.metrics if baseline else None,
+        )
+
+    async def deploy_job(
+        self, *, organization_id: uuid.UUID, job_id: uuid.UUID, force: bool = False
     ) -> TrainingJob:
         job = await self._session.get(TrainingJob, job_id)
         if job is None or job.organization_id != organization_id:
             raise TrainingError("Job not found")
         if job.status != "succeeded" or not job.weight_key:
             raise TrainingError("Job is not ready for deploy")
+
+        # Regression gate: a retrained model that scores worse than the one
+        # already live would degrade detection silently, so it is blocked
+        # unless the operator explicitly overrides.
+        baseline = await self._last_deployed_job(organization_id, job.branch_id)
+        gate = evaluate(
+            candidate_metrics=job.metrics,
+            baseline_metrics=baseline.metrics if baseline else None,
+            force=force,
+        )
+        if not gate.allowed:
+            raise TrainingError(gate.reason)
+
         try:
             await self._engine.deploy_weight(
                 weight_key=job.weight_key,
@@ -275,6 +323,15 @@ class TrainingService:
             )
         except AIEngineError as exc:
             raise TrainingError(f"Deploy failed: {exc}") from exc
+
+        # Recorded only after the engine accepted the weight, so a failed
+        # deploy can't become the baseline for the next comparison.
+        job.deployed_at = datetime.now(timezone.utc)
+        await self._session.commit()
+        await self._session.refresh(job)
+        logger.info(
+            "deployed job=%s org=%s gate=%s", job_id, organization_id, gate.reason
+        )
         return job
 
     async def _load_products(

@@ -47,8 +47,15 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, s
 
 from app.security import require_api_key
 from app.services.face_recognizer import get_face_recognizer
-from app.services.person_tracker import TrackedObject, get_last_vision_result, track_frame
+from app.services.person_tracker import (
+    TrackedObject,
+    get_last_vision_result,
+    track_frame_detailed,
+)
 from app.services.product_mapper import map_class_to_sku
+from app.services import review_capture, sku_identifier, telemetry_client
+from app.vision.config import get_vision_config
+from app.vision.storage import step_writer
 
 logger = logging.getLogger("ai-engine.frame")
 
@@ -191,6 +198,191 @@ def _track_key(camera_key: str, local_track_id: int) -> str:
     return f"{camera_key}:person-{local_track_id}"
 
 
+def _collect_debug_steps(
+    debug: "step_writer.DebugCollector",
+    frame_bgr: Any,
+    detections: list[TrackedObject],
+    identified: dict[Any, Any],
+    products: list[tuple[TrackedObject, str]],
+) -> None:
+    """Render the post-detection DEBUG_AI steps.
+
+    Split out of the handler because it is pure diagnostics: keeping it here
+    means the request path reads as the pipeline, not as the pipeline
+    interleaved with drawing code. Every failure is swallowed — a debug
+    render must never turn a good frame into a 500.
+    """
+    import cv2
+
+    try:
+        # 03 — what the detector found, boxed on the frame it actually saw.
+        boxed = frame_bgr.copy()
+        for det in detections:
+            colour = (0, 200, 255) if det.class_name.lower() == "person" else (0, 220, 0)
+            cv2.rectangle(
+                boxed,
+                (int(det.x1), int(det.y1)),
+                (int(det.x2), int(det.y2)),
+                colour,
+                2,
+            )
+            cv2.putText(
+                boxed,
+                f"{det.class_name} {det.confidence:.2f}",
+                (int(det.x1), max(12, int(det.y1) - 5)),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.45,
+                colour,
+                1,
+                cv2.LINE_AA,
+            )
+        debug.add("detection", boxed, count=len(detections))
+
+        # 04/06 — the crop the classifier was actually given, and the
+        # classifier's verdict on it. One representative object rather than
+        # all of them: the point is to answer "was the crop sane?", and
+        # writing N crops per frame would multiply storage by the scene's
+        # object count.
+        first = next(
+            (i for i in identified.values() if getattr(i, "crop", None) is not None),
+            None,
+        )
+        if first is not None:
+            debug.add(
+                "crop",
+                first.crop.image,
+                box=[first.crop.x1, first.crop.y1, first.crop.x2, first.crop.y2],
+            )
+            debug.add(
+                "classifier",
+                first.crop.image,
+                sku=first.match.sku,
+                confidence=first.match.confidence,
+                source=first.match.source,
+                reason=first.match.reason,
+            )
+
+        # 08 — the final answer: only the objects that resolved to a SKU.
+        result = frame_bgr.copy()
+        for det, sku in products:
+            cv2.rectangle(
+                result,
+                (int(det.x1), int(det.y1)),
+                (int(det.x2), int(det.y2)),
+                (255, 120, 0),
+                2,
+            )
+            cv2.putText(
+                result,
+                sku,
+                (int(det.x1), max(12, int(det.y1) - 5)),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.5,
+                (255, 120, 0),
+                2,
+                cv2.LINE_AA,
+            )
+        debug.add("result", result, products=len(products))
+
+        debug.meta(
+            detection_count=len(detections),
+            product_count=len(products),
+            classified_count=len(identified),
+            skus=[sku for _, sku in products],
+        )
+    except Exception:  # noqa: BLE001
+        logger.exception("DEBUG_AI: step rendering failed")
+
+
+async def _report_telemetry(
+    *,
+    camera_key: str,
+    organization_id: Any,
+    branch_id: Any,
+    camera_id: Any,
+    cfg: Any,
+    tracking: Any,
+    detections: list[TrackedObject],
+    identified: dict[Any, Any],
+    products: list[tuple[TrackedObject, str]],
+    storage_prefix: str | None,
+) -> None:
+    """Assemble and buffer this frame's telemetry report.
+
+    Kept out of the handler because it is pure reporting — the frame's
+    result does not depend on any of it. Only ``ensure_session`` touches
+    the network, and only once per camera per process.
+    """
+    session_id = await telemetry_client.ensure_session(
+        camera_key,
+        organization_id=str(organization_id),
+        branch_id=str(branch_id) if branch_id else None,
+        camera_id=str(camera_id) if camera_id else None,
+        cfg=cfg,
+    )
+    if not session_id:
+        return
+
+    vision = get_last_vision_result(camera_key) or {}
+    quality = vision.get("quality") or {}
+    sku_by_track = {d.track_id: sku for d, sku in products}
+
+    det_payload = []
+    for det in detections:
+        item = identified.get(det.track_id)
+        classification = getattr(item, "classification", None) if item else None
+        entry: dict[str, Any] = {
+            "track_id": det.track_id,
+            "class_name": det.class_name,
+            "confidence": det.confidence,
+            "x1": det.x1, "y1": det.y1, "x2": det.x2, "y2": det.y2,
+            "sku": sku_by_track.get(det.track_id),
+            "source": getattr(item.match, "source", None) if item else None,
+            "combined_confidence": (
+                getattr(item.match, "final_confidence", None) if item else None
+            ),
+        }
+        if classification is not None:
+            entry["classification"] = {
+                "sku": classification.sku,
+                "confidence": classification.confidence,
+                "label_index": getattr(classification, "label_index", None),
+                "runner_up_sku": getattr(classification, "runner_up_sku", None),
+                "runner_up_confidence": getattr(
+                    classification, "runner_up_confidence", None
+                ),
+                "margin": getattr(classification, "margin", None),
+                "model_version": getattr(classification, "model_version", None),
+            }
+        det_payload.append(entry)
+
+    frame_shape = getattr(tracking.frame_bgr, "shape", None)
+    telemetry_client.report_frame(
+        camera_key,
+        {
+            "organization_id": str(organization_id),
+            "seq": telemetry_client.next_seq(camera_key),
+            "captured_at": datetime.now(timezone.utc).isoformat(),
+            "width": int(frame_shape[1]) if frame_shape else None,
+            "height": int(frame_shape[0]) if frame_shape else None,
+            "storage_prefix": storage_prefix,
+            "brightness": quality.get("brightness"),
+            "contrast": quality.get("contrast"),
+            "blur_score": quality.get("blur_score"),
+            "quality_score": quality.get("quality_score"),
+            # `is_low_quality` is the pipeline's own verdict, so the
+            # dashboard's reject count matches what actually happened
+            # rather than re-deriving it from thresholds.
+            "gate_passed": not bool(quality.get("is_low_quality")),
+            "reject_reason": quality.get("reason"),
+            "preprocess_ms": tracking.opencv_ms,
+            "detect_ms": tracking.yolo_bytetrack_ms,
+            "total_ms": vision.get("total_ms"),
+            "detections": det_payload,
+        },
+    )
+
+
 def _pair_products_with_persons(
     persons: list[TrackedObject],
     products: list[tuple[TrackedObject, str]],
@@ -237,6 +429,27 @@ async def process_frame(
 
     camera_key = str(camera_id) if camera_id else f"{organization_id}:{branch_id}"
 
+    # DEBUG_AI: collects one image per pipeline step and hands the set to a
+    # background queue at the end. A no-op object when the flag is off, so
+    # the `.add(...)` calls below need no guards. Never awaited — see
+    # app/vision/storage/step_writer.py for why storage must not block a
+    # frame.
+    debug = step_writer.DebugCollector(
+        camera_key, enabled=step_writer.should_debug(get_vision_config())
+    )
+    if debug.enabled:
+        # The raw frame as it arrived, before any enhancement. Requires a
+        # second decode (the pipeline's own decode result is not returned
+        # separately), which is why it is paid only while debugging.
+        try:
+            import cv2
+            import numpy as np
+
+            original = cv2.imdecode(np.frombuffer(content, np.uint8), cv2.IMREAD_COLOR)
+            debug.add("original", original, bytes=len(content))
+        except Exception:  # noqa: BLE001
+            logger.exception("DEBUG_AI: could not decode original frame")
+
     # Fetched here (rather than after track_frame, as before this Sprint)
     # only so `is_checkout_zone` can be forwarded into track_frame for a
     # more informative debug overlay label — the value itself and every
@@ -246,10 +459,18 @@ async def process_frame(
         camera_info = await _fetch_camera(camera_id)
 
     try:
-        detections = await track_frame(
+        # Detailed variant so the SKU-classifier stage below can crop from
+        # the same preprocessed frame YOLO saw, without re-preprocessing.
+        tracking = await track_frame_detailed(
             content,
             camera_key,
             is_checkout_zone=bool(camera_info and camera_info.get("is_checkout_zone")),
+        )
+        detections = tracking.detections
+        debug.add(
+            "preprocess",
+            tracking.frame_bgr,
+            opencv_ms=tracking.opencv_ms,
         )
     except ValueError as exc:
         raise HTTPException(status.HTTP_415_UNSUPPORTED_MEDIA_TYPE, str(exc))
@@ -257,19 +478,64 @@ async def process_frame(
         logger.exception("tracking failed")
         raise HTTPException(status.HTTP_500_INTERNAL_SERVER_ERROR, str(exc)) from exc
 
+    # Active learning: the detections dropped just below the threshold are
+    # the ones a human label is worth the most on, so a rate-limited sample
+    # is forwarded to the review queue. Fire-and-forget and disabled by
+    # default — see app/services/review_capture.py.
+    if review_capture.should_capture(camera_key):
+        uncertain_class, uncertain_conf = review_capture.pick_uncertain(
+            detections, min_confidence
+        )
+        if uncertain_class is not None:
+            review_capture.capture_async(
+                content=content,
+                organization_id=str(organization_id),
+                camera_id=str(camera_id) if camera_id else None,
+                predicted_class=uncertain_class,
+                confidence=uncertain_conf,
+            )
+
     persons: list[TrackedObject] = []
     products: list[tuple[TrackedObject, str]] = []
+
+    # Second model stage (crop -> SKU classifier -> match). Only runs when
+    # ENABLE_SKU_CLASSIFIER is on; otherwise `identified` stays None and
+    # the original class-map path below is used unchanged.
+    identified: dict[Any, Any] = {}
+    vision_cfg = get_vision_config()
+    if vision_cfg.enable_sku_classifier:
+        try:
+            for item in sku_identifier.identify(
+                tracking.frame_bgr,
+                [d for d in detections if d.confidence >= min_confidence],
+                camera_key=camera_key,
+                organization_id=str(organization_id),
+                branch_id=str(branch_id),
+                cfg=vision_cfg,
+            ):
+                identified[item.detection.track_id] = item
+        except Exception:  # noqa: BLE001 — never fail a frame over this
+            logger.exception("SKU identification failed; using class map")
+            identified = {}
+
     for det in detections:
         if det.confidence < min_confidence:
             continue
         if det.class_name.lower() == "person":
             persons.append(det)
             continue
-        sku = map_class_to_sku(
-            str(organization_id), str(branch_id), det.class_name
-        )
+        item = identified.get(det.track_id)
+        if item is not None and item.match.sku:
+            sku = item.match.sku
+        else:
+            sku = map_class_to_sku(
+                str(organization_id), str(branch_id), det.class_name
+            )
         if sku:
             products.append((det, sku))
+
+    if debug.enabled:
+        _collect_debug_steps(debug, tracking.frame_bgr, detections, identified, products)
 
     customer_id: uuid.UUID | None = None
     if recognize_face and persons:
@@ -395,6 +661,38 @@ async def process_frame(
             result = await _post_event(event)
             emitted.append({"event": event, "backend": result})
 
+    # Hand the debug set to the background queue. Returns immediately
+    # whether or not it was accepted; a dropped sample is counted, not
+    # raised. `debug_frame_uid` lets the admin UI jump straight to this
+    # frame's artifacts, and is null when debugging is off or the sample
+    # was dropped — existing clients ignore the extra key.
+    debug_written = debug.flush()
+
+    # Telemetry for the admin dashboard. Buffered and flushed in the
+    # background — nothing here awaits the network. Entirely optional: when
+    # ENABLE_TELEMETRY is off, `report_frame` returns immediately and the
+    # response below is byte-for-byte what it was before this feature.
+    if vision_cfg.enable_telemetry:
+        try:
+            await _report_telemetry(
+                camera_key=camera_key,
+                organization_id=organization_id,
+                branch_id=branch_id,
+                camera_id=camera_id,
+                cfg=vision_cfg,
+                tracking=tracking,
+                detections=detections,
+                identified=identified,
+                products=products,
+                storage_prefix=(
+                    step_writer.build_prefix(camera_key, debug.frame_uid)
+                    if debug_written
+                    else None
+                ),
+            )
+        except Exception:  # noqa: BLE001 — telemetry must never fail a frame
+            logger.exception("telemetry reporting failed")
+
     return {
         "detections": [
             {
@@ -415,4 +713,5 @@ async def process_frame(
         # clients that don't know this key simply ignore it; nothing above
         # this line changed shape or meaning.
         "vision": get_last_vision_result(camera_key),
+        "debug_frame_uid": debug.frame_uid if debug_written else None,
     }

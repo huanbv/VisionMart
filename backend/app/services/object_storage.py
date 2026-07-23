@@ -120,6 +120,35 @@ class MinioStorage:
             logger.exception("MinIO put failed: %s", key)
             raise ObjectStorageError(str(exc)) from exc
 
+    async def get_bytes(self, key: str) -> bytes:
+        """Read a small object into memory.
+
+        Added for the pipeline dashboard, which reads each debug frame's
+        ``pipeline.json`` manifest. Intended for *small* objects only —
+        images are served to the browser via ``presigned_get`` instead, so
+        their bytes never pass through this process. Reading a frame's
+        worth of JPEGs through here would move megabytes per dashboard
+        click across a thread the API also serves requests on.
+        """
+
+        def _get() -> bytes:
+            client = self._get_client()
+            response = client.get_object(self._settings.MINIO_BUCKET, key)
+            try:
+                return response.read()
+            finally:
+                response.close()
+                response.release_conn()
+
+        try:
+            return await asyncio.to_thread(_get)
+        except S3Error as exc:
+            logger.warning("MinIO get failed: %s (%s)", key, exc)
+            raise ObjectStorageError(str(exc)) from exc
+        except Exception as exc:  # noqa: BLE001 — same reasoning as presigned_get
+            logger.warning("MinIO get failed (non-S3 error): %s (%s)", key, exc)
+            raise ObjectStorageError(str(exc)) from exc
+
     async def presigned_get(self, key: str, expires_seconds: int = 3600) -> str:
         def _sign() -> str:
             self._get_client()

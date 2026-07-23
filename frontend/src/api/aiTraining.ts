@@ -26,6 +26,7 @@ export interface TrainingJob {
   metrics: Record<string, number> | null;
   weight_key: string | null;
   error_message: string | null;
+  deployed_at: string | null;
   created_at: string;
   updated_at: string;
   progress?: string | null;
@@ -99,9 +100,41 @@ export async function getTrainingJob(jobId: string): Promise<TrainingJob> {
   return data;
 }
 
-export async function deployTrainingJob(jobId: string): Promise<TrainingJob> {
+/**
+ * Result of the regression gate: how this candidate's metrics compare to
+ * the weight currently live.
+ *
+ * `comparable === false` means no verdict was possible (first deploy, or
+ * metrics missing) — the UI must say "not verified" rather than implying
+ * the model passed a check that never ran.
+ */
+export interface DeployCheck {
+  allowed: boolean;
+  reason: string;
+  metric_name: string | null;
+  candidate_value: number | null;
+  baseline_value: number | null;
+  delta: number | null;
+  comparable: boolean;
+  details: Record<string, number>;
+}
+
+/** Dry-run the regression gate before committing to a deploy. */
+export async function checkDeploy(jobId: string): Promise<DeployCheck> {
+  const { data } = await apiClient.get<DeployCheck>(
+    `/ai/training/jobs/${jobId}/deploy-check`,
+  );
+  return data;
+}
+
+export async function deployTrainingJob(
+  jobId: string,
+  force = false,
+): Promise<TrainingJob> {
   const { data } = await apiClient.post<TrainingJob>(
-    `/ai/training/jobs/${jobId}/deploy`
+    `/ai/training/jobs/${jobId}/deploy`,
+    null,
+    { params: force ? { force: true } : undefined },
   );
   return data;
 }

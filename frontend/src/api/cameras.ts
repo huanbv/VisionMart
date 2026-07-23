@@ -212,6 +212,80 @@ export async function previewCameraStream(id: string): Promise<PreviewResult> {
   return data;
 }
 
+// ---------- OpenCV pipeline trace ("show me every preprocessing step") ----------
+
+export interface TraceStage {
+  order: number;
+  stage: string; // "decode" | "roi" | "auto_gamma" | "clahe" | ... | "final"
+  label: string;
+  params: Record<string, unknown>;
+  metrics: { brightness: number; contrast: number; blur_score: number };
+  elapsed_ms: number;
+  image_key: string | null;
+}
+
+export interface TraceQuality {
+  brightness: number;
+  contrast: number;
+  blur_score: number;
+  noise_estimate: number;
+  quality_score: number;
+  is_blurry: boolean;
+  is_low_quality: boolean;
+  reason: string | null;
+}
+
+export interface PipelineTraceResult {
+  trace_id: string;
+  camera_key: string;
+  camera_id: string;
+  camera_name: string;
+  started_at: number;
+  stages: TraceStage[];
+  quality: TraceQuality | null;
+  opencv_ms: number;
+}
+
+/** Run the preprocessing chain over one frame and get every intermediate stage. */
+export async function tracePipeline(
+  cameraId: string,
+  file: File,
+): Promise<PipelineTraceResult> {
+  const form = new FormData();
+  form.append("file", file);
+  const { data } = await apiClient.post<PipelineTraceResult>(
+    `/cameras/${cameraId}/pipeline-trace`,
+    form,
+    { headers: { "Content-Type": "multipart/form-data" } },
+  );
+  return data;
+}
+
+/**
+ * Fetch one stage image as a Blob.
+ *
+ * Goes through the backend (not object storage directly) so the browser
+ * needs no MinIO credentials and tenant isolation stays server-side. It has
+ * to be a Blob fetch rather than a plain `<img src>` URL because the API
+ * requires the bearer token, which the browser would not attach to an
+ * image request — the caller wraps this in `URL.createObjectURL`.
+ *
+ * `imageKey` looks like `traces/<camera>/<trace_id>/00_decode.jpg`; only the
+ * filename is needed.
+ */
+export async function getTraceStageImageBlob(
+  cameraId: string,
+  traceId: string,
+  imageKey: string,
+): Promise<Blob> {
+  const fileName = imageKey.split("/").pop() ?? "";
+  const { data } = await apiClient.get<Blob>(
+    `/cameras/${cameraId}/pipeline-trace/${traceId}/${fileName}`,
+    { responseType: "blob" },
+  );
+  return data;
+}
+
 // Course project — no physical cameras yet. Uploads a demo video that a
 // standalone camera-sim-runner service loops as an RTSP stream, and the
 // backend auto-updates this camera's stream_url to match. See

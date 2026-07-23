@@ -97,3 +97,10 @@ visionmart-backup-*.zip
 
 # ===== Local Docker Compose overrides =====
 docker-compose.override.yml
+
+# Tài liệu học tập (slide, tiểu luận) — không thuộc mã nguồn.
+# Để ngoài repo cho lịch sử git khỏi phình vì file nhị phân 37MB.
+docs/seminar/
+docs/seminar_midterm/
+docs/seminar_midternv2/
+docs/thesis/

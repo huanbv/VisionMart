@@ -5,7 +5,15 @@ from __future__ import annotations
 import uuid
 from decimal import Decimal
 
-from sqlalchemy import Boolean, ForeignKey, Numeric, String, Text, UniqueConstraint
+from sqlalchemy import (
+    Boolean,
+    ForeignKey,
+    Integer,
+    Numeric,
+    String,
+    Text,
+    UniqueConstraint,
+)
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database.entity import Entity
@@ -72,6 +80,14 @@ class Product(Entity):
     currency: Mapped[str] = mapped_column(
         String(3), nullable=False, default="VND", server_default="VND"
     )
+    # Promoted out of `attributes` into real columns because the SKU
+    # matcher and the OCR stage query them: brand narrows lookalike
+    # candidates ("Aquafina" vs "Lavie" share a bottle silhouette), and
+    # volume is the field OCR can actually read off a label to break the
+    # remaining tie ("500ml" vs "1.5L" of the same brand).
+    brand: Mapped[str | None] = mapped_column(String(120), nullable=True, index=True)
+    volume_ml: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    weight_g: Mapped[int | None] = mapped_column(Integer, nullable=True)
     attributes: Mapped[dict | None] = mapped_column(JSONBType, nullable=True)
     image_url: Mapped[str | None] = mapped_column(String(1024), nullable=True)
     is_active: Mapped[bool] = mapped_column(

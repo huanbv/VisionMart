@@ -33,6 +33,7 @@ from app.vision.metrics.timers import MetricsRegistry, StageTimer
 from app.vision.preprocessing.decode import decode_image_bytes
 from app.vision.quality.analyzer import FrameQuality, analyze_quality
 from app.vision.roi.zones import RoiZone, apply_roi, load_roi_config
+from app.vision.trace import PipelineTrace, TraceRecorder, should_trace
 
 
 @dataclass(frozen=True)
@@ -43,10 +44,15 @@ class PipelineResult:
     quality: FrameQuality | None
     opencv_ms: float
     camera_key: str
+    trace: PipelineTrace | None = None  # populated only when tracing is on
 
 
 def preprocess_for_detection(
-    image_bytes: bytes, camera_key: str, cfg: VisionConfig | None = None
+    image_bytes: bytes,
+    camera_key: str,
+    cfg: VisionConfig | None = None,
+    *,
+    force_trace: bool = False,
 ) -> PipelineResult:
     """Decode + (optional) ROI + (optional) enhancement + (optional)
     quality analysis. With every ``ENABLE_*`` flag off (the default), this
@@ -56,23 +62,30 @@ def preprocess_for_detection(
     that's safe for the ultralytics call that follows).
     """
     cfg = cfg or get_vision_config()
+    recorder = TraceRecorder(camera_key, should_trace(cfg, force=force_trace))
     timer = StageTimer()
     with timer:
         frame = decode_image_bytes(image_bytes)
         raw_frame = frame
+        recorder.capture("decode", "Decoded frame (input)", frame)
 
         zones: list[RoiZone] = []
         if cfg.enable_roi:
             zones = load_roi_config(cfg.roi_config_path, camera_key)
             if zones:
                 frame = apply_roi(frame, zones)
+                recorder.capture("roi", "ROI mask", frame, {"zones": len(zones)})
 
         if cfg.any_enhancement_enabled:
-            frame = enhance_frame(frame, cfg)
+            frame = enhance_frame(frame, cfg, recorder=recorder)
 
         quality: FrameQuality | None = None
         if cfg.enable_image_quality or cfg.enable_blur_analysis:
             quality = analyze_quality(frame, cfg)
+
+        # Final snapshot is what YOLO actually receives — the answer to
+        # "what did the model see?", which is the whole point of the view.
+        recorder.capture("final", "Final frame (sent to YOLO)", frame)
 
     return PipelineResult(
         frame=frame,
@@ -81,6 +94,7 @@ def preprocess_for_detection(
         quality=quality,
         opencv_ms=timer.elapsed_ms,
         camera_key=camera_key,
+        trace=recorder.trace,
     )
 
 

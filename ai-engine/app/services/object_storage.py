@@ -47,6 +47,20 @@ def upload(key: str, source_path: str, content_type: str = "application/octet-st
     return key
 
 
+def put_bytes(key: str, data: bytes, content_type: str = "application/octet-stream") -> str:
+    """Upload an in-memory payload without round-tripping through a temp file.
+
+    Added for pipeline tracing (`app/vision/trace.py`), which encodes frames
+    to JPEG in memory — writing each stage to disk just to re-read it would
+    double the I/O for no benefit.
+    """
+    client, bucket = _client()
+    client.put_object(
+        bucket, key, io.BytesIO(data), length=len(data), content_type=content_type
+    )
+    return key
+
+
 def download_to_local(key: str, local_dir: str) -> str:
     """Download a key to ``local_dir`` preserving the file name and return the path."""
     name = key.rsplit("/", 1)[-1]

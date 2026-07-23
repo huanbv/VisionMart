@@ -40,7 +40,11 @@ from app.modules.notification.infrastructure.repositories import (
     SqlAlchemyNotificationRepository,
 )
 from app.config.settings import get_settings
-from app.services.ai_engine_client import AIEngineClient, AIEngineError
+from app.services.ai_engine_client import (
+    AIEngineClient,
+    AIEngineError,
+    AIEngineNotFoundError,
+)
 from app.services.object_storage import MinioStorage, ObjectStorageError
 
 router = APIRouter(prefix="/cameras", tags=["camera"])
@@ -393,6 +397,84 @@ async def preview_camera_stream(
         "detections": result.get("detections", []),
         "frame_base64": result.get("frame_base64"),
     }
+
+
+@router.post("/{camera_id}/pipeline-trace")
+async def trace_camera_pipeline(
+    camera_id: uuid.UUID,
+    file: UploadFile = File(...),
+    current: CurrentUser = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """Run the OpenCV preprocessing chain over one frame and return every
+    intermediate stage.
+
+    This is the data behind the admin "see every step" view: instead of
+    only the final image, the operator gets input → ROI → each enabled
+    enhancement → final, with the brightness/contrast/blur measured after
+    each stage so it's visible *which* step changed what.
+
+    Detection is not run here — this endpoint is about the preprocessing
+    chain only.
+    """
+    service = _service(session)
+    try:
+        camera = await service.get(current.organization_id, camera_id)
+    except NotFoundError as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+
+    content = await file.read()
+    if not content:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, detail="Empty upload.")
+
+    client = AIEngineClient()
+    try:
+        result = await client.trace_frame(
+            content=content,
+            filename=file.filename or "frame.jpg",
+            content_type=file.content_type or "image/jpeg",
+            camera_key=str(camera_id),
+        )
+    except AIEngineError as exc:
+        raise HTTPException(
+            status.HTTP_502_BAD_GATEWAY, detail=f"AI engine error: {exc}"
+        ) from exc
+
+    result["camera_id"] = str(camera_id)
+    result["camera_name"] = camera.name
+    return result
+
+
+@router.get("/{camera_id}/pipeline-trace/{trace_id}/{stage_file}")
+async def get_pipeline_trace_image(
+    camera_id: uuid.UUID,
+    trace_id: str,
+    stage_file: str,
+    current: CurrentUser = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> Response:
+    """Proxy one stage image so the browser never needs object-storage
+    credentials (and so tenant isolation is enforced here rather than
+    trusting the client)."""
+    service = _service(session)
+    try:
+        await service.get(current.organization_id, camera_id)
+    except NotFoundError as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+
+    client = AIEngineClient()
+    try:
+        content, media_type = await client.trace_image(
+            trace_id=trace_id, stage_file=stage_file, camera_key=str(camera_id)
+        )
+    except AIEngineNotFoundError as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    except AIEngineError as exc:
+        raise HTTPException(
+            status.HTTP_502_BAD_GATEWAY, detail=f"AI engine error: {exc}"
+        ) from exc
+
+    return Response(content=content, media_type=media_type)
 
 
 @router.get("/{camera_id}/live")

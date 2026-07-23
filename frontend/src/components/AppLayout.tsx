@@ -11,6 +11,8 @@ import {
   DashboardOutlined,
   DatabaseOutlined,
   ExperimentOutlined,
+  PartitionOutlined,
+  SlidersOutlined,
   EyeOutlined,
   FileTextOutlined,
   HeartOutlined,
@@ -120,6 +122,26 @@ const MENU_ITEMS = [
     key: "/ai-training",
     icon: <ExperimentOutlined />,
     label: <Link to="/ai-training">Train AI</Link>,
+  },
+  {
+    key: "/pipeline-trace",
+    icon: <PartitionOutlined />,
+    label: <Link to="/pipeline-trace">Pipeline xử lý ảnh</Link>,
+  },
+  {
+    key: "/ai-pipeline",
+    icon: <PartitionOutlined />,
+    label: <Link to="/ai-pipeline">Bảng điều khiển AI</Link>,
+  },
+  {
+    key: "/vision-config",
+    icon: <SlidersOutlined />,
+    label: <Link to="/vision-config">Cấu hình xử lý ảnh</Link>,
+  },
+  {
+    key: "/ai-review",
+    icon: <AuditOutlined />,
+    label: <Link to="/ai-review">Duyệt dữ liệu AI</Link>,
   },
   {
     key: "/notifications",

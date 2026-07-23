@@ -14,6 +14,7 @@ from app.database.entity import (  # noqa: F401
 )
 
 # Bounded-context model registrations (side-effect imports).
+from app.modules.ai_pipeline.infrastructure import models as _ai_pipeline  # noqa: F401
 from app.modules.ai_training.infrastructure import models as _ai_training  # noqa: F401
 from app.modules.audit.infrastructure import models as _audit  # noqa: F401
 from app.modules.camera.infrastructure import models as _camera  # noqa: F401

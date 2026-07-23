@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import uuid
+from dataclasses import asdict
 
 from fastapi import (
     APIRouter,
@@ -170,16 +171,47 @@ async def get_job(
     return TrainingJobRead.model_validate(job)
 
 
+@router.get("/jobs/{job_id}/deploy-check")
+async def check_deploy(
+    job_id: uuid.UUID,
+    current: CurrentUser = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """Dry-run the regression gate so the UI can warn *before* deploying.
+
+    Returns the comparison against the currently live weight rather than a
+    bare yes/no, so the operator can see how much the metric moved and
+    decide whether an override is justified.
+    """
+    service = _service(session)
+    try:
+        gate = await service.check_deploy(
+            organization_id=current.organization_id, job_id=job_id
+        )
+    except TrainingError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)
+        ) from exc
+    return asdict(gate)
+
+
 @router.post("/jobs/{job_id}/deploy", response_model=TrainingJobRead)
 async def deploy_job(
     job_id: uuid.UUID,
+    force: bool = Query(
+        False,
+        description=(
+            "Deploy even if the regression gate blocks it. Use when a metric "
+            "trade-off is intentional."
+        ),
+    ),
     current: CurrentUser = Depends(require_roles(*_TRAINER_ROLES)),
     session: AsyncSession = Depends(get_session),
 ) -> TrainingJobRead:
     service = _service(session)
     try:
         job = await service.deploy_job(
-            organization_id=current.organization_id, job_id=job_id
+            organization_id=current.organization_id, job_id=job_id, force=force
         )
     except TrainingError as exc:
         raise HTTPException(
