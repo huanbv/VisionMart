@@ -18,6 +18,7 @@ celery_app = Celery(
         "app.workers.tasks.rtsp_capture",
         "app.workers.tasks.frame_pipeline",
         "app.workers.tasks.detection_cleanup",
+        "app.workers.tasks.ai_pipeline_cleanup",
         "app.workers.tasks.cart_sweeper",
     ],
 )
@@ -46,6 +47,12 @@ celery_app.conf.update(
             "task": "frame_pipeline.scan_all",
             "schedule": schedule(
                 run_every=_settings.FRAME_PIPELINE_INTERVAL_SECONDS
+            ),
+        },
+        "ai-pipeline-cleanup": {
+            "task": "ai_pipeline.cleanup",
+            "schedule": schedule(
+                run_every=_settings.AI_PIPELINE_CLEANUP_INTERVAL_SECONDS
             ),
         },
         "detection-cleanup": {

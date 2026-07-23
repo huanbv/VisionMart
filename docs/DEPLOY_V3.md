@@ -122,13 +122,21 @@ Model hiện được train trên ảnh **chưa** tiền xử lý. Bật CLAHE/g
 nhận diện tạo ra lệch phân phối — ảnh "đẹp hơn với mắt người" nhưng *khác* với
 thứ model đã học.
 
+Đã có công cụ đo tự động — chạy trên **nhãn thật từ hàng đợi duyệt**, không
+cần tự chuẩn bị bộ ảnh:
+
 ```bash
-# Đo trước khi bật
-docker compose run --rm evaluation
+docker compose run --rm evaluation python -m evaluation.cli preprocessing-ab --database-url "$DATABASE_URL"
 ```
 
-Bật từng cái một, đo lại, giữ cái nào cải thiện. Nếu quyết định dùng, phải áp
-dụng **y hệt lúc train lại**.
+Công cụ chạy lần lượt từng cấu hình, so với nhánh tắt hết, và **tự kết luận**
+NÊN BẬT / KHÔNG NÊN / CHƯA ĐỦ DỮ LIỆU — có tính biên sai số, nên chênh lệch
+nhỏ trên mẫu nhỏ sẽ bị gọi đúng tên là nhiễu thay vì bị đọc nhầm thành cải
+thiện.
+
+> Cần ≥30 khung đã duyệt (nên có 200+). Chưa đủ thì làm bước 4 trước.
+
+Nếu quyết định dùng, phải áp dụng **y hệt lúc train lại**.
 
 ### Bước 4 — Thu thập dữ liệu (2–4 tuần)
 
@@ -237,10 +245,27 @@ cần restart (trừ `ENABLE_TELEMETRY` và `DEBUG_AI`).
 
 ---
 
-## F. Việc chưa làm — cần theo dõi thủ công
+## F. Dọn dẹp tự động
 
-**Chưa có job dọn dẹp tự động.** Bảng telemetry và ảnh debug sẽ **tăng vô hạn**.
-Cho tới khi có job theo lịch (đề xuất ở mục 9 báo cáo), phải theo dõi:
+Job `ai_pipeline.cleanup` chạy **mỗi 6 giờ** trên Celery Beat, bật sẵn.
+
+| Bảng | Giữ | Chỉnh bằng |
+|---|---|---|
+| `ai_logs` | 7 ngày | `AI_LOG_RETENTION_DAYS` |
+| `ai_frames` (+ detection/ocr/embedding theo CASCADE) | 7 ngày | `AI_FRAME_RETENTION_DAYS` |
+| `ai_sessions` (chỉ khi đã rỗng) | 90 ngày | `AI_SESSION_RETENTION_DAYS` |
+| `ai_events` | **vĩnh viễn** | — |
+
+Ảnh debug trong MinIO bị xoá cùng khung hình tương ứng.
+
+**Job này KHÔNG đụng tới dữ liệu học.** Nhãn do người duyệt nằm ở
+`ai_training_images` và `ai_review_candidates` — ngoài phạm vi dọn dẹp. Ngoài
+ra job **từ chối xoá** bất kỳ khung hình nào còn mẫu đang chờ duyệt tham
+chiếu tới, để không mất mẫu quý trong lúc anh chưa kịp duyệt.
+
+Tắt nếu cần: `AI_PIPELINE_CLEANUP_ENABLED=false`
+
+Theo dõi dung lượng:
 
 ```bash
 docker compose exec postgres psql -U visionmart -c \

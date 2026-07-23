@@ -350,6 +350,136 @@ def cmd_thesis_report(args: argparse.Namespace) -> None:
     _log(f"Thesis report written to: {path}")
 
 
+def cmd_preprocessing_ab(args: argparse.Namespace) -> None:
+    """So sánh A/B tiền xử lý trên nhãn thật từ hàng đợi duyệt.
+
+    Khác ``evaluate`` ở chỗ nguồn dữ liệu: ``evaluate`` chạy trên thư mục
+    ảnh mà người dùng phải tự chuẩn bị kèm file nhãn; lệnh này lấy thẳng
+    khung hình **camera thật, nhãn người đã xác nhận** ra khỏi cơ sở dữ
+    liệu, nên trả lời đúng câu hỏi vận hành: "tiền xử lý có giúp mô hình
+    của tôi trên camera của tôi không".
+    """
+    import time
+
+    from evaluation.config import PREPROCESSING_CONFIGS
+    from evaluation.metrics.detection_metrics import Detection
+    from evaluation.preprocessing_ab import (
+        ArmResult,
+        Comparison,
+        MIN_FRAMES_FOR_VERDICT,
+        decide,
+        fetch_labelled_frames,
+        format_report,
+    )
+
+    _log("Đang lấy khung hình đã duyệt từ hàng đợi...")
+    labelled = fetch_labelled_frames(
+        args.database_url,
+        organization_id=args.organization_id,
+        limit=args.max_frames,
+    )
+    if not labelled:
+        _log(
+            "Không có mẫu nào ở trạng thái 'approved'. Hãy duyệt nhãn trong "
+            "Admin → Duyệt dữ liệu AI trước khi đo A/B."
+        )
+        return
+    _log(f"Có {len(labelled)} khung hình có nhãn người xác nhận.")
+    if len(labelled) < MIN_FRAMES_FOR_VERDICT:
+        _log(
+            f"CẢNH BÁO: dưới {MIN_FRAMES_FOR_VERDICT} khung — kết quả sẽ "
+            "không đủ tin cậy để kết luận."
+        )
+
+    from minio import Minio
+
+    client = Minio(
+        args.minio_endpoint,
+        access_key=args.minio_access_key,
+        secret_key=args.minio_secret_key,
+        secure=args.minio_secure,
+    )
+    frames: list[tuple[str, bytes, str]] = []
+    for item in labelled:
+        try:
+            resp = client.get_object(args.minio_bucket, item["key"])
+            try:
+                frames.append((item["id"], resp.read(), item["sku"]))
+            finally:
+                resp.close()
+                resp.release_conn()
+        except Exception:
+            _log(f"  bỏ qua {item['key']} (không tải được)")
+    if not frames:
+        _log("Không tải được ảnh nào từ object storage.")
+        return
+    _log(f"Đã tải {len(frames)} ảnh.\n")
+
+    from ultralytics import YOLO
+
+    model = YOLO(args.yolo_model)
+
+    def run_arm(name: str, env: dict[str, str]) -> ArmResult:
+        from app.vision.pipeline import preprocess_for_detection
+
+        cfg = _apply_vision_env(env)
+        arm = ArmResult(name=name, env=dict(env))
+        total_ms = 0.0
+        for frame_id, raw, expected_sku in frames:
+            t0 = time.perf_counter()
+            try:
+                prepared = preprocess_for_detection(raw, args.camera_key, cfg)
+                result = model.track(
+                    source=prepared.frame, persist=False, verbose=False
+                )
+            except Exception:
+                arm.false_negatives += 1
+                continue
+            total_ms += (time.perf_counter() - t0) * 1000.0
+            arm.frames += 1
+
+            dets, _ = _extract_detections_and_ids(result)
+            # Nhãn ở đây là "khung hình này chứa sản phẩm X", không có toạ
+            # độ hộp, nên chấm điểm ở mức *có phát hiện được vật thể
+            # không*: đúng một vật thể phi-person = TP, không có = FN,
+            # thừa = FP. Thô hơn IoU nhưng khớp với nhãn đang có, và đủ
+            # để so sánh hai nhánh với nhau — điều duy nhất cần ở đây.
+            objects = [d for d in dets if d.class_name.lower() != "person"]
+            if not objects:
+                arm.false_negatives += 1
+            else:
+                arm.true_positives += 1
+                arm.false_positives += max(0, len(objects) - 1)
+        arm.avg_latency_ms = total_ms / arm.frames if arm.frames else 0.0
+        return arm
+
+    _log("Chạy nhánh đối chứng (tắt hết tiền xử lý)...")
+    baseline = run_arm("Tắt hết (đối chứng)", {})
+    _log(
+        f"  F1={baseline.f1:.3f} P={baseline.precision:.3f} "
+        f"R={baseline.recall:.3f} {baseline.avg_latency_ms:.1f}ms\n"
+    )
+
+    comparisons: list[Comparison] = []
+    for scenario in PREPROCESSING_CONFIGS:
+        if not scenario.env:
+            continue  # đây chính là nhánh đối chứng, đã chạy
+        _log(f"Chạy '{scenario.name}'...")
+        variant = run_arm(scenario.name, scenario.env)
+        comparison = decide(Comparison(baseline=baseline, variant=variant))
+        _log(f"  F1={variant.f1:.3f} ({comparison.f1_delta:+.3f}) → {comparison.verdict}")
+        comparisons.append(comparison)
+
+    report = format_report(comparisons)
+    _log("\n" + report)
+
+    os.makedirs(args.output_dir, exist_ok=True)
+    path = os.path.join(args.output_dir, "preprocessing_ab.txt")
+    with open(path, "w", encoding="utf-8") as fh:
+        fh.write(report + "\n")
+    _log(f"\nĐã ghi báo cáo: {path}")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = parser.add_subparsers(dest="command", required=True)
@@ -378,6 +508,23 @@ def main() -> None:
     p_cart.add_argument("--window-end", default=None)
     p_cart.add_argument("--output-dir", default="./evaluation_results")
     p_cart.set_defaults(func=cmd_cart_metrics)
+
+    p_ab = sub.add_parser(
+        "preprocessing-ab",
+        help="So sánh A/B tiền xử lý trên nhãn thật từ hàng đợi duyệt.",
+    )
+    p_ab.add_argument("--database-url", required=True)
+    p_ab.add_argument("--organization-id", default=None)
+    p_ab.add_argument("--max-frames", type=int, default=500)
+    p_ab.add_argument("--minio-endpoint", default=os.getenv("MINIO_ENDPOINT", "minio:9000"))
+    p_ab.add_argument("--minio-access-key", default=os.getenv("MINIO_ROOT_USER", ""))
+    p_ab.add_argument("--minio-secret-key", default=os.getenv("MINIO_ROOT_PASSWORD", ""))
+    p_ab.add_argument("--minio-bucket", default=os.getenv("MINIO_BUCKET", "visionmart"))
+    p_ab.add_argument("--minio-secure", action="store_true")
+    p_ab.add_argument("--yolo-model", default=os.getenv("YOLO_MODEL", "yolov8n.pt"))
+    p_ab.add_argument("--camera-key", default="eval-cam")
+    p_ab.add_argument("--output-dir", default="./evaluation_results")
+    p_ab.set_defaults(func=cmd_preprocessing_ab)
 
     p_thesis = sub.add_parser("thesis-report", help="Regenerate the thesis report from a previous evaluate run.")
     p_thesis.add_argument("--run-json", required=True)

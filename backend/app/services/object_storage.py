@@ -187,6 +187,41 @@ class MinioStorage:
         except S3Error as exc:
             logger.warning("MinIO delete failed for %s: %s", key, exc)
 
+    async def list_keys(self, prefix: str, limit: int = 10000) -> list[str]:
+        """Liệt kê object dưới một prefix.
+
+        Thêm cho job dọn dẹp telemetry: một khung hình debug ghi ra 9 file
+        dưới cùng prefix, và số lượng thực tế thay đổi (bước nào chạy thì
+        có file đó), nên phải liệt kê chứ không thể dựng tên file theo
+        công thức — dựng theo công thức sẽ bỏ sót file và để lại rác.
+
+        ``limit`` chặn trên để một prefix bất thường không nạp hàng triệu
+        khoá vào bộ nhớ của worker.
+        """
+
+        def _list() -> list[str]:
+            client = self._get_client()
+            out: list[str] = []
+            for obj in client.list_objects(
+                self._settings.MINIO_BUCKET, prefix=prefix, recursive=True
+            ):
+                out.append(obj.object_name)
+                if len(out) >= limit:
+                    logger.warning(
+                        "list_keys đạt trần %d ở prefix %s", limit, prefix
+                    )
+                    break
+            return out
+
+        try:
+            return await asyncio.to_thread(_list)
+        except S3Error as exc:
+            logger.warning("MinIO list thất bại: %s (%s)", prefix, exc)
+            raise ObjectStorageError(str(exc)) from exc
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("MinIO list thất bại (không phải S3): %s (%s)", prefix, exc)
+            raise ObjectStorageError(str(exc)) from exc
+
     async def delete_many(self, keys: list[str]) -> int:
         from minio.deleteobjects import DeleteObject
 

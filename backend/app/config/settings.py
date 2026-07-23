@@ -109,6 +109,20 @@ class Settings(BaseSettings):
     DETECTION_CLEANUP_INTERVAL_SECONDS: int = 3600
     DETECTION_CLEANUP_BATCH_SIZE: int = 500
 
+    # --- Dọn dẹp telemetry AI (ai_frames / ai_logs / ai_sessions) ---
+    # Bật mặc định: các bảng này tăng ~2,5 triệu dòng/camera/ngày, để
+    # không giới hạn thì sớm muộn cũng đầy đĩa. Chúng là dữ liệu chẩn
+    # đoán — nhãn huấn luyện nằm ở bảng khác và KHÔNG bị job này đụng tới
+    # (xem retention_service.py).
+    AI_PIPELINE_CLEANUP_ENABLED: bool = True
+    AI_PIPELINE_CLEANUP_INTERVAL_SECONDS: int = 21600   # 6 giờ
+    # Log dày nhất, giữ ngắn nhất.
+    AI_LOG_RETENTION_DAYS: int = 7
+    # Khung hình kéo theo detection/classification/ocr/embedding (CASCADE).
+    AI_FRAME_RETENTION_DAYS: int = 7
+    # Phiên chỉ bị xoá khi đã rỗng cả khung hình lẫn sự kiện.
+    AI_SESSION_RETENTION_DAYS: int = 90
+
     # ---- Shopping Cart / AI checkout ----
     AI_ENGINE_API_KEY: str = "change-me-ai-engine-key"
     CART_EXPIRATION_MINUTES: int = 30
