@@ -53,6 +53,7 @@ def preprocess_for_detection(
     cfg: VisionConfig | None = None,
     *,
     force_trace: bool = False,
+    roi_zones: list | None = None,
 ) -> PipelineResult:
     """Decode + (optional) ROI + (optional) enhancement + (optional)
     quality analysis. With every ``ENABLE_*`` flag off (the default), this
@@ -71,7 +72,13 @@ def preprocess_for_detection(
 
         zones: list[RoiZone] = []
         if cfg.enable_roi:
-            zones = load_roi_config(cfg.roi_config_path, camera_key)
+            # Vung ve tren Admin (truyen vao qua roi_zones) THANG file YAML:
+            # nguoi van hanh vua keo chuot xong thi mong doi thay hieu luc
+            # ngay, chu khong phai bi mot file cau hinh cu de len. YAML van
+            # la duong du phong cho camera chua ve vung nao.
+            zones = list(roi_zones or [])
+            if not zones:
+                zones = load_roi_config(cfg.roi_config_path, camera_key)
             if zones:
                 frame = apply_roi(frame, zones)
                 recorder.capture("roi", "ROI mask", frame, {"zones": len(zones)})

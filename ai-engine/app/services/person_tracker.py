@@ -259,11 +259,15 @@ async def track_frame(
     camera_key: str,
     *,
     is_checkout_zone: bool = False,
+    roi_zones: list | None = None,
 ) -> list[TrackedObject]:
     """Unchanged contract — see module docstring. Delegates to
     :func:`track_frame_detailed` so both paths share one implementation."""
     outcome = await track_frame_detailed(
-        image_bytes, camera_key, is_checkout_zone=is_checkout_zone
+        image_bytes,
+        camera_key,
+        is_checkout_zone=is_checkout_zone,
+        roi_zones=roi_zones,
     )
     return outcome.detections
 
@@ -273,12 +277,15 @@ async def track_frame_detailed(
     camera_key: str,
     *,
     is_checkout_zone: bool = False,
+    roi_zones: list | None = None,
 ) -> TrackingOutcome:
     cfg = get_vision_config()
 
     # Decode + optional ROI/enhancement/quality — see app/vision/pipeline.py.
     # Raises ValueError on bad input, same as the PIL decode this replaces.
-    vision_result = preprocess_for_detection(image_bytes, camera_key, cfg)
+    vision_result = preprocess_for_detection(
+        image_bytes, camera_key, cfg, roi_zones=roi_zones
+    )
     frame_bgr = vision_result.frame
 
     async with _LOCK:

@@ -20,6 +20,7 @@ from app.modules.camera.infrastructure.repositories import (
     SqlAlchemyCameraRepository,
 )
 from app.modules.camera.schemas.camera import (
+    RoiZonesUpdate,
     CameraCreate,
     CameraHeartbeat,
     CameraListResponse,
@@ -84,6 +85,7 @@ def _to_response(camera: Camera, branch: Branch | None) -> CameraResponse:
         alert_classes=camera.alert_classes,
         alert_min_confidence=camera.alert_min_confidence,
         is_checkout_zone=camera.is_checkout_zone,
+        roi_zones=camera.roi_zones,
         last_seen_at=camera.last_seen_at,
         created_at=camera.created_at,
         updated_at=camera.updated_at,
@@ -559,4 +561,51 @@ async def upload_simulated_stream(
     except NotFoundError as exc:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
 
+    return await _load_response(repo, service, current.organization_id, camera_id)
+
+
+# --------------------------------------------------------------------
+# Vung nhan dien (ROI)
+#
+# Luu vao cot cameras.roi_zones. ai-engine doc qua /ai/cameras/{id} — lan
+# goi no da thuc hien san cho moi khung hinh va cache 30 giay — nen vung
+# ve xong co hieu luc trong vong 30 giay ma khong can restart dich vu hay
+# sua file YAML.
+#
+# Vung rong ([]) co y nghia RO RANG: "khong gioi han vung", tuc tat ROI
+# cho camera nay. Khong dung null de phan biet voi "chua bao gio cau
+# hinh" — ca hai deu cho ket qua giong nhau o engine, nhung [] the hien
+# nguoi dung da chu dong xoa vung.
+# --------------------------------------------------------------------
+@router.get("/{camera_id}/roi-zones")
+async def get_roi_zones(
+    camera_id: uuid.UUID,
+    current: CurrentUser = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    repo = SqlAlchemyCameraRepository(session)
+    try:
+        camera = await CameraService(repo).get(current.organization_id, camera_id)
+    except NotFoundError as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    return {"zones": camera.roi_zones or []}
+
+
+@router.put("/{camera_id}/roi-zones", response_model=CameraResponse)
+async def update_roi_zones(
+    camera_id: uuid.UUID,
+    payload: RoiZonesUpdate,
+    current: CurrentUser = Depends(require_roles("super_admin", "org_admin")),
+    session: AsyncSession = Depends(get_session),
+) -> CameraResponse:
+    repo = SqlAlchemyCameraRepository(session)
+    service = CameraService(repo)
+    try:
+        camera = await service.get(current.organization_id, camera_id)
+    except NotFoundError as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+
+    camera.roi_zones = [z.model_dump() for z in payload.zones]
+    await session.commit()
+    await session.refresh(camera)
     return await _load_response(repo, service, current.organization_id, camera_id)

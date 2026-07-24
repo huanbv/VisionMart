@@ -55,6 +55,7 @@ from app.services.person_tracker import (
 from app.services.product_mapper import map_class_to_sku
 from app.services import review_capture, sku_identifier, telemetry_client
 from app.vision.config import get_vision_config
+from app.vision.roi import zones_from_payload
 from app.vision.storage import step_writer
 
 logger = logging.getLogger("ai-engine.frame")
@@ -461,10 +462,16 @@ async def process_frame(
     try:
         # Detailed variant so the SKU-classifier stage below can crop from
         # the same preprocessed frame YOLO saw, without re-preprocessing.
+        # Vung nhan dien ve tren Admin di kem camera_info (da duoc cache
+        # 30s trong _fetch_camera) — khong them mot luot goi mang nao.
+        roi_zones = zones_from_payload(
+            (camera_info or {}).get("roi_zones")
+        )
         tracking = await track_frame_detailed(
             content,
             camera_key,
             is_checkout_zone=bool(camera_info and camera_info.get("is_checkout_zone")),
+            roi_zones=roi_zones,
         )
         detections = tracking.detections
         debug.add(

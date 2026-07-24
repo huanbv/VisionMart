@@ -310,3 +310,28 @@ export async function uploadSimulatedStream(
   );
   return data;
 }
+
+/** Một vùng nhận diện vẽ trên Admin. Toạ độ phân số (0–1). */
+export interface RoiZone {
+  name: string;
+  type: "entrance" | "shelf" | "checkout" | "exit";
+  points: [number, number][];
+}
+
+export async function getRoiZones(cameraId: string): Promise<RoiZone[]> {
+  const { data } = await apiClient.get<{ zones: RoiZone[] }>(
+    `/cameras/${cameraId}/roi-zones`,
+  );
+  return data.zones ?? [];
+}
+
+export async function updateRoiZones(
+  cameraId: string,
+  zones: RoiZone[],
+): Promise<Camera> {
+  const { data } = await apiClient.put<Camera>(
+    `/cameras/${cameraId}/roi-zones`,
+    { zones },
+  );
+  return data;
+}

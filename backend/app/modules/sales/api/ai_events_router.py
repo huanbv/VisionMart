@@ -62,6 +62,10 @@ class AICameraInfo(BaseModel):
     is_checkout_zone: bool
     alert_classes: str | None
     alert_min_confidence: float | None
+    # Vung nhan dien ve tren Admin — di kem luon trong lan goi camera-info
+    # ma ai-engine da thuc hien san (va cache 30s), nen khong them mot luot
+    # goi mang nao tren duong xu ly khung hinh.
+    roi_zones: list | None = None
 
 
 class AICustomerInfo(BaseModel):
@@ -121,6 +125,7 @@ async def get_ai_camera_info(
         is_checkout_zone=camera.is_checkout_zone,
         alert_classes=camera.alert_classes,
         alert_min_confidence=camera.alert_min_confidence,
+        roi_zones=camera.roi_zones,
     )
 
 

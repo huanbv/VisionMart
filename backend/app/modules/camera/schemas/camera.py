@@ -2,14 +2,46 @@
 
 from __future__ import annotations
 
+from typing import Literal
+
 import uuid
 from datetime import datetime
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+
+class RoiZonePayload(BaseModel):
+    """Mot vung nhan dien ve tren Admin.
+
+    ``points`` la toa do PHAN SO (0-1) theo chieu rong/cao khung hinh, nen
+    vung ve mot lan dung duoc cho moi do phan giai camera.
+    """
+
+    name: str = Field(..., min_length=1, max_length=60)
+    type: Literal["entrance", "shelf", "checkout", "exit"] = "checkout"
+    points: list[tuple[float, float]] = Field(..., min_length=3)
+
+    @field_validator("points")
+    @classmethod
+    def _fractional(cls, v: list[tuple[float, float]]):
+        # Chan toa do pixel bi gui nham vao day: mot vung [[640,360],...]
+        # se im lang bien thanh mask rong (fillPoly ngoai khung) va camera
+        # "mu" ma khong bao loi gi.
+        for x, y in v:
+            if not (0.0 <= x <= 1.0 and 0.0 <= y <= 1.0):
+                raise ValueError(
+                    "points phai la toa do phan so 0-1 (khong phai pixel)"
+                )
+        return v
+
+
+class RoiZonesUpdate(BaseModel):
+    zones: list[RoiZonePayload] = Field(default_factory=list, max_length=20)
 
 
 class CameraResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
+    roi_zones: list | None = None
 
     id: uuid.UUID
     organization_id: uuid.UUID

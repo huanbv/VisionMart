@@ -8,6 +8,12 @@ behaves exactly as before this Sprint.
 
 from __future__ import annotations
 
-from app.vision.roi.zones import RoiZone, apply_roi, load_roi_config
+from app.vision.roi.zones import (
+    RoiZone,
+    apply_roi,
+    load_roi_config,
+    zones_from_payload,
+)
 
-__all__ = ["RoiZone", "apply_roi", "load_roi_config"]
+__all__ = ["RoiZone", "apply_roi", "load_roi_config",
+    "zones_from_payload"]

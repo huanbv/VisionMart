@@ -23,6 +23,7 @@ import {
 } from "antd";
 import {
   AppstoreOutlined,
+  BorderOuterOutlined,
   DeleteOutlined,
   EditOutlined,
   ExperimentOutlined,
@@ -52,6 +53,7 @@ import {
   updateCamera,
   uploadSimulatedStream,
 } from "@/api/cameras";
+import RoiZoneEditor from "@/components/RoiZoneEditor";
 import { useAuth } from "@/contexts/AuthContext";
 import { openMjpegStream } from "@/utils/mjpegStream";
 
@@ -417,6 +419,7 @@ export default function CamerasPage() {
     setAnalyzeResult(null);
   };
 
+  const [roiFor, setRoiFor] = useState<Camera | null>(null);
   const [previewFor, setPreviewFor] = useState<Camera | null>(null);
   const [previewResult, setPreviewResult] = useState<PreviewResult | null>(
     null,
@@ -622,7 +625,7 @@ export default function CamerasPage() {
     },
     {
       title: "Hành động",
-      width: 290,
+      width: 330,
       fixed: "right",
       render: (_, row) => (
         <Space>
@@ -653,6 +656,13 @@ export default function CamerasPage() {
               setUploadFile(null);
             }}
             title="Tải video demo lên (giả lập luồng camera)"
+          />
+          <Button
+            size="small"
+            icon={<BorderOuterOutlined />}
+            disabled={!canEdit}
+            onClick={() => setRoiFor(row)}
+            title="Vẽ vùng nhận diện"
           />
           <Button
             size="small"
@@ -1027,6 +1037,12 @@ export default function CamerasPage() {
           </Card>
         )}
       </Modal>
+
+      <RoiZoneEditor
+        camera={roiFor}
+        open={!!roiFor}
+        onClose={() => setRoiFor(null)}
+      />
 
       <Modal
         title={

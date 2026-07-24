@@ -52,6 +52,15 @@ class Camera(Entity):
     is_checkout_zone: Mapped[bool] = mapped_column(
         Boolean, nullable=False, default=False, server_default="false"
     )
+    # Vung nhan dien ve tren Admin. Dang:
+    #   [{"name": "quay", "type": "checkout",
+    #     "points": [[0.1,0.2],[0.9,0.2],[0.9,0.8],[0.1,0.8]]}]
+    # Toa do la PHAN SO (0-1) chu khong phai pixel: cung mot vung dung
+    # duoc cho moi do phan giai, va doi camera sang 4K khong lam vung ve
+    # trươt di. ai-engine doc truc tiep tu day (qua /ai/cameras/{id}) nen
+    # nguoi dung keo chuot xong la co hieu luc trong 30 giay (thoi han
+    # cache camera), khong can restart hay sua file YAML.
+    roi_zones: Mapped[list | None] = mapped_column(JSONBType, nullable=True)
     last_seen_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )

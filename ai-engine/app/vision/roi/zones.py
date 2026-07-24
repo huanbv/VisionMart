@@ -113,6 +113,21 @@ def load_roi_config(config_path: str, camera_key: str) -> list[RoiZone]:
     return _parse_zones(entry.get("zones"))
 
 
+def zones_from_payload(raw_zones: list | None) -> list[RoiZone]:
+    """Dung RoiZone tu payload JSON (vung ve tren Admin, luu trong DB).
+
+    Ton tai song song voi load_roi_config (doc file YAML) vi hai nguon co
+    vong doi khac han: YAML la cau hinh van hanh sua bang tay va deploy,
+    con vung ve tren UI thay doi bat cu luc nao nguoi dung keo chuot. Dung
+    lai _parse_zones nen moi kiem tra (it nhat 3 diem, zone_type hop le)
+    ap dung y het cho ca hai nguon — mot vung ve loi khong the lot qua chi
+    vi no den tu duong khac.
+    """
+    if not raw_zones:
+        return []
+    return _parse_zones(raw_zones)
+
+
 def apply_roi(frame_bgr: np.ndarray, zones: list[RoiZone]) -> np.ndarray:
     """Mask out everything not inside the union of ``zones``.
 

@@ -1,0 +1,329 @@
+import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  Alert,
+  Button,
+  Empty,
+  Input,
+  List,
+  Modal,
+  Select,
+  Space,
+  Spin,
+  Tag,
+  Typography,
+  message,
+} from "antd";
+import { DeleteOutlined, ReloadOutlined } from "@ant-design/icons";
+
+import {
+  getRoiZones,
+  previewCameraStream,
+  updateRoiZones,
+  type Camera,
+  type RoiZone,
+} from "@/api/cameras";
+
+const { Text } = Typography;
+
+const ZONE_TYPES = [
+  { value: "checkout", label: "Quầy thanh toán", color: "#ff4d4f" },
+  { value: "shelf", label: "Kệ hàng", color: "#1677ff" },
+  { value: "entrance", label: "Lối vào", color: "#52c41a" },
+  { value: "exit", label: "Lối ra", color: "#faad14" },
+] as const;
+
+type ZoneType = (typeof ZONE_TYPES)[number]["value"];
+
+function colorOf(type: string): string {
+  return ZONE_TYPES.find((t) => t.value === type)?.color ?? "#ff4d4f";
+}
+
+function labelOf(type: string): string {
+  return ZONE_TYPES.find((t) => t.value === type)?.label ?? type;
+}
+
+/**
+ * Vẽ vùng nhận diện lên ảnh chụp thật từ camera.
+ *
+ * Toạ độ lưu ở dạng PHÂN SỐ (0–1) chứ không phải pixel. Đây là điểm mấu
+ * chốt: canvas hiển thị co giãn theo bề rộng modal, và luồng camera có thể
+ * đổi độ phân giải bất cứ lúc nào — nếu lưu pixel thì vùng vẽ hôm nay sẽ
+ * trượt đi khi đổi camera hoặc khi người khác mở trên màn hình khác.
+ */
+export default function RoiZoneEditor({
+  camera,
+  open,
+  onClose,
+}: {
+  camera: Camera | null;
+  open: boolean;
+  onClose: () => void;
+}) {
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const imgRef = useRef<HTMLImageElement | null>(null);
+
+  const [loading, setLoading] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [snapshotErr, setSnapshotErr] = useState<string | null>(null);
+  const [zones, setZones] = useState<RoiZone[]>([]);
+  const [draft, setDraft] = useState<[number, number][]>([]);
+  const [draftName, setDraftName] = useState("");
+  const [draftType, setDraftType] = useState<ZoneType>("checkout");
+
+  // ---- tải ảnh nền + vùng đã lưu -----------------------------------
+  const loadSnapshot = useCallback(async () => {
+    if (!camera) return;
+    setLoading(true);
+    setSnapshotErr(null);
+    try {
+      const res = await previewCameraStream(camera.id);
+      const img = new Image();
+      img.onload = () => {
+        imgRef.current = img;
+        setLoading(false);
+        redraw();
+      };
+      img.onerror = () => {
+        setSnapshotErr("Không giải mã được ảnh chụp từ camera.");
+        setLoading(false);
+      };
+      img.src = `data:image/jpeg;base64,${res.frame_base64}`;
+    } catch (e: any) {
+      // Vẫn cho vẽ trên nền trống: camera có thể đang tắt, nhưng người
+      // dùng đã biết bố cục cửa hàng và vẫn muốn khoanh vùng trước.
+      setSnapshotErr(
+        e?.response?.data?.detail ??
+          "Không chụp được ảnh từ camera — bạn vẫn có thể vẽ trên nền trống.",
+      );
+      setLoading(false);
+    }
+  }, [camera]);
+
+  useEffect(() => {
+    if (!open || !camera) return;
+    setDraft([]);
+    setDraftName("");
+    imgRef.current = null;
+    getRoiZones(camera.id)
+      .then(setZones)
+      .catch(() => setZones([]));
+    void loadSnapshot();
+  }, [open, camera, loadSnapshot]);
+
+  // ---- vẽ ------------------------------------------------------------
+  const redraw = useCallback(() => {
+    const cv = canvasRef.current;
+    if (!cv) return;
+    const ctx = cv.getContext("2d");
+    if (!ctx) return;
+    const { width: W, height: H } = cv;
+
+    ctx.clearRect(0, 0, W, H);
+    if (imgRef.current) {
+      ctx.drawImage(imgRef.current, 0, 0, W, H);
+    } else {
+      ctx.fillStyle = "#1f1f1f";
+      ctx.fillRect(0, 0, W, H);
+    }
+
+    const drawPoly = (
+      pts: [number, number][],
+      color: string,
+      closed: boolean,
+      label?: string,
+    ) => {
+      if (!pts.length) return;
+      ctx.beginPath();
+      pts.forEach(([fx, fy], i) => {
+        const x = fx * W;
+        const y = fy * H;
+        i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+      });
+      if (closed) ctx.closePath();
+      ctx.lineWidth = 2;
+      ctx.strokeStyle = color;
+      ctx.stroke();
+      if (closed) {
+        ctx.fillStyle = color + "33";
+        ctx.fill();
+      }
+      pts.forEach(([fx, fy]) => {
+        ctx.beginPath();
+        ctx.arc(fx * W, fy * H, 4, 0, Math.PI * 2);
+        ctx.fillStyle = color;
+        ctx.fill();
+      });
+      if (label) {
+        const [fx, fy] = pts[0];
+        ctx.font = "13px sans-serif";
+        const tw = ctx.measureText(label).width;
+        ctx.fillStyle = color;
+        ctx.fillRect(fx * W, fy * H - 18, tw + 8, 18);
+        ctx.fillStyle = "#fff";
+        ctx.fillText(label, fx * W + 4, fy * H - 5);
+      }
+    };
+
+    zones.forEach((z) =>
+      drawPoly(z.points, colorOf(z.type), true, `${z.name} (${labelOf(z.type)})`),
+    );
+    drawPoly(draft, colorOf(draftType), false);
+  }, [zones, draft, draftType]);
+
+  useEffect(redraw, [redraw]);
+
+  const onCanvasClick = (e: React.MouseEvent<HTMLCanvasElement>) => {
+    const cv = canvasRef.current;
+    if (!cv) return;
+    const r = cv.getBoundingClientRect();
+    // Chia cho kích thước HIỂN THỊ (rect) chứ không phải cv.width: canvas
+    // bị CSS co lại, hai giá trị này khác nhau và dùng nhầm sẽ làm điểm
+    // vẽ lệch khỏi vị trí con trỏ.
+    const fx = Math.min(1, Math.max(0, (e.clientX - r.left) / r.width));
+    const fy = Math.min(1, Math.max(0, (e.clientY - r.top) / r.height));
+    setDraft((d) => [...d, [fx, fy]]);
+  };
+
+  const finishZone = () => {
+    if (draft.length < 3) {
+      message.warning("Cần ít nhất 3 điểm để tạo một vùng.");
+      return;
+    }
+    const name = draftName.trim();
+    if (!name) {
+      message.warning("Hãy đặt tên cho vùng (ví dụ: Quầy thanh toán).");
+      return;
+    }
+    setZones((z) => [...z, { name, type: draftType, points: draft }]);
+    setDraft([]);
+    setDraftName("");
+  };
+
+  const onSave = async () => {
+    if (!camera) return;
+    setSaving(true);
+    try {
+      await updateRoiZones(camera.id, zones);
+      message.success(
+        zones.length
+          ? `Đã lưu ${zones.length} vùng — có hiệu lực trong khoảng 30 giây.`
+          : "Đã xoá hết vùng — camera nhận diện lại toàn khung hình.",
+      );
+      onClose();
+    } catch (e: any) {
+      message.error(e?.response?.data?.detail ?? "Lưu vùng thất bại.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Modal
+      title={`Vẽ vùng nhận diện — ${camera?.name ?? ""}`}
+      open={open}
+      onCancel={onClose}
+      width={980}
+      onOk={onSave}
+      okText="Lưu vùng"
+      confirmLoading={saving}
+    >
+      <Alert
+        type="info"
+        showIcon
+        style={{ marginBottom: 12 }}
+        message="Bấm lần lượt lên ảnh để tạo các đỉnh của vùng, đặt tên rồi bấm “Hoàn tất vùng”."
+        description="Hệ thống sẽ che mọi thứ nằm ngoài các vùng đã vẽ trước khi đưa vào nhận diện, nên kệ hàng phía sau hay người qua lại không còn bị tính nhầm. Nếu không vẽ vùng nào, camera vẫn quét toàn khung hình như trước."
+      />
+
+      {snapshotErr && (
+        <Alert
+          type="warning"
+          showIcon
+          style={{ marginBottom: 12 }}
+          message={snapshotErr}
+        />
+      )}
+
+      <div style={{ display: "flex", gap: 16 }}>
+        <div style={{ flex: "1 1 auto", minWidth: 0 }}>
+          <Spin spinning={loading}>
+            <canvas
+              ref={canvasRef}
+              width={640}
+              height={480}
+              onClick={onCanvasClick}
+              style={{
+                width: "100%",
+                cursor: "crosshair",
+                border: "1px solid #434343",
+                borderRadius: 4,
+                background: "#1f1f1f",
+              }}
+            />
+          </Spin>
+          <Space style={{ marginTop: 8 }} wrap>
+            <Input
+              placeholder="Tên vùng"
+              value={draftName}
+              onChange={(e) => setDraftName(e.target.value)}
+              style={{ width: 180 }}
+            />
+            <Select
+              value={draftType}
+              onChange={(v) => setDraftType(v)}
+              options={ZONE_TYPES.map((t) => ({
+                value: t.value,
+                label: t.label,
+              }))}
+              style={{ width: 160 }}
+            />
+            <Button type="primary" onClick={finishZone}>
+              Hoàn tất vùng ({draft.length} điểm)
+            </Button>
+            <Button onClick={() => setDraft((d) => d.slice(0, -1))} disabled={!draft.length}>
+              Bỏ điểm cuối
+            </Button>
+            <Button icon={<ReloadOutlined />} onClick={loadSnapshot}>
+              Chụp lại ảnh
+            </Button>
+          </Space>
+        </div>
+
+        <div style={{ width: 260, flex: "0 0 260px" }}>
+          <Text strong>Các vùng đã có</Text>
+          {zones.length === 0 ? (
+            <Empty
+              description="Chưa có vùng nào"
+              image={Empty.PRESENTED_IMAGE_SIMPLE}
+            />
+          ) : (
+            <List
+              size="small"
+              dataSource={zones}
+              renderItem={(z, i) => (
+                <List.Item
+                  actions={[
+                    <Button
+                      key="del"
+                      size="small"
+                      danger
+                      icon={<DeleteOutlined />}
+                      onClick={() =>
+                        setZones((all) => all.filter((_, j) => j !== i))
+                      }
+                    />,
+                  ]}
+                >
+                  <Space direction="vertical" size={0}>
+                    <Text>{z.name}</Text>
+                    <Tag color={colorOf(z.type)}>{labelOf(z.type)}</Tag>
+                  </Space>
+                </List.Item>
+              )}
+            />
+          )}
+        </div>
+      </div>
+    </Modal>
+  );
+}
