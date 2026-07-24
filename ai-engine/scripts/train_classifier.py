@@ -66,6 +66,11 @@ def main() -> int:
     parser.add_argument("--image-size", type=int, default=224)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--no-onnx", action="store_true", help="Bỏ qua bước xuất ONNX")
+    parser.add_argument(
+        "--expect-classes", type=int, default=0,
+        help="Số lớp kỳ vọng. Nếu dataset trên đĩa có ít hơn, dừng lại — "
+             "đây là cách chặn việc lỡ train trên dataset cũ thiếu lớp.",
+    )
     args = parser.parse_args()
 
     try:
@@ -123,6 +128,17 @@ def main() -> int:
     if len(classes) < 2:
         logger.error("Cần ít nhất 2 lớp, hiện có %d.", len(classes))
         return 1
+
+    if args.expect_classes and len(classes) < args.expect_classes:
+        logger.error(
+            "Dataset trên đĩa chỉ có %d lớp nhưng kỳ vọng %d — nhiều khả năng "
+            "đang là dataset CŨ. Dựng lại rồi train:", len(classes), args.expect_classes
+        )
+        logger.error("  ai-engine rm -rf %s", args.data)
+        logger.error("  ...python scripts/build_classifier_dataset.py --out %s", args.data)
+        return 1
+
+    logger.info("Các lớp trên đĩa: %s", ", ".join(classes))
 
     logger.info("--- Dữ liệu ---")
     counts: dict[str, int] = {c: 0 for c in classes}

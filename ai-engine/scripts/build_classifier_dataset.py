@@ -206,6 +206,18 @@ def main() -> int:
         secure=args.minio_secure,
     )
 
+    # Dọn sạch thư mục đích trước khi tải. Nếu không, một lần chạy trước với
+    # ÍT lớp hơn để lại các thư mục lớp cũ, và lần train sau đọc nhầm bản
+    # trộn cũ-mới: từng gặp đúng lỗi này — dataset trên đĩa còn 2 lớp trong
+    # khi cơ sở dữ liệu đã có 4, và train lặng lẽ chạy trên 2 lớp cũ. Xoá
+    # trước để dataset trên đĩa LUÔN khớp với cơ sở dữ liệu tại thời điểm
+    # chạy.
+    import shutil
+
+    if os.path.isdir(args.out):
+        logger.info("dọn dataset cũ tại %s", args.out)
+        shutil.rmtree(args.out, ignore_errors=True)
+
     for split in ("train", "val"):
         for sku in labels:
             os.makedirs(os.path.join(args.out, split, sku), exist_ok=True)
