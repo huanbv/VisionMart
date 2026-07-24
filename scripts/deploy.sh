@@ -28,6 +28,16 @@ set -euo pipefail
 # của repo đó. Cùng cách xác định mà setup-vps.sh đang dùng.
 REPO_DIR="${REPO_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 COMPOSE="docker compose"
+
+# Cổng backend đọc từ .env, không cứng hoá. Trước đây script hỏi cổng
+# 18000 trong khi docker-compose expose ${BACKEND_PORT:-8000} — nên bước
+# chờ backend KHÔNG BAO GIỜ thành công, script `die` sau 30s, và migration
+# ở ngay sau đó chưa từng được chạy. Lỗi này im lặng: deploy trông như chỉ
+# "chờ hơi lâu", còn schema thì lặng lẽ tụt lại sau code.
+_env_get() {
+  [ -f "$REPO_DIR/.env" ] || return 0
+  grep -E "^$1=" "$REPO_DIR/.env" 2>/dev/null | tail -n1 | cut -d= -f2-     | sed -E 's/[[:space:]]+#.*$//; s/[[:space:]]+$//' || true
+}
 WITH_FRONTEND=0
 WITH_AI_ENGINE=0
 
@@ -94,26 +104,41 @@ $COMPOSE build $SERVICES
 log "Restarting containers: $SERVICES"
 $COMPOSE up -d $SERVICES
 
-log "Waiting for backend to be ready"
-for i in $(seq 1 30); do
-  if curl -sf http://127.0.0.1:18000/health >/dev/null 2>&1; then
-    ok "Backend healthy"
+BACKEND_PORT="$(_env_get BACKEND_PORT)"; BACKEND_PORT="${BACKEND_PORT:-8000}"
+BACKEND_URL="http://127.0.0.1:${BACKEND_PORT}"
+
+# 120s chứ không phải 30s: sau khi build lại image, backend phải nạp toàn
+# bộ ORM + router trước khi trả /health, và trên VPS nhỏ việc đó thường
+# mất hơn 30 giây. Ngưỡng quá ngắn biến một lần khởi động bình thường
+# thành lỗi deploy.
+log "Waiting for backend to be ready (${BACKEND_URL}, tối đa 120s)"
+BACKEND_READY=0
+for i in $(seq 1 120); do
+  if curl -sf "${BACKEND_URL}/health" >/dev/null 2>&1; then
+    ok "Backend healthy sau ${i}s"
+    BACKEND_READY=1
     break
-  fi
-  if [ "$i" -eq 30 ]; then
-    die "Backend did not become healthy in 30s — check: docker compose logs --tail=200 backend"
   fi
   sleep 1
 done
 
+if [ "$BACKEND_READY" -eq 0 ]; then
+  warn "Backend chưa trả /health sau 120s — vẫn thử migrate qua docker exec"
+  warn "  (nếu migrate lỗi: docker compose logs --tail=200 backend)"
+fi
+
 log "Applying database migrations"
-$COMPOSE exec -T backend alembic upgrade head
+if $COMPOSE exec -T backend alembic upgrade head; then
+  ok "Migration xong: $($COMPOSE exec -T backend alembic current 2>/dev/null | tail -n1)"
+else
+  die "Migration THẤT BẠI — code đã lên nhưng schema thì chưa. Sửa rồi chạy lại: docker compose exec backend alembic upgrade head"
+fi
 
 log "Container status"
 $COMPOSE ps
 
 log "Registered API routes"
-curl -sS http://127.0.0.1:18000/openapi.json \
+curl -sS "${BACKEND_URL}/openapi.json" \
   | python3 -c "import sys,json; d=json.load(sys.stdin); [print(p) for p in sorted(d['paths'].keys())]"
 
 ok "Deploy finished"
