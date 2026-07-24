@@ -182,6 +182,11 @@ services:
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-visionmart-minio}
       MINIO_BUCKET: ${MINIO_BUCKET:-visionmart}
       MINIO_USE_SSL: ${MINIO_USE_SSL:-false}
+      # RTSP qua TCP thay vì UDP mặc định của FFmpeg. cv2.VideoCapture
+      # không nhận tham số transport qua API, chỉ đọc được từ biến môi
+      # trường này. Không có nó, rớt gói UDP tạo vệt nhòe kéo theo chuyển
+      # động trên mọi khung hình lấy từ camera.
+      OPENCV_FFMPEG_CAPTURE_OPTIONS: "rtsp_transport;tcp"
       MODELS_DIR: /models
       TRAINING_ROOT: /app/training
     volumes:

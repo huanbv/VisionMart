@@ -66,6 +66,18 @@ def start_loop(camera_id: str, key: str) -> subprocess.Popen:
     video_url = f"http://{MINIO_HOST}/{BUCKET}/{key}"
     rtsp_url = f"rtsp://{RTSP_HOST}:{RTSP_PORT}/cam-{camera_id}"
     log(f"starting loop for camera {camera_id}: {video_url} -> {rtsp_url}")
+    # Tái mã hoá thay vì "-c copy", và đây là điểm quyết định chất lượng
+    # hình. "-c copy" giữ nguyên khoảng keyframe của video gốc — video quay
+    # điện thoại/camera dân dụng thường 2-10 GIÂY mới có một keyframe.
+    # Trong khi đó phía đọc (ai-engine capture.py) mở một kết nối MỚI cho
+    # mỗi lần lấy khung, tức gần như luôn nhảy vào giữa GOP: bộ giải mã
+    # không có keyframe để bám nên trả ra màn xám loang cho tới keyframe
+    # kế tiếp — đúng hiện tượng đã thấy trên live view.
+    #
+    # -g 25 (~1 giây/keyframe) khiến mọi lần nối vào luồng có điểm bám gần
+    # như tức thì. ultrafast + giới hạn 1280w để 4 luồng không nuốt CPU của
+    # VPS (video 4K mà tái mã hoá nguyên cỡ sẽ rất nặng). -an bỏ audio —
+    # không ai dùng và đỡ một track có thể gây lỗi muxer.
     return subprocess.Popen(
         [
             "ffmpeg",
@@ -73,7 +85,25 @@ def start_loop(camera_id: str, key: str) -> subprocess.Popen:
             "-re",
             "-stream_loop", "-1",
             "-i", video_url,
-            "-c", "copy",
+            "-an",
+            "-vf", "scale='min(1280,iw)':-2",
+            "-c:v", "libx264",
+            "-preset", "ultrafast",
+            "-tune", "zerolatency",
+            "-g", "25",
+            "-keyint_min", "25",
+            "-sc_threshold", "0",
+            "-pix_fmt", "yuv420p",
+            "-b:v", "2500k",
+            "-maxrate", "3000k",
+            "-bufsize", "5000k",
+            # genpts: khi -stream_loop quay vòng, timestamp của vòng mới
+            # phải được sinh lại, nếu không decoder phía sau vấp mốc thời
+            # gian thụt lùi và vỡ hình đúng lúc video lặp.
+            "-fflags", "+genpts",
+            # TCP thay vì UDP mặc định: rớt gói UDP là nguồn của các vệt
+            # nhòe kéo theo chuyển động.
+            "-rtsp_transport", "tcp",
             "-f", "rtsp",
             rtsp_url,
         ],
