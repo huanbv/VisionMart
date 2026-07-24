@@ -137,7 +137,23 @@ def collect_labelled_keys(database_url: str, organization_id: str | None) -> dic
 def main() -> int:
     args = parse_args()
     if not args.database_url:
-        logger.error("--database-url (or DATABASE_URL) is required")
+        # ai-engine cố tình KHÔNG được cấp DATABASE_URL: một dịch vụ suy
+        # luận không nên cầm quyền ghi cơ sở dữ liệu. Nên khi chạy script
+        # này trong container, biến đó chắc chắn rỗng — và "$DATABASE_URL"
+        # gõ từ shell của host cũng rỗng nốt, vì nó nằm trong .env chứ
+        # không nằm trong môi trường shell.
+        #
+        # Đây là tình huống người dùng gần như chắc chắn gặp, nên in luôn
+        # lệnh chạy được thay vì chỉ báo thiếu tham số.
+        logger.error("Thiếu --database-url (và biến DATABASE_URL cũng rỗng).")
+        logger.error("")
+        logger.error("ai-engine không được cấp DATABASE_URL theo thiết kế.")
+        logger.error("Chạy từ thư mục repo trên máy chủ:")
+        logger.error("")
+        logger.error("  sudo docker compose exec \\")
+        logger.error("    -e DATABASE_URL=\"$(grep -E '^DATABASE_URL=' .env | cut -d= -f2-)\" \\")
+        logger.error("    ai-engine python scripts/build_classifier_dataset.py \\")
+        logger.error("    --out /app/training/classifier")
         return 2
 
     random.seed(args.seed)

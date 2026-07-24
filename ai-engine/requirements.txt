@@ -21,5 +21,21 @@ lapx==0.9.4
 # ---- Observability ----
 prometheus-client==0.21.0
 
-# Reserved for later sprints:
-# onnxruntime
+# ---- Suy luận classifier SKU (tầng 2) ----
+# Bắt buộc khi ENABLE_SKU_CLASSIFIER=true. Thiếu gói này thì classifier
+# không nạp được và pipeline TỰ RƠI VỀ class_map mà không báo lỗi — bật
+# cờ lên rồi tưởng đã chạy trong khi thực tế không có gì thay đổi. Đây
+# đúng là kiểu hỏng im lặng khó lần ra nhất.
+onnxruntime==1.19.2
+
+# ---- Script bảo trì ngoại tuyến (KHÔNG dùng bởi dịch vụ đang chạy) ----
+# build_classifier_dataset.py đọc nhãn người duyệt từ cơ sở dữ liệu để
+# dựng tập huấn luyện. Chỉ chạy thủ công, không nằm trên đường xử lý
+# khung hình.
+#
+# Thêm thư viện KHÔNG có nghĩa là ai-engine được cấp quyền vào cơ sở dữ
+# liệu: ranh giới nằm ở thông tin đăng nhập, mà docker-compose vẫn không
+# cấp DATABASE_URL cho dịch vụ này. Người vận hành phải truyền vào tay
+# khi chạy script.
+SQLAlchemy==2.0.36
+psycopg2-binary==2.9.10

@@ -83,7 +83,14 @@ def main() -> int:
     val_dir = os.path.join(args.data, "val")
     for d in (train_dir, val_dir):
         if not os.path.isdir(d):
-            logger.error("Không thấy %s — chạy build_classifier_dataset.py trước.", d)
+            logger.error("Không thấy %s", d)
+            logger.error("")
+            logger.error("Dựng tập huấn luyện trước — chạy từ thư mục repo:")
+            logger.error("")
+            logger.error("  sudo docker compose exec \\")
+            logger.error("    -e DATABASE_URL=\"$(grep -E '^DATABASE_URL=' .env | cut -d= -f2-)\" \\")
+            logger.error("    ai-engine python scripts/build_classifier_dataset.py \\")
+            logger.error("    --out %s", args.data)
             return 2
 
     # Chuẩn hoá theo ImageNet vì backbone được huấn luyện với thống kê đó;
