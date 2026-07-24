@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Alert,
   Button,
@@ -19,6 +19,7 @@ import {
   Statistic,
   Table,
   Tag,
+  Tooltip,
   Typography,
   Upload,
   message,
@@ -75,6 +76,20 @@ export default function AiTrainingPage() {
   const [loadingImages, setLoadingImages] = useState(false);
   const [training, setTraining] = useState(false);
   const [now, setNow] = useState<number>(() => Date.now() / 1000);
+  // Panel "Bước 3" nằm PHÍA TRÊN bảng lịch sử, nên bấm Xem ở bảng sẽ cập
+  // nhật một khối đã trôi khỏi màn hình — nhìn ra là nút không có tác
+  // dụng. Cuộn tới nơi vừa đổi mới cho thấy việc đã xảy ra.
+  const statusCardRef = useRef<HTMLDivElement | null>(null);
+
+  const selectJob = (row: TrainingJob) => {
+    setActiveJob(row);
+    // requestAnimationFrame: cuộn sau khi React đã vẽ lại, nếu không sẽ
+    // cuộn tới vị trí cũ của khối trước khi nó đổi kích thước.
+    requestAnimationFrame(() =>
+      statusCardRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }),
+    );
+  };
+
   const [form] = Form.useForm<{
     name: string;
     product_ids: string[];
@@ -414,6 +429,7 @@ export default function AiTrainingPage() {
             </Form>
           </Card>
 
+          <div ref={statusCardRef}>
           <Card title="Bước 3 — Trạng thái Training">
             {!activeJob && <Empty description="Chưa có job nào" />}
             {activeJob && (
@@ -580,6 +596,7 @@ export default function AiTrainingPage() {
               </Space>
             )}
           </Card>
+          </div>
         </Col>
       </Row>
 
@@ -609,10 +626,14 @@ export default function AiTrainingPage() {
               title: "",
               render: (_, row) => (
                 <Space>
-                  <Button size="small" onClick={() => setActiveJob(row)}>
-                    Xem
+                  <Button
+                    size="small"
+                    type={activeJob?.id === row.id ? "primary" : "default"}
+                    onClick={() => selectJob(row)}
+                  >
+                    {activeJob?.id === row.id ? "Đang xem" : "Xem"}
                   </Button>
-                  {row.status === "succeeded" && row.weight_key && (
+                  {row.status === "succeeded" && row.weight_key ? (
                     <Button
                       size="small"
                       type="primary"
@@ -620,6 +641,21 @@ export default function AiTrainingPage() {
                     >
                       Triển khai
                     </Button>
+                  ) : (
+                    // Nút bị ẩn hoàn toàn khiến người dùng tưởng chức năng
+                    // hỏng. Hiện nút mờ kèm lý do thì rõ là "chưa đủ điều
+                    // kiện", không phải "bấm không ăn".
+                    <Tooltip
+                      title={
+                        row.status !== "succeeded"
+                          ? `Chỉ triển khai được job đã thành công (hiện: ${row.status})`
+                          : "Job này không có file weight"
+                      }
+                    >
+                      <Button size="small" disabled>
+                        Triển khai
+                      </Button>
+                    </Tooltip>
                   )}
                 </Space>
               ),
