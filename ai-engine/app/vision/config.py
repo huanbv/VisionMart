@@ -264,6 +264,22 @@ class VisionConfig:
     crop_padding: float = field(default_factory=lambda: _float("CROP_PADDING", 0.08))
     crop_min_size: int = field(default_factory=lambda: _int("CROP_MIN_SIZE", 24))
 
+    # ---- Bỏ phiếu nhiều khung (phân biệt sản phẩm giống nhau) ----
+    # Bật mặc định: đây là cách tăng độ chính xác trên các cặp lookalike
+    # (Hảo Hảo/Gấu Đỏ, 7up/Sting) mà không cần đổi mô hình. Một track được
+    # phân loại qua nhiều khung rồi bỏ phiếu, thay vì tin một khung.
+    enable_multiframe_voting: bool = field(
+        default_factory=lambda: _bool("ENABLE_MULTIFRAME_VOTING", True)
+    )
+    # Số khung tối thiểu trước khi được phép chốt danh tính một track.
+    voting_min_votes: int = field(default_factory=lambda: _int("VOTING_MIN_VOTES", 3))
+    # Tỉ lệ đồng thuận tối thiểu để chốt (0.6 = SKU dẫn đầu chiếm ≥60%
+    # tổng trọng số phiếu). Dưới ngưỡng nghĩa là các khung cãi nhau — hai
+    # sản phẩm quá giống, đẩy sang OCR thay vì đoán bừa.
+    voting_agreement_ratio: float = field(
+        default_factory=lambda: _float("VOTING_AGREEMENT_RATIO", 0.6)
+    )
+
     # ---- Module 10: OCR fallback (read the label when unsure) ----
     # Off by default and heavy (300 MB - 1 GB depending on backend), so it
     # must be a deliberate choice. Runs only on detections the classifier

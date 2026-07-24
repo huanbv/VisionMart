@@ -40,15 +40,54 @@ from app.vision.crop import CropResult, crop_detections
 from app.vision.embedding.extractor import extract_from_classifier
 from app.vision.matching import MatchResult, match_product
 from app.vision.ocr.reader import get_reader, should_run_ocr
+from app.vision.voting.vote import TrackVoteBox, tally_votes
 
 logger = logging.getLogger("ai-engine.sku_identifier")
 
-# track_key -> (MatchResult, monotonic_ts)
-_TRACK_CACHE: dict[str, tuple[MatchResult, float]] = {}
+# Hòm phiếu cho mỗi track. Thay cho cache "chốt một khung" trước đây: một
+# track được phân loại lại qua nhiều khung và bỏ phiếu, thay vì khoá cứng
+# kết quả của khung đầu (vốn có thể là khung mờ đoán sai). Xem
+# app/vision/voting/vote.py.
+# track_key -> (TrackVoteBox, monotonic_ts của phiếu gần nhất)
+_TRACK_VOTES: dict[str, tuple[TrackVoteBox, float]] = {}
+# Track đã chốt: (MatchResult, ts). Sau khi bỏ phiếu đủ đồng thuận thì
+# không phân loại lại nữa — đây là chỗ giữ lại lợi ích hiệu năng của cache
+# cũ, chỉ khác là chỉ khoá SAU khi nhiều khung đã đồng ý.
+_TRACK_SETTLED: dict[str, tuple[MatchResult, float]] = {}
 _CACHE_TTL_SECONDS = 30.0
 # Bounded so a long-running process with churning track ids can't grow it
 # without limit.
 _CACHE_MAX_ENTRIES = 2000
+
+
+class _VotedClassification:
+    """Kết quả phân loại đã qua bỏ phiếu, hình dạng giống ClassificationResult.
+
+    Matcher đọc classification bằng ``getattr`` (duck typing), nên một đối
+    tượng mang đủ ``sku``/``confidence``/``margin`` thay thế được kết quả
+    một-khung mà không phải sửa matcher. Đây là cách đưa quyết định-nhiều-
+    khung vào chuỗi confidence sẵn có mà không phá vỡ gì.
+    """
+
+    __slots__ = ("sku", "confidence", "margin", "runner_up_sku",
+                 "runner_up_confidence", "label_index", "model_version", "embedding")
+
+    def __init__(self, vote, base) -> None:
+        self.sku = vote.sku
+        self.confidence = vote.agreement           # đồng thuận = độ tin cậy
+        self.runner_up_sku = vote.runner_up_sku
+        # margin theo tỉ lệ đồng thuận: dẫn đầu trừ á quân trong hòm phiếu.
+        second = 0.0
+        if vote.runner_up_sku and vote.tally:
+            total = sum(vote.tally.values()) or 1.0
+            second = vote.tally.get(vote.runner_up_sku, 0.0) / total
+        self.margin = round(max(0.0, vote.agreement - second), 4)
+        self.runner_up_confidence = round(second, 4)
+        # Giữ các trường phụ từ lần phân loại gần nhất để dashboard/embedding
+        # vẫn dùng được.
+        self.label_index = getattr(base, "label_index", None)
+        self.model_version = getattr(base, "model_version", None)
+        self.embedding = getattr(base, "embedding", None)
 
 
 @dataclass(frozen=True)
@@ -76,21 +115,21 @@ def _track_key(camera_key: str, track_id: Any) -> str:
 
 
 def _prune_cache(now: float) -> None:
-    if len(_TRACK_CACHE) <= _CACHE_MAX_ENTRIES:
-        return
-    stale = [k for k, (_, ts) in _TRACK_CACHE.items() if now - ts > _CACHE_TTL_SECONDS]
-    for key in stale:
-        _TRACK_CACHE.pop(key, None)
-    if len(_TRACK_CACHE) > _CACHE_MAX_ENTRIES:
-        # Still oversized: drop the oldest entries outright rather than
-        # letting memory grow unbounded.
-        for key, _ in sorted(_TRACK_CACHE.items(), key=lambda kv: kv[1][1])[:500]:
-            _TRACK_CACHE.pop(key, None)
+    for store in (_TRACK_VOTES, _TRACK_SETTLED):
+        if len(store) <= _CACHE_MAX_ENTRIES:
+            continue
+        stale = [k for k, (_, ts) in store.items() if now - ts > _CACHE_TTL_SECONDS]
+        for key in stale:
+            store.pop(key, None)
+        if len(store) > _CACHE_MAX_ENTRIES:
+            for key, _ in sorted(store.items(), key=lambda kv: kv[1][1])[:500]:
+                store.pop(key, None)
 
 
 def reset_cache() -> None:
     """Clear cached identities — call after deploying a new classifier."""
-    _TRACK_CACHE.clear()
+    _TRACK_VOTES.clear()
+    _TRACK_SETTLED.clear()
 
 
 def identify(
@@ -109,24 +148,27 @@ def identify(
     classifier = get_classifier()
     min_conf = getattr(cfg, "classifier_min_confidence", 0.55)
 
-    # 1) Reuse confident cached identities; collect the rest for the model.
+    # 1) Track đã CHỐT phiếu (nhiều khung đã đồng thuận) thì tái sử dụng —
+    # đây là chỗ giữ lợi ích hiệu năng của cache cũ. Track chưa chốt vẫn
+    # được đưa xuống phân loại để thêm một phiếu nữa, thay vì khoá cứng
+    # kết quả khung đầu như trước.
     pending: list[Any] = []
     results: list[IdentifiedObject] = []
     for det in detections:
         if str(getattr(det, "class_name", "")).lower() == "person":
             continue
         key = _track_key(camera_key, getattr(det, "track_id", None))
-        cached = _TRACK_CACHE.get(key)
-        if cached is not None:
-            match, ts = cached
-            fresh = now - ts <= _CACHE_TTL_SECONDS
-            # Only trust the cache when the earlier answer was solid;
-            # a weak one gets another chance from this new viewpoint.
-            if fresh and match.final_confidence >= min_conf:
+        settled = _TRACK_SETTLED.get(key)
+        if settled is not None:
+            match, ts = settled
+            if now - ts <= _CACHE_TTL_SECONDS:
                 results.append(
                     IdentifiedObject(detection=det, match=match, crop=None, from_cache=True)
                 )
                 continue
+            # Hết hạn: bỏ chốt cũ, bỏ phiếu lại từ đầu cho góc nhìn mới.
+            _TRACK_SETTLED.pop(key, None)
+            _TRACK_VOTES.pop(key, None)
         pending.append(det)
 
     if not pending:
@@ -184,22 +226,49 @@ def identify(
             if out is not None and out.has_signal:
                 ocr_results[crop.track_id] = out
 
-    # 3) Decide a SKU per detection and cache the outcome.
+    # 3) Bỏ phiếu qua nhiều khung, rồi quyết định SKU.
+    use_voting = getattr(cfg, "enable_multiframe_voting", True)
+    min_votes = int(getattr(cfg, "voting_min_votes", 3))
+    agreement = float(getattr(cfg, "voting_agreement_ratio", 0.6))
+
     for det in pending:
         track_id = getattr(det, "track_id", None)
         classification = classifications.get(track_id)
         ocr = ocr_results.get(track_id)
+        key = _track_key(camera_key, track_id)
+
+        # Kết quả dùng cho matcher: mặc định là phân loại một-khung, nhưng
+        # được thay bằng kết quả bỏ phiếu khi đã tích đủ khung. Nhờ đó một
+        # khung mờ đoán lệch không tự mình quyết định cả track.
+        effective = classification
+        vote_settled = False
+        if use_voting and track_id is not None and classification is not None:
+            box, _ = _TRACK_VOTES.get(key, (TrackVoteBox(), now))
+            box.add(classification.sku, classification.confidence, now)
+            _TRACK_VOTES[key] = (box, now)
+            vote = tally_votes(box, min_votes=min_votes, agreement_ratio=agreement)
+            # Chỉ để phiếu ghi đè khi nó đã hội tụ; trước đó vẫn dùng kết
+            # quả khung hiện tại để không làm chậm phản hồi ban đầu.
+            if vote.sku:
+                effective = _VotedClassification(vote, classification)
+            vote_settled = vote.settled
+
         match = match_product(
             organization_id=organization_id,
             branch_id=branch_id,
             class_name=str(getattr(det, "class_name", "")),
             yolo_confidence=float(getattr(det, "confidence", 0.0) or 0.0),
-            classification=classification,
+            classification=effective,
             classifier_min_confidence=min_conf,
             ocr=ocr,
         )
-        if track_id is not None:
-            _TRACK_CACHE[_track_key(camera_key, track_id)] = (match, now)
+
+        # Chỉ CHỐT (ngừng phân loại lại) khi phiếu đã đồng thuận và kết quả
+        # đủ mạnh. Track còn lưỡng lự sẽ tiếp tục được bỏ phiếu ở khung sau
+        # — đúng chỗ ta chấp nhận trả thêm chi phí để đổi lấy độ chính xác.
+        if track_id is not None and vote_settled and match.final_confidence >= min_conf:
+            _TRACK_SETTLED[key] = (match, now)
+
         results.append(
             IdentifiedObject(
                 detection=det,
