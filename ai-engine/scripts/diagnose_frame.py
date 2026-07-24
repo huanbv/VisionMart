@@ -72,27 +72,109 @@ def summarize(values: list[float]) -> dict:
     }
 
 
+# Các bước làm mượt, kèm mức xoá kết cấu đo trên ảnh mô phỏng kệ hàng.
+# Xếp theo mức phá hoại giảm dần, vì đó là thứ tự nên tắt.
+_SMOOTHERS = (
+    ("enable_gaussian_blur", "Gaussian blur", "xoá ~99% kết cấu nhãn"),
+    ("enable_median_blur", "Median blur", "xoá ~97% kết cấu nhãn"),
+    ("enable_adaptive_median", "Adaptive median", "cùng họ median"),
+    ("enable_bilateral", "Bilateral", "xoá ~29% — nhẹ nhất trong nhóm"),
+)
+
+
+def report_config_only(cfg) -> int:
+    """Báo cáo cấu hình khi không có ảnh.
+
+    Tách riêng vì đây là câu hỏi hay gặp nhất và không cần dữ liệu gì
+    thêm: người vận hành thấy ảnh bết thì việc đầu tiên cần biết là bước
+    nào đang chạy, chứ không phải đi tìm cho ra một tấm ảnh mẫu.
+    """
+    print("=" * 70)
+    print("CẤU HÌNH TIỀN XỬ LÝ ĐANG ÁP DỤNG")
+    print("=" * 70)
+
+    on = [n for n in dir(cfg) if n.startswith("enable_") and getattr(cfg, n, False) is True]
+    if not on:
+        print("\nKhông có bước tiền xử lý nào bật — YOLO nhận đúng ảnh gốc.")
+        print("Nếu khung hình vẫn bết thì nguyên nhân nằm ở camera hoặc")
+        print("bitrate luồng, không phải ở pipeline.")
+        print("=" * 70)
+        return 0
+
+    print(f"\nĐang bật ({len(on)}):")
+    for name in sorted(on):
+        print(f"  - {name}")
+
+    active = [(n, label, note) for n, label, note in _SMOOTHERS if getattr(cfg, n, False)]
+    print()
+    if active:
+        print("!" * 70)
+        print("CẢNH BÁO: có bước LÀM MƯỢT đang bật")
+        print("!" * 70)
+        for name, label, note in active:
+            print(f"  {label:18} ({name})")
+            print(f"      {note}")
+        print("\n  Kết cấu tần số cao trên nhãn là thứ DUY NHẤT phân biệt hai")
+        print("  chai cùng hình dáng khác thương hiệu. Xoá nó đi thì tầng phân")
+        print("  loại không còn gì để đọc, dù ảnh trông 'sạch' hơn.")
+        print("\n  Thêm nữa: YOLO được huấn luyện trên ảnh SẮC NÉT. Đưa cho nó")
+        print("  ảnh đã làm mượt là đưa thứ khác với những gì nó đã học.")
+        print("\n  → Tắt tại Admin → Cấu hình xử lý ảnh (có hiệu lực ngay).")
+    else:
+        print("Không có bước làm mượt nào bật — tốt cho tầng phân loại.")
+
+    print("=" * 70)
+    print("\nĐo cụ thể trên một khung hình:")
+    print("  python scripts/diagnose_frame.py --rtsp rtsp://<camera>")
+    print("  python scripts/diagnose_frame.py anh.jpg --save /tmp/ss")
+    return 0
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("image", help="Ảnh cần chẩn đoán")
+    parser.add_argument("image", nargs="?", default=None,
+                        help="Ảnh cần chẩn đoán. Bỏ trống thì chỉ báo cáo cấu hình.")
+    parser.add_argument("--rtsp", default=None,
+                        help="Lấy một khung trực tiếp từ luồng RTSP thay vì đọc file")
     parser.add_argument("--patch-size", type=int, default=32,
                         help="Cạnh ô lưới, xấp xỉ kích thước một sản phẩm trên kệ")
+    parser.add_argument("--save", default=None,
+                        help="Ghi ảnh trước/sau ra thư mục này để xem bằng mắt")
     args = parser.parse_args()
 
     import cv2
-
-    if not os.path.isfile(args.image):
-        print(f"Không thấy file: {args.image}")
-        return 2
 
     sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     from app.vision.config import get_vision_config
     from app.vision.enhancement.enhance import enhance_frame
 
-    original = cv2.imread(args.image)
+    original = None
+    if args.rtsp:
+        cap = cv2.VideoCapture(args.rtsp)
+        try:
+            ok, original = cap.read()
+        finally:
+            cap.release()
+        if not ok or original is None:
+            print(f"Không đọc được khung hình từ {args.rtsp}")
+            return 2
+    elif args.image:
+        if not os.path.isfile(args.image):
+            print(f"Không thấy file: {args.image}")
+            print("\nGợi ý: bỏ trống tham số để chỉ xem cấu hình đang bật,")
+            print("hoặc dùng --rtsp rtsp://... để lấy khung trực tiếp từ camera.")
+            return 2
+        original = cv2.imread(args.image)
+        if original is None:
+            print("Không đọc được ảnh.")
+            return 2
+
+    # Không có ảnh vẫn báo cáo cấu hình được — và đó thường là câu hỏi đầu
+    # tiên cần trả lời ("cờ nào đang bật?"), nên không bắt người dùng phải
+    # kiếm cho ra một tấm ảnh mới xem được.
     if original is None:
-        print("Không đọc được ảnh.")
-        return 2
+        cfg = get_vision_config()
+        return report_config_only(cfg)
 
     h, w = original.shape[:2]
     cfg = get_vision_config()
@@ -170,6 +252,16 @@ def main() -> int:
     print(f"  vì phóng to một ô 12x8 chỉ tạo ra phán đoán tự tin mà sai.")
     print(f"  Không cấu hình nào cứu được điều này; cần camera gần hơn hoặc")
     print(f"  độ phân giải cao hơn cho vùng cần nhận SKU.")
+
+    if args.save:
+        os.makedirs(args.save, exist_ok=True)
+        before_path = os.path.join(args.save, "truoc.jpg")
+        after_path = os.path.join(args.save, "sau.jpg")
+        # Chất lượng 95: nén mạnh sẽ tự tạo ra bết, và khi mục đích của
+        # hai file này là để so bết thì đó là hỏng đúng thứ cần đo.
+        cv2.imwrite(before_path, original, [int(cv2.IMWRITE_JPEG_QUALITY), 95])
+        cv2.imwrite(after_path, processed, [int(cv2.IMWRITE_JPEG_QUALITY), 95])
+        print(f"\nĐã ghi ảnh so sánh:\n  {before_path}\n  {after_path}")
     return 0
 
 
