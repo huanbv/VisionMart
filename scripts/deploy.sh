@@ -83,18 +83,36 @@ if [ "$WITH_FRONTEND" -eq 1 ]; then
   SERVICES="$SERVICES frontend"
 fi
 
-# Rebuild ai-engine when its code changed. Previously this script only
-# ever rebuilt backend + celery-worker, so an ai-engine change silently
-# kept running the OLD image — and after a release that also adds backend
-# migrations (as v3 does), that leaves the two halves on different
-# versions, which is worse than not deploying at all. Detected from the
-# diff rather than always rebuilt, because the ai-engine image carries
-# torch/ultralytics and takes minutes to build.
+# Có cần build lại ai-engine không?
+#
+# So THỜI ĐIỂM BUILD của image đang chạy với COMMIT CUỐI chạm vào
+# ai-engine/. Cách này đúng bất kể code tới bằng đường nào — pull, chuyển
+# nhánh, hay sửa tay.
+#
+# Bản trước lấy diff của chính lệnh `git pull`, và nó SAI trong đúng
+# trường hợp phổ biến nhất: người dùng `git checkout v3` trước rồi mới
+# chạy deploy. Khi đó pull không có gì mới, diff rỗng, và ai-engine lặng
+# lẽ tiếp tục chạy image cũ — biểu hiện ra ngoài là backend gọi
+# /ai/vision-config nhận 404 vì router đó chỉ tồn tại trong code mới.
+#
+# Không phải lúc nào cũng build, vì image ai-engine mang torch +
+# ultralytics và mất vài phút.
+ai_engine_stale() {
+  local img_id img_ts code_ts
+  img_id="$($COMPOSE images -q ai-engine 2>/dev/null | head -n1)"
+  # Chưa có image thì chắc chắn phải build.
+  [ -n "$img_id" ] || return 0
+  img_ts="$(docker inspect -f '{{.Created}}' "$img_id" 2>/dev/null)" || return 0
+  img_ts="$(date -d "$img_ts" +%s 2>/dev/null)" || return 0
+  code_ts="$(git log -1 --format=%ct -- ai-engine/ 2>/dev/null)" || return 0
+  [ -n "$code_ts" ] || return 1
+  [ "$code_ts" -gt "$img_ts" ]
+}
+
 if [ "$WITH_AI_ENGINE" -eq 1 ]; then
   SERVICES="$SERVICES ai-engine"
-elif [ "$BEFORE_SHA" != "$AFTER_SHA" ] && \
-     git --no-pager diff --name-only "$BEFORE_SHA" "$AFTER_SHA" | grep -q '^ai-engine/'; then
-  warn "ai-engine code changed — including it in this deploy"
+elif ai_engine_stale; then
+  warn "image ai-engine cũ hơn code — build lại trong lần deploy này"
   SERVICES="$SERVICES ai-engine"
 fi
 

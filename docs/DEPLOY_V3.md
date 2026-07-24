@@ -244,7 +244,9 @@ cần restart (trừ `ENABLE_TELEMETRY` và `DEBUG_AI`).
 | OCR bật mà không tác dụng | Chưa cài engine, hoặc thiếu catalog | `pip install easyocr` + tạo catalog |
 | RAM cao khi nhiều camera | `SHARE_YOLO_WEIGHTS=false` | Đặt `true` (mặc định) |
 | Đĩa đầy nhanh | `DEBUG_AI_SAMPLE_RATE` quá cao | Giảm + dọn prefix `ai-debug/` |
-| `Repo not found at ...` | Bản cũ của `deploy.sh` cứng hoá `/var/www` | Đã sửa ở v3 — hoặc `sudo REPO_DIR=$(pwd) bash scripts/deploy.sh` |
+| `Repo not found at ...` | Bản cũ của `deploy.sh` cứng hoá `/var/www` | Đã sửa — hoặc `sudo REPO_DIR=$(pwd) bash scripts/deploy.sh` |
+| `alembic current` không phải `6d8e0a2b4c57` | Bản cũ chờ sai cổng rồi thoát trước khi migrate | `sudo docker compose exec backend alembic upgrade head` |
+| Backend gọi ai-engine nhận **404** | Container ai-engine còn chạy image cũ | `sudo docker compose build ai-engine && sudo docker compose up -d ai-engine` |
 
 ---
 
