@@ -159,9 +159,24 @@ def _use_camera_tracker(model, camera_key: str) -> None:
         if saved is not None:
             predictor.trackers = saved
         elif current is not None:
-            # New camera on a warm model: clear rather than inherit, so it
-            # does not start life owning another camera's track ids.
-            predictor.trackers = None
+            # Camera mới trên model đã ấm: XOÁ thuộc tính, tuyệt đối không
+            # gán None. ultralytics khởi tạo tracker trong on_predict_start
+            # bằng đúng một điều kiện:
+            #
+            #     if hasattr(predictor, "trackers") and persist: return
+            #
+            # nghĩa là chỉ cần thuộc tính TỒN TẠI (kể cả None) là nó bỏ qua
+            # khởi tạo, rồi bước postprocess truy cập trackers[i] và nổ
+            # "TypeError: 'NoneType' object is not subscriptable" — đánh sập
+            # cả /ai/frame cho camera đó vĩnh viễn, trong khi camera có
+            # trạng thái cũ vẫn chạy (đúng kiểu lỗi 200/500 xen kẽ đã gặp
+            # trên VPS khi hai camera thay phiên trên một model dùng chung).
+            # delattr khiến hasattr trả False và ultralytics tự tạo tracker
+            # mới sạch cho camera này.
+            try:
+                delattr(predictor, "trackers")
+            except AttributeError:
+                pass
     except Exception:  # noqa: BLE001 — see docstring
         logger.debug("tracker state swap unavailable", exc_info=True)
     finally:
