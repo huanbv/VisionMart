@@ -18,11 +18,13 @@ cộng thêm khả năng quan sát và các công tắc để bật dần.
 ## A. VPS chưa từng cài (lần đầu)
 
 ```bash
-sudo mkdir -p /var/www && cd /var/www
-sudo git clone -b v3 https://github.com/huanbv/VisionMart.git visionmart
-cd visionmart
+sudo git clone -b v3 https://github.com/huanbv/VisionMart.git /var/opt/visionmart
+cd /var/opt/visionmart
 sudo bash scripts/setup-vps.sh
 ```
+
+> Đặt repo ở đâu cũng được — cả `setup-vps.sh` lẫn `deploy.sh` đều tự xác định
+> vị trí repo từ chính đường dẫn script, không cứng hoá thư mục nào.
 
 `setup-vps.sh` tự làm: Docker → firewall → sinh secrets → SSL Let's Encrypt →
 build → up → migrate → seed admin. Chạy lại an toàn (không ghi đè secret/cert).
@@ -48,14 +50,14 @@ sudo SKIP_SSL=1 bash scripts/setup-vps.sh
 v3 thêm 9 bảng. Migration chỉ thêm, không sửa bảng cũ, nhưng vẫn phải backup.
 
 ```bash
-cd /var/www/visionmart
+cd /var/opt/visionmart      # thay bằng thư mục repo của anh
 sudo bash scripts/backup-now.sh
 ```
 
 ### B2. Chuyển nhánh
 
 ```bash
-cd /var/www/visionmart
+cd /var/opt/visionmart
 sudo git fetch origin
 sudo git checkout v3
 ```
@@ -208,7 +210,7 @@ trên embedding thật của cửa hàng anh trước khi tin kết quả.
 ### Quay code về v2
 
 ```bash
-cd /var/www/visionmart
+cd /var/opt/visionmart
 sudo git checkout main
 sudo bash scripts/deploy.sh --with-ai-engine
 ```
@@ -242,6 +244,7 @@ cần restart (trừ `ENABLE_TELEMETRY` và `DEBUG_AI`).
 | OCR bật mà không tác dụng | Chưa cài engine, hoặc thiếu catalog | `pip install easyocr` + tạo catalog |
 | RAM cao khi nhiều camera | `SHARE_YOLO_WEIGHTS=false` | Đặt `true` (mặc định) |
 | Đĩa đầy nhanh | `DEBUG_AI_SAMPLE_RATE` quá cao | Giảm + dọn prefix `ai-debug/` |
+| `Repo not found at ...` | Bản cũ của `deploy.sh` cứng hoá `/var/www` | Đã sửa ở v3 — hoặc `sudo REPO_DIR=$(pwd) bash scripts/deploy.sh` |
 
 ---
 

@@ -21,7 +21,12 @@
 
 set -euo pipefail
 
-REPO_DIR="${REPO_DIR:-/var/www/visionmart}"
+# Mặc định là chính thư mục repo chứa script này, không phải một đường dẫn
+# đoán trước. Trước đây script cứng hoá /var/www/visionmart, nên khi repo
+# được đặt ở nơi khác (/var/opt/visionmart chẳng hạn) thì deploy chết ngay
+# ở bước đầu — dù người dùng đang đứng đúng trong repo và gọi đúng script
+# của repo đó. Cùng cách xác định mà setup-vps.sh đang dùng.
+REPO_DIR="${REPO_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 COMPOSE="docker compose"
 WITH_FRONTEND=0
 WITH_AI_ENGINE=0
