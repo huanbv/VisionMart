@@ -29,6 +29,10 @@ export interface ReviewCandidate {
   training_image_id: string | null;
   created_at: string;
   preview_url: string | null;
+  /** Anh cat rieng vung phat hien — chinh la mau se vao tap huan luyen. */
+  crop_key: string | null;
+  bbox: { x1: number; y1: number; x2: number; y2: number } | null;
+  crop_preview_url: string | null;
 }
 
 export interface ReviewCandidateList {

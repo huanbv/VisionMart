@@ -71,6 +71,8 @@ async def _attach_preview(
 ) -> ReviewCandidateRead:
     payload = ReviewCandidateRead.model_validate(candidate)
     payload.preview_url = await service.presign(candidate.storage_key)
+    if getattr(candidate, "crop_key", None):
+        payload.crop_preview_url = await service.presign(candidate.crop_key)
     return payload
 
 
@@ -158,6 +160,12 @@ async def ingest_candidate(
     camera_id: uuid.UUID | None = Form(None),
     predicted_class: str | None = Form(None),
     confidence: float | None = Form(None),
+    # Crop + bbox: tuy chon de ban engine cu (khong gui) van ingest duoc.
+    crop: UploadFile | None = File(None),
+    bbox_x1: float | None = Form(None),
+    bbox_y1: float | None = Form(None),
+    bbox_x2: float | None = Form(None),
+    bbox_y2: float | None = Form(None),
     session: AsyncSession = Depends(get_session),
 ) -> dict:
     """Inbound queue for the AI Engine — frames the detector was unsure about.
@@ -174,6 +182,10 @@ async def ingest_candidate(
     content = await file.read()
     if not content:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, detail="Empty upload.")
+    crop_content = await crop.read() if crop is not None else None
+    bbox = None
+    if None not in (bbox_x1, bbox_y1, bbox_x2, bbox_y2):
+        bbox = {"x1": bbox_x1, "y1": bbox_y1, "x2": bbox_x2, "y2": bbox_y2}
     try:
         candidate = await service.capture(
             organization_id=organization_id,
@@ -183,6 +195,8 @@ async def ingest_candidate(
             camera_id=camera_id,
             predicted_class=predicted_class,
             confidence=confidence,
+            crop_content=crop_content,
+            bbox=bbox,
         )
     except ReviewError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc

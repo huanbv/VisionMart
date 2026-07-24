@@ -268,11 +268,44 @@ export default function AiReviewPage() {
                   }
                 >
                   {c.preview_url ? (
-                    <Image
-                      src={c.preview_url}
-                      alt="khung hình chờ duyệt"
-                      style={{ width: "100%", maxHeight: 220, objectFit: "contain" }}
-                    />
+                    // Khung hình (đã có khung đỏ khoanh vùng từ ai-engine)
+                    // đặt cạnh crop: khung hình cho bối cảnh "nó nằm ở đâu",
+                    // crop cho chi tiết "nó chính xác là cái gì". Crop cũng
+                    // chính là ảnh sẽ vào tập huấn luyện khi bấm duyệt, nên
+                    // người duyệt đang nhìn đúng thứ máy sẽ học.
+                    <div style={{ display: "flex", gap: 8 }}>
+                      <Image
+                        src={c.preview_url}
+                        alt="khung hình chờ duyệt (khung đỏ = vùng AI hỏi)"
+                        style={{
+                          flex: c.crop_preview_url ? "1 1 62%" : "1 1 100%",
+                          minWidth: 0,
+                          maxHeight: 220,
+                          objectFit: "contain",
+                        }}
+                      />
+                      {c.crop_preview_url && (
+                        <div style={{ flex: "1 1 38%", minWidth: 0 }}>
+                          <Image
+                            src={c.crop_preview_url}
+                            alt="vùng cắt — ảnh sẽ dùng huấn luyện"
+                            style={{
+                              width: "100%",
+                              maxHeight: 190,
+                              objectFit: "contain",
+                              border: "2px solid #ff4d4f",
+                              borderRadius: 6,
+                            }}
+                          />
+                          <Text
+                            type="secondary"
+                            style={{ fontSize: 11, display: "block", textAlign: "center" }}
+                          >
+                            Ảnh huấn luyện
+                          </Text>
+                        </div>
+                      )}
+                    </div>
                   ) : (
                     <Empty
                       image={Empty.PRESENTED_IMAGE_SIMPLE}

@@ -84,6 +84,13 @@ class ReviewCandidate(Entity):
         index=True,
     )
     storage_key: Mapped[str] = mapped_column(String(512), nullable=False)
+    # Anh cat rieng vung phat hien (crop). storage_key la khung hinh CO
+    # khung do cho nguoi duyet nhin; crop_key moi la thu classifier hoc —
+    # huan luyen tren nguyen khung canh se day model ca ke hang, nen nha
+    # va chinh cai khung do. Nullable vi ban engine cu khong gui crop.
+    crop_key: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    # Toa do bbox trong he cua khung da tien xu ly: {"x1","y1","x2","y2"}.
+    bbox: Mapped[dict | None] = mapped_column(JSONBType, nullable=True)
     # Captured up-front so approving into a TrainingImage doesn't need to
     # re-read the object just to measure it.
     image_size_bytes: Mapped[int] = mapped_column(Integer, nullable=False, default=0)

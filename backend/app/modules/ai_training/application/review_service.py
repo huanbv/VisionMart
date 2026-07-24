@@ -71,6 +71,8 @@ class ReviewService:
         predicted_product_id: uuid.UUID | None = None,
         predicted_class: str | None = None,
         confidence: float | None = None,
+        crop_content: bytes | None = None,
+        bbox: dict | None = None,
     ) -> ReviewCandidate:
         """Store a frame in the review queue.
 
@@ -85,16 +87,32 @@ class ReviewService:
             raise ReviewError("Image exceeds 12MB limit")
 
         ext = _EXT_BY_TYPE[content_type]
-        key = f"review/{organization_id}/{uuid.uuid4()}.{ext}"
+        stem = uuid.uuid4()
+        key = f"review/{organization_id}/{stem}.{ext}"
         try:
             await self._storage.put(key, content, content_type=content_type)
         except ObjectStorageError as exc:
             raise ReviewError(f"Storage error: {exc}") from exc
 
+        # Crop luu canh khung hinh, cung stem de doi chieu bang mat khi can.
+        # Loi luu crop KHONG danh hong ca ban ghi: khung hinh (co khung do)
+        # van du cho nguoi duyet lam viec, chi mat phan anh hoc.
+        crop_key: str | None = None
+        if crop_content:
+            try:
+                crop_key = f"review/{organization_id}/{stem}_crop.{ext}"
+                await self._storage.put(
+                    crop_key, crop_content, content_type=content_type
+                )
+            except ObjectStorageError:
+                crop_key = None
+
         candidate = ReviewCandidate(
             organization_id=organization_id,
             camera_id=camera_id,
             storage_key=key,
+            crop_key=crop_key,
+            bbox=bbox,
             image_size_bytes=len(content),
             source=source,
             status="pending",
@@ -190,15 +208,21 @@ class ReviewService:
         if product is None or product.organization_id != organization_id:
             raise ReviewError("Product not found")
 
+        # Uu tien CROP lam du lieu huan luyen. storage_key gio la khung hinh
+        # co khung do ve chong len — dua no vao tap huan luyen thi classifier
+        # se hoc ca ke hang, nen nha va chinh cai khung do do. Crop moi la
+        # "mot anh = mot san pham" dung dinh dang ImageFolder can. Fallback
+        # ve khung hinh cho ban ghi cu chua co crop (du lieu truoc nang cap).
+        training_key = candidate.crop_key or candidate.storage_key
         image = TrainingImage(
             organization_id=organization_id,
             product_id=confirmed_product_id,
-            storage_key=candidate.storage_key,
+            storage_key=training_key,
             # Recorded at capture time — the object store has no cheap
             # size lookup in this codebase's wrapper, and re-downloading
             # the frame just to measure it would be wasteful.
             image_size_bytes=candidate.image_size_bytes or 0,
-            image_format=candidate.storage_key.rsplit(".", 1)[-1][:16],
+            image_format=training_key.rsplit(".", 1)[-1][:16],
         )
         self._session.add(image)
         await self._session.flush()

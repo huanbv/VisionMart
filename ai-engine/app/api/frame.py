@@ -483,16 +483,19 @@ async def process_frame(
     # is forwarded to the review queue. Fire-and-forget and disabled by
     # default — see app/services/review_capture.py.
     if review_capture.should_capture(camera_key):
-        uncertain_class, uncertain_conf = review_capture.pick_uncertain(
-            detections, min_confidence
-        )
-        if uncertain_class is not None:
+        uncertain_det = review_capture.pick_uncertain(detections, min_confidence)
+        if uncertain_det is not None:
+            # Truyen frame DA tien xu ly (tracking.frame_bgr) chu khong phai
+            # anh goc: bbox nam trong he toa do cua frame nay — ve khung do
+            # len anh goc khi ROI/resize da chay se khoanh lech vung.
             review_capture.capture_async(
                 content=content,
                 organization_id=str(organization_id),
                 camera_id=str(camera_id) if camera_id else None,
-                predicted_class=uncertain_class,
-                confidence=uncertain_conf,
+                predicted_class=str(uncertain_det.class_name),
+                confidence=float(uncertain_det.confidence),
+                frame_bgr=tracking.frame_bgr,
+                detection=uncertain_det,
             )
 
     persons: list[TrackedObject] = []

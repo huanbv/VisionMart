@@ -28,8 +28,12 @@ class ReviewCandidateRead(BaseModel):
     training_image_id: uuid.UUID | None = None
     created_at: datetime
 
+    crop_key: str | None = None
+    bbox: dict | None = None
+
     # Filled by the router, not stored.
     preview_url: str | None = None
+    crop_preview_url: str | None = None
 
 
 class ReviewCandidateList(BaseModel):

@@ -65,17 +65,19 @@ def _api_key() -> str:
     return os.getenv("AI_ENGINE_API_KEY", "change-me-ai-engine-key")
 
 
-def pick_uncertain(
-    detections: list[Any], min_confidence: float
-) -> tuple[str | None, float | None]:
-    """Best candidate from this frame, or ``(None, None)``.
+def pick_uncertain(detections: list[Any], min_confidence: float) -> Any | None:
+    """Best candidate from this frame, or ``None``.
 
     "Best" means the *highest* confidence still under the threshold: that
     is the detection the model came closest to accepting, so it is the one
     where a human label most likely flips a wrong answer into a right one.
+
+    Tra ve NGUYEN detection (khong chi ten lop + confidence) vi buoc chup
+    can bbox de ve khung do va cat crop — mot khung hinh co hai san pham
+    ma khong co bbox thi nguoi duyet khong biet AI dang hoi ve cai nao.
     """
     floor = _floor_confidence()
-    best_name: str | None = None
+    best: Any | None = None
     best_conf: float | None = None
     for det in detections:
         conf = getattr(det, "confidence", None)
@@ -85,8 +87,8 @@ def pick_uncertain(
         if str(name).lower() == "person":
             continue  # people aren't a trainable product class here
         if floor <= conf < min_confidence and (best_conf is None or conf > best_conf):
-            best_name, best_conf = str(name), float(conf)
-    return best_name, best_conf
+            best, best_conf = det, float(conf)
+    return best
 
 
 def should_capture(camera_key: str) -> bool:
@@ -102,9 +104,52 @@ def should_capture(camera_key: str) -> bool:
     return True
 
 
+def _annotate_and_crop(frame_bgr: Any, det: Any) -> tuple[bytes | None, bytes | None]:
+    """Ve khung do len ban sao khung hinh + cat rieng vung phat hien.
+
+    Hai anh phuc vu hai nguoi dung khac nhau, va do la ly do can ca hai:
+
+    * Khung hinh CO khung do — cho NGUOI duyet: mot canh co hai san pham
+      ma khong khoanh vung thi khong biet AI dang hoi ve cai nao, va mot
+      nhan gan nham doi tuong con te hon khong co nhan.
+    * Crop — cho MAY hoc: classifier huan luyen tren anh cat mot san
+      pham; neu lay nguyen khung canh lam mau huan luyen thi model hoc
+      ca ke hang, nen nha va... cai khung do vua ve. Vi the khung do chi
+      nam tren anh xem, tuyet doi khong nam tren anh hoc.
+    """
+    import cv2
+
+    from app.vision.crop.cropper import crop_detection
+
+    annotated_jpg: bytes | None = None
+    crop_jpg: bytes | None = None
+    try:
+        x1, y1 = int(det.x1), int(det.y1)
+        x2, y2 = int(det.x2), int(det.y2)
+        canvas = frame_bgr.copy()
+        cv2.rectangle(canvas, (x1, y1), (x2, y2), (0, 0, 255), 3)
+        label = f"{det.class_name} {det.confidence:.2f}"
+        cv2.putText(canvas, label, (x1, max(20, y1 - 8)),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2, cv2.LINE_AA)
+        ok, buf = cv2.imencode(".jpg", canvas, [int(cv2.IMWRITE_JPEG_QUALITY), 88])
+        if ok:
+            annotated_jpg = buf.tobytes()
+
+        crop = crop_detection(frame_bgr, det.x1, det.y1, det.x2, det.y2)
+        if crop is not None:
+            ok, buf = cv2.imencode(".jpg", crop.image, [int(cv2.IMWRITE_JPEG_QUALITY), 92])
+            if ok:
+                crop_jpg = buf.tobytes()
+    except Exception:  # noqa: BLE001 — annotation is an aid, never a blocker
+        logger.exception("review annotate/crop failed")
+    return annotated_jpg, crop_jpg
+
+
 async def _upload(
     *,
     content: bytes,
+    crop_content: bytes | None,
+    bbox: dict[str, float] | None,
     organization_id: str,
     camera_id: str | None,
     predicted_class: str | None,
@@ -119,7 +164,12 @@ async def _upload(
         data["predicted_class"] = predicted_class
     if confidence is not None:
         data["confidence"] = str(confidence)
+    if bbox is not None:
+        for k, v in bbox.items():
+            data[f"bbox_{k}"] = str(v)
     files = {"file": ("frame.jpg", content, "image/jpeg")}
+    if crop_content is not None:
+        files["crop"] = ("crop.jpg", crop_content, "image/jpeg")
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:
             resp = await client.post(
@@ -141,6 +191,8 @@ def capture_async(
     predicted_class: str | None,
     confidence: float | None,
     source: str = "low_confidence",
+    frame_bgr: Any = None,
+    detection: Any = None,
 ) -> None:
     """Schedule the upload without awaiting it.
 
@@ -152,9 +204,26 @@ def capture_async(
         loop = asyncio.get_running_loop()
     except RuntimeError:  # no loop (sync context) — skip rather than block
         return
+
+    # Ve khung + cat crop NGAY tai day (dong bo, vai ms mot khung) chu
+    # khong trong task nen: frame_bgr la buffer pipeline tai su dung, doi
+    # task chay 200ms sau thi noi dung da bi khung hinh ke tiep de len.
+    crop_content: bytes | None = None
+    bbox: dict[str, float] | None = None
+    if frame_bgr is not None and detection is not None:
+        annotated, crop_content = _annotate_and_crop(frame_bgr, detection)
+        if annotated is not None:
+            content = annotated  # nguoi duyet xem ban co khung do
+        bbox = {
+            "x1": float(detection.x1), "y1": float(detection.y1),
+            "x2": float(detection.x2), "y2": float(detection.y2),
+        }
+
     task = loop.create_task(
         _upload(
             content=content,
+            crop_content=crop_content,
+            bbox=bbox,
             organization_id=organization_id,
             camera_id=camera_id,
             predicted_class=predicted_class,
