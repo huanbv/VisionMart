@@ -52,11 +52,18 @@ async def trace_frame(
         # Explicit over silent: tracing writes to object storage, so it
         # must be switched on deliberately rather than inferred from the
         # request.
+        # Thông điệp chỉ đúng một đường bật là .env — nhưng cờ này nằm
+        # trong lớp cấu hình runtime, nên đường nhanh và đúng hơn là bật
+        # từ Admin: có hiệu lực ngay, không cần restart container. Chỉ
+        # đường sai khiến người vận hành đi sửa .env rồi restart cả dịch
+        # vụ cho một việc lẽ ra là một cú bấm.
         raise HTTPException(
             status_code=409,
             detail=(
-                "Pipeline tracing is disabled. Set ENABLE_PIPELINE_TRACE=true "
-                "on the ai-engine to use this endpoint."
+                "Tính năng lưu vết pipeline đang tắt. Bật tại "
+                "Admin → Cấu hình xử lý ảnh → 'Bật lưu vết' "
+                "(có hiệu lực ngay, không cần khởi động lại). "
+                "Hoặc đặt ENABLE_PIPELINE_TRACE=true trong .env rồi restart ai-engine."
             ),
         )
 
