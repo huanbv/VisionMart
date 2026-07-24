@@ -158,3 +158,44 @@ export async function getProductImageUrl(productId: string): Promise<string> {
   });
   return URL.createObjectURL(data as Blob);
 }
+
+/**
+ * Lấy TẤT CẢ sản phẩm, tự động phân trang.
+ *
+ * Backend chặn `limit` ở 200 (`Query(le=200)`), nên gọi thẳng với số lớn
+ * hơn sẽ nhận 422 chứ không phải danh sách bị cắt bớt — nghĩa là hỏng
+ * toàn bộ, không phải hỏng một phần. Hàm này lặp qua từng trang để người
+ * gọi không phải nhớ trần đó.
+ *
+ * Dùng cho các ô chọn cần đủ danh mục (ví dụ duyệt nhãn AI): thiếu một
+ * sản phẩm ở đây không phải bất tiện nhỏ mà là KHÔNG THỂ gán đúng nhãn
+ * cho sản phẩm đó, và nhãn sai còn tệ hơn không có nhãn.
+ *
+ * `maxItems` là chốt chặn để một danh mục lớn bất thường không kéo hàng
+ * chục nghìn dòng vào một ô select vốn không dùng nổi ở kích thước đó.
+ */
+export async function listAllProducts(
+  params: { is_active?: boolean; maxItems?: number } = {},
+): Promise<Product[]> {
+  const pageSize = 200; // trần của backend
+  const maxItems = params.maxItems ?? 2000;
+  const out: Product[] = [];
+  let skip = 0;
+  for (;;) {
+    const page = await listProducts({
+      skip,
+      limit: pageSize,
+      is_active: params.is_active,
+    });
+    out.push(...page.items);
+    skip += pageSize;
+    if (out.length >= page.total || page.items.length < pageSize) break;
+    if (out.length >= maxItems) {
+      console.warn(
+        `listAllProducts: dừng ở ${maxItems} sản phẩm (tổng ${page.total}).`,
+      );
+      break;
+    }
+  }
+  return out;
+}

@@ -35,7 +35,7 @@ import {
   type ReviewStats,
   type ReviewStatus,
 } from "@/api/aiReview";
-import { listProducts, type Product } from "@/api/catalog";
+import { listAllProducts, type Product } from "@/api/catalog";
 
 const { Title, Paragraph, Text } = Typography;
 
@@ -96,9 +96,15 @@ export default function AiReviewPage() {
   }, [load]);
 
   useEffect(() => {
-    listProducts({ limit: 500 })
-      .then((r) => setProducts(r.items))
-      .catch(() => message.error("Không tải được danh sách sản phẩm"));
+    // Phân trang thay vì xin 500 một lần: backend chặn limit ở 200, nên
+    // yêu cầu lớn hơn bị từ chối bằng 422 — cả ô chọn rỗng, không duyệt
+    // được nhãn nào.
+    listAllProducts({ is_active: true })
+      .then(setProducts)
+      .catch((err) => {
+        console.error("listAllProducts failed", err);
+        message.error("Không tải được danh sách sản phẩm");
+      });
   }, []);
 
   const doApprove = async (c: ReviewCandidate) => {
