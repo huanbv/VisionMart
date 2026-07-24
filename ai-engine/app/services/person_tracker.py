@@ -88,6 +88,65 @@ class TrackedObject:
         return (self.y1 + self.y2) / 2.0
 
 
+# Track-id của đề xuất contour bắt đầu từ đây, tách hẳn khỏi id của
+# ByteTrack (đếm từ 1 lên) để hai bên không bao giờ đè id lên nhau.
+_PROPOSAL_ID_BASE = 1_000_000
+
+
+def _iou(a: "TrackedObject", bx1: int, by1: int, bx2: int, by2: int) -> float:
+    ix1, iy1 = max(a.x1, bx1), max(a.y1, by1)
+    ix2, iy2 = min(a.x2, bx2), min(a.y2, by2)
+    iw, ih = max(0.0, ix2 - ix1), max(0.0, iy2 - iy1)
+    inter = iw * ih
+    if inter <= 0:
+        return 0.0
+    area_a = (a.x2 - a.x1) * (a.y2 - a.y1)
+    area_b = (bx2 - bx1) * (by2 - by1)
+    return inter / (area_a + area_b - inter)
+
+
+def _merge_classical_proposals(
+    frame_bgr, detections: list["TrackedObject"], camera_key: str
+) -> list["TrackedObject"]:
+    """Thêm vùng contour KHÔNG trùng detector vào danh sách detection.
+
+    Chỉ lấp chỗ trống: đề xuất nào chồng đáng kể (IoU) lên một box YOLO thì
+    bỏ, vì YOLO đã nhận vật đó rồi. Còn lại gán class 'region' để bộ phân
+    loại SKU thử — chính nó, không phải contour, quyết định đây là gì.
+
+    track_id suy từ vị trí tâm đã lượng tử hoá: cùng một vật đứng yên qua
+    nhiều khung cho ra cùng id, nên hệ bỏ phiếu nhiều khung vẫn tích luỹ
+    được cho vật do contour đề xuất, y như với vật do YOLO theo vết.
+    """
+    from app.vision.region_proposal import propose_regions
+
+    try:
+        regions = propose_regions(frame_bgr)
+    except Exception:  # noqa: BLE001
+        logger.exception("classical region proposal failed for %s", camera_key)
+        return detections
+
+    merged = list(detections)
+    for r in regions:
+        if any(_iou(d, r.x1, r.y1, r.x2, r.y2) > 0.3 for d in detections):
+            continue
+        cx, cy = (r.x1 + r.x2) // 2, (r.y1 + r.y2) // 2
+        # Lượng tử 16px: vật xê dịch nhẹ giữa các khung vẫn cùng id.
+        pseudo_id = _PROPOSAL_ID_BASE + (cy // 16) * 4096 + (cx // 16)
+        merged.append(
+            TrackedObject(
+                track_id=int(pseudo_id),
+                class_name="region",
+                confidence=float(r.score),
+                x1=float(r.x1),
+                y1=float(r.y1),
+                x2=float(r.x2),
+                y2=float(r.y2),
+            )
+        )
+    return merged
+
+
 def _get_model(camera_key: str):
     """Return the YOLO model this camera should use.
 
@@ -343,6 +402,14 @@ async def track_frame_detailed(
     else:
         with yolo_timer:
             detections = await loop.run_in_executor(None, _run)
+
+    # Lấp chỗ detector COCO bỏ sót bằng đề xuất vùng contour — chủ yếu là
+    # gói mì mà yolov8n không có lớp nào để nhận. Chỉ chạy khi camera đã vẽ
+    # ROI (vision_result.zones khác rỗng): ngoài ROI cách cổ điển sinh rác.
+    if cfg.enable_classical_proposals and vision_result.zones:
+        detections = _merge_classical_proposals(
+            frame_bgr, detections, camera_key
+        )
 
     record_pipeline_timing(
         camera_key,

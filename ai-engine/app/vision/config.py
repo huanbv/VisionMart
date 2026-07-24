@@ -264,6 +264,15 @@ class VisionConfig:
     crop_padding: float = field(default_factory=lambda: _float("CROP_PADDING", 0.08))
     crop_min_size: int = field(default_factory=lambda: _int("CROP_MIN_SIZE", 24))
 
+    # Đề xuất vùng bằng contour (xử lý ảnh cổ điển) để lấp chỗ detector COCO
+    # bỏ sót — chủ yếu là gói mì mà yolov8n không có lớp nào để nhận. Chỉ có
+    # tác dụng khi camera đã vẽ ROI (nền ngoài vùng bị che); nếu không có ROI
+    # thì cách cổ điển sinh rác nên tracker tự bỏ qua dù cờ có bật. Tắt mặc
+    # định: đây là đường tạm thời cho tới khi có detector train bằng cắt-dán.
+    enable_classical_proposals: bool = field(
+        default_factory=lambda: _bool("ENABLE_CLASSICAL_PROPOSALS", False)
+    )
+
     # ---- Chế độ quầy thanh toán ----
     # Khi bật VÀ camera được đánh dấu là checkout zone: sản phẩm nhận diện
     # được sẽ tự thêm vào đơn, KHÔNG cần một người trong khung. Đúng mô
