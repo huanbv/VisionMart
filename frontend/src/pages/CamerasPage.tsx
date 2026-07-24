@@ -53,6 +53,7 @@ import {
   updateCamera,
   uploadSimulatedStream,
 } from "@/api/cameras";
+import RoiOverlay from "@/components/RoiOverlay";
 import RoiZoneEditor from "@/components/RoiZoneEditor";
 import { useAuth } from "@/contexts/AuthContext";
 import { openMjpegStream } from "@/utils/mjpegStream";
@@ -136,16 +137,23 @@ function CameraGridTile({
           </Typography.Text>
         </div>
       ) : frame ? (
-        <img
-          src={frame}
-          alt={camera.name}
-          style={{
-            width: "100%",
-            height: "100%",
-            objectFit: "cover",
-            display: "block",
-          }}
-        />
+        <>
+          <img
+            src={frame}
+            alt={camera.name}
+            style={{
+              width: "100%",
+              height: "100%",
+              // "contain" chu khong phai "cover": cover cat bot hai ben
+              // cua khung hinh, khien vung nhan dien ve o dung ti le lai
+              // hien thi lech khoi vi tri that. Vien den hai ben chap
+              // nhan duoc, con vung ve sai cho thi gay hieu nham.
+              objectFit: "contain",
+              display: "block",
+            }}
+          />
+          <RoiOverlay zones={camera.roi_zones} showLabels={false} />
+        </>
       ) : (
         <div
           style={{
@@ -622,6 +630,16 @@ export default function CamerasPage() {
       dataIndex: "last_seen_at",
       width: 170,
       render: (v: string | null) => (v ? new Date(v).toLocaleString() : "—"),
+    },
+    {
+      title: "Vùng nhận diện",
+      width: 130,
+      render: (_, row) =>
+        row.roi_zones && row.roi_zones.length ? (
+          <Tag color="green">{row.roi_zones.length} vùng</Tag>
+        ) : (
+          <Tag>Toàn khung</Tag>
+        ),
     },
     {
       title: "Hành động",
@@ -1173,6 +1191,7 @@ export default function CamerasPage() {
           {!liveError && liveFrame && (
             <div
               style={{
+                position: "relative",
                 width: "100%",
                 background: "#000",
                 borderRadius: 4,
@@ -1184,6 +1203,9 @@ export default function CamerasPage() {
                 alt="live"
                 style={{ width: "100%", display: "block" }}
               />
+              {/* Anh giu nguyen ti le goc (chi dat width) nen overlay theo
+                  phan tram trung khop chinh xac voi noi dung khung hinh. */}
+              <RoiOverlay zones={liveFor?.roi_zones} />
             </div>
           )}
         </Space>

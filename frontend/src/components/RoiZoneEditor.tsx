@@ -16,6 +16,12 @@ import {
 import { DeleteOutlined, ReloadOutlined } from "@ant-design/icons";
 
 import {
+  ZONE_TYPES,
+  colorOf,
+  labelOf,
+  type ZoneType,
+} from "@/components/RoiOverlay";
+import {
   getRoiZones,
   previewCameraStream,
   updateRoiZones,
@@ -25,22 +31,6 @@ import {
 
 const { Text } = Typography;
 
-const ZONE_TYPES = [
-  { value: "checkout", label: "Quầy thanh toán", color: "#ff4d4f" },
-  { value: "shelf", label: "Kệ hàng", color: "#1677ff" },
-  { value: "entrance", label: "Lối vào", color: "#52c41a" },
-  { value: "exit", label: "Lối ra", color: "#faad14" },
-] as const;
-
-type ZoneType = (typeof ZONE_TYPES)[number]["value"];
-
-function colorOf(type: string): string {
-  return ZONE_TYPES.find((t) => t.value === type)?.color ?? "#ff4d4f";
-}
-
-function labelOf(type: string): string {
-  return ZONE_TYPES.find((t) => t.value === type)?.label ?? type;
-}
 
 /**
  * Vẽ vùng nhận diện lên ảnh chụp thật từ camera.
@@ -80,6 +70,15 @@ export default function RoiZoneEditor({
       const img = new Image();
       img.onload = () => {
         imgRef.current = img;
+        // Đặt canvas đúng tỉ lệ ảnh thật thay vì để mặc định 640×480:
+        // nếu kéo giãn, vùng vẽ vẫn lưu đúng (toạ độ phân số không đổi khi
+        // co giãn) nhưng người dùng nhìn thấy hình bị bóp, khác với màn
+        // hình xem trực tiếp — dễ vẽ lệch so với ý muốn.
+        const cv = canvasRef.current;
+        if (cv && img.naturalWidth && img.naturalHeight) {
+          cv.width = img.naturalWidth;
+          cv.height = img.naturalHeight;
+        }
         setLoading(false);
         redraw();
       };

@@ -18,6 +18,9 @@ export interface Camera {
   is_checkout_zone: boolean;
   alert_classes: string | null;
   alert_min_confidence: number | null;
+  // Vùng nhận diện đã vẽ. Đi kèm luôn trong danh sách camera, nên màn hình
+  // xem trực tiếp và xem dạng lưới vẽ lại được vùng mà không cần gọi thêm.
+  roi_zones: RoiZone[] | null;
   last_seen_at: string | null;
   created_at: string;
   updated_at: string;
