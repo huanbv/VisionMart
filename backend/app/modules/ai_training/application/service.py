@@ -214,11 +214,22 @@ class TrainingService:
                     job.error_message = status["error"]
                 await self._session.commit()
                 await self._session.refresh(job)
+                # Gán sau commit/refresh một cách có chủ ý: đây là các
+                # thuộc tính tạm, KHÔNG phải cột trong bảng. Tiến độ chỉ
+                # có ý nghĩa khi job đang chạy và ai-engine mới là nguồn
+                # sự thật; lưu vào DB sẽ tạo ra một bản sao lỗi thời mà
+                # sau khi ai-engine restart thì không ai cập nhật nữa.
                 job.progress = status.get("progress")
                 job.current_epoch = status.get("current_epoch")
                 job.total_epochs = status.get("total_epochs")
                 job.started_at_ts = status.get("started_at")
                 job.finished_at_ts = status.get("finished_at")
+                job.stage = status.get("stage")
+                job.images_total = status.get("images_total")
+                job.images_done = status.get("images_done")
+                job.class_counts = status.get("class_counts")
+                job.train_count = status.get("train_count")
+                job.val_count = status.get("val_count")
             except AIEngineNotFoundError:
                 logger.warning(
                     "training job %s missing in ai-engine, marking failed",

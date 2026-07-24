@@ -32,6 +32,13 @@ export interface TrainingJob {
   progress?: string | null;
   current_epoch?: number | null;
   total_epochs?: number | null;
+  /** "preparing" | "training" | "uploading" | "done" */
+  stage?: string | null;
+  images_total?: number | null;
+  images_done?: number | null;
+  class_counts?: Record<string, number> | null;
+  train_count?: number | null;
+  val_count?: number | null;
   started_at_ts?: number | null;
   finished_at_ts?: number | null;
 }

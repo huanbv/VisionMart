@@ -445,10 +445,26 @@ export default function AiTrainingPage() {
                   const current = activeJob.current_epoch || 0;
                   const running = activeJob.status === "running" || activeJob.status === "pending";
                   const succeeded = activeJob.status === "succeeded";
+                  const stage = activeJob.stage || "";
+                  const imgTotal = activeJob.images_total || 0;
+                  const imgDone = activeJob.images_done || 0;
+
+                  // Tiến độ tính theo giai đoạn đang chạy, không phải theo
+                  // epoch suốt cả job. Trước đây lúc tải ảnh, epoch còn 0
+                  // nên thanh đứng im ở 5% — người dùng không phân biệt
+                  // được "đang tải" với "đã treo". Chuẩn bị dữ liệu chiếm
+                  // 15% đầu vì nó thường nhanh hơn huấn luyện nhiều.
                   const percent = succeeded
                     ? 100
-                    : total > 0
-                    ? Math.min(99, Math.round((current / total) * 100))
+                    : stage === "preparing" && imgTotal > 0
+                    ? // Sàn 5%: nếu để rơi về 0 khi chưa tải được ảnh nào,
+                      // thanh sẽ TỤT LÙI so với trạng thái chờ trước đó —
+                      // một thanh tiến độ đi ngược đọc ra là hỏng.
+                      Math.max(5, Math.round((imgDone / imgTotal) * 15))
+                    : stage === "uploading"
+                    ? 97
+                    : total > 0 && current > 0
+                    ? 15 + Math.min(80, Math.round((current / total) * 80))
                     : running
                     ? 5
                     : 0;
@@ -457,6 +473,10 @@ export default function AiTrainingPage() {
                   const elapsed = startTs
                     ? (endTs > 0 ? endTs : now) - startTs
                     : 0;
+                  // ETA chỉ tính khi đã qua ít nhất một epoch, và suy từ
+                  // nhịp epoch chứ không từ tổng thời gian đã trôi — nếu
+                  // gộp cả giai đoạn tải ảnh vào thì ước lượng sẽ lệch
+                  // hẳn ở những epoch đầu.
                   const eta =
                     running && current > 0 && total > 0 && elapsed > 0
                       ? (elapsed / current) * (total - current)
@@ -494,8 +514,39 @@ export default function AiTrainingPage() {
                         </Col>
                       </Row>
                       {activeJob.progress && (
-                        <Text type="secondary">Bước: {activeJob.progress}</Text>
+                        <Text type="secondary">{activeJob.progress}</Text>
                       )}
+                      {stage === "preparing" && imgTotal > 0 && (
+                        <Text type="secondary" style={{ display: "block" }}>
+                          Đã tải {imgDone}/{imgTotal} ảnh
+                        </Text>
+                      )}
+                      {activeJob.class_counts &&
+                        Object.keys(activeJob.class_counts).length > 0 && (
+                          <div style={{ marginTop: 8 }}>
+                            <Text strong style={{ fontSize: 13 }}>
+                              Ảnh theo lớp
+                            </Text>
+                            <Space wrap size={4} style={{ marginTop: 4 }}>
+                              {Object.entries(activeJob.class_counts).map(
+                                ([cls, n]) => (
+                                  <Tag key={cls} color="blue">
+                                    {cls}: {n}
+                                  </Tag>
+                                ),
+                              )}
+                            </Space>
+                            {(activeJob.train_count || activeJob.val_count) && (
+                              <Text
+                                type="secondary"
+                                style={{ display: "block", fontSize: 12 }}
+                              >
+                                Chia tập: {activeJob.train_count || 0} huấn
+                                luyện / {activeJob.val_count || 0} kiểm tra
+                              </Text>
+                            )}
+                          </div>
+                        )}
                     </>
                   );
                 })()}

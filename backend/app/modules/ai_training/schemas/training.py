@@ -54,6 +54,15 @@ class TrainingJobRead(BaseModel):
     progress: str | None = None
     current_epoch: int | None = None
     total_epochs: int | None = None
+    # Chi tiết giai đoạn chuẩn bị dữ liệu. Trước đây bước này chỉ hiện
+    # một dòng chữ rồi im lặng cho tới khi bắt đầu huấn luyện, nên người
+    # dùng không phân biệt được "đang tải ảnh" với "đã treo".
+    stage: str | None = None
+    images_total: int | None = None
+    images_done: int | None = None
+    class_counts: dict[str, int] | None = None
+    train_count: int | None = None
+    val_count: int | None = None
     started_at_ts: float | None = None
     finished_at_ts: float | None = None
 

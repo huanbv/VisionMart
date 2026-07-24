@@ -54,6 +54,15 @@ class JobState:
     weight_key: str | None = None
     error: str | None = None
     progress: str = ""
+    # Thống kê dữ liệu, cập nhật dần trong lúc chuẩn bị. Tách riêng khỏi
+    # `progress` (một chuỗi mô tả bước) vì frontend cần con số để vẽ, còn
+    # `progress` chỉ để hiển thị chữ.
+    stage: str = ""                 # "preparing" | "training" | "uploading" | "done"
+    images_total: int = 0
+    images_done: int = 0
+    class_counts: dict[str, int] = field(default_factory=dict)
+    train_count: int = 0
+    val_count: int = 0
 
     def snapshot(self) -> dict[str, Any]:
         return {
@@ -67,6 +76,12 @@ class JobState:
             "finished_at": self.finished_at,
             "current_epoch": self.current_epoch,
             "total_epochs": self.total_epochs,
+            "stage": self.stage,
+            "images_total": self.images_total,
+            "images_done": self.images_done,
+            "class_counts": self.class_counts,
+            "train_count": self.train_count,
+            "val_count": self.val_count,
         }
 
 
@@ -111,15 +126,18 @@ def _run(state: JobState) -> None:
     workdir = os.path.join(_TRAIN_ROOT, state.job_id)
     try:
         _prepare_dataset(state, workdir)
-        state.progress = "training"
+        state.stage = "training"
+        state.progress = "Đang huấn luyện mô hình"
         best_pt = _train_yolo(state, workdir)
-        state.progress = "uploading"
+        state.stage = "uploading"
+        state.progress = "Đang tải trọng số lên kho lưu trữ"
         weight_key = f"models/{state.job_id}.pt"
         storage.upload(weight_key, best_pt, content_type="application/octet-stream")
         state.weight_key = weight_key
         _update_sku_mapping(state)
         state.status = "succeeded"
-        state.progress = "done"
+        state.stage = "done"
+        state.progress = "Hoàn tất"
     except Exception as exc:  # noqa: BLE001
         logger.exception("training job %s failed", state.job_id)
         state.status = "failed"
@@ -130,7 +148,14 @@ def _run(state: JobState) -> None:
 
 
 def _prepare_dataset(state: JobState, workdir: str) -> None:
-    state.progress = "downloading images"
+    state.stage = "preparing"
+    state.progress = "Đang chuẩn bị dữ liệu"
+    # Tổng số ảnh biết trước từ class_map, nên báo được ngay từ đầu thay
+    # vì để người dùng nhìn màn hình đứng yên. Bước tải ảnh trước đây chỉ
+    # đặt một dòng chữ rồi im lặng cho tới khi xong — với vài trăm ảnh
+    # trên đường mạng chậm, đó là nhiều phút không có dấu hiệu sống nào.
+    state.images_total = sum(len(v) for v in state.class_map.values())
+    state.images_done = 0
     if os.path.isdir(workdir):
         shutil.rmtree(workdir, ignore_errors=True)
     os.makedirs(workdir, exist_ok=True)
@@ -152,9 +177,15 @@ def _prepare_dataset(state: JobState, workdir: str) -> None:
         rng.shuffle(keys)
         raw_dir = os.path.join(workdir, "raw", class_name)
         os.makedirs(raw_dir, exist_ok=True)
+        state.progress = (
+            f"Đang tải ảnh: {class_name} "
+            f"({class_index + 1}/{len(class_names)} lớp)"
+        )
         local_paths = storage.download_many(keys, raw_dir)
         if not local_paths:
             raise RuntimeError(f"No images downloaded for class {class_name}")
+        state.images_done += len(local_paths)
+        state.class_counts[class_name] = len(local_paths)
 
         split = max(1, int(len(local_paths) * 0.8))
         train_files = local_paths[:split]
@@ -166,6 +197,8 @@ def _prepare_dataset(state: JobState, workdir: str) -> None:
             _place(path, class_index, class_name, images_val, labels_val)
         total_train += len(train_files)
         total_val += len(val_files)
+        state.train_count = total_train
+        state.val_count = total_val
 
     yaml_path = os.path.join(workdir, "data.yaml")
     with open(yaml_path, "w", encoding="utf-8") as f:
