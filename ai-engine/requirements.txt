@@ -27,6 +27,11 @@ prometheus-client==0.21.0
 # cờ lên rồi tưởng đã chạy trong khi thực tế không có gì thay đổi. Đây
 # đúng là kiểu hỏng im lặng khó lần ra nhất.
 onnxruntime==1.19.2
+# `onnx` KHÁC `onnxruntime`: onnxruntime chỉ CHẠY model đã có, còn việc
+# XUẤT từ PyTorch sang .onnx cần định dạng do gói `onnx` cung cấp. Thiếu
+# nó thì train xong không tạo được file để phục vụ — torch.onnx.export
+# ném OnnxExporterError ngay ở dòng cuối, sau khi đã huấn luyện xong.
+onnx==1.17.0
 
 # ---- Script bảo trì ngoại tuyến (KHÔNG dùng bởi dịch vụ đang chạy) ----
 # build_classifier_dataset.py đọc nhãn người duyệt từ cơ sở dữ liệu để
