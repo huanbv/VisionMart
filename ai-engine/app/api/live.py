@@ -32,6 +32,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+from typing import Any
 
 import cv2  # type: ignore[import-not-found]
 from fastapi import APIRouter, Depends, Query, Request
@@ -39,6 +40,8 @@ from fastapi.responses import StreamingResponse
 
 from app.security import require_api_key
 from app.services.yolo_detector import YoloDetector
+from app.vision.classify import get_classifier
+from app.vision.crop.cropper import crop_detection
 
 logger = logging.getLogger("ai-engine.live")
 
@@ -66,6 +69,10 @@ _PALETTE: list[tuple[int, int, int]] = [
 ]
 
 
+# Duoi nguong nay nhan SKU hien kem dau ? — xem muc _label_with_sku.
+_LIVE_SKU_MIN_CONFIDENCE = 0.55
+
+
 def _class_color(class_name: str) -> tuple[int, int, int]:
     return _PALETTE[hash(class_name) % len(_PALETTE)]
 
@@ -78,6 +85,66 @@ def _open_capture(stream_url: str, open_timeout_ms: int) -> cv2.VideoCapture:
     except Exception:  # pragma: no cover — older OpenCV builds
         pass
     return cap
+
+
+def _label_with_sku(frame, detections: list[dict]) -> None:
+    """Gan ten SKU vao tung detection, sua truc tiep trong `detections`.
+
+    Truoc day man hinh xem truc tiep ve thang ten lop cua YOLO, nen mot chai
+    7up hien la "bottle" — dung voi detector nhung vo nghia voi nguoi ban
+    hang, va khong cho biet bo phan loai SKU dang nghi gi. Bo phan loai von
+    da chay san trong luong /ai/frame; o day goi lai chinh no nen nhan hien
+    tren man hinh khop voi thu he thong thuc su dua vao gio hang.
+
+    Chay theo lo: tren CPU chi phi moi lan goi lan at chi phi tinh toan, nen
+    phan loai ca 3 mon trong khung cung luc gan bang phan loai mot mon.
+
+    Moi that bai deu bo qua trong im lang va giu nguyen nhan goc cua YOLO:
+    day chi la lop hien thi, khong duoc phep lam hong luong video.
+    """
+    classifier = get_classifier()
+    if classifier is None or not detections:
+        return
+
+    targets: list[tuple[dict, Any]] = []
+    for det in detections:
+        if str(det.get("class_name") or "").lower() == "person":
+            continue
+        bbox = det.get("bbox") or {}
+        try:
+            crop = crop_detection(
+                frame,
+                float(bbox["x1"]),
+                float(bbox["y1"]),
+                float(bbox["x2"]),
+                float(bbox["y2"]),
+            )
+        except (KeyError, TypeError, ValueError):
+            continue
+        if crop is not None:
+            targets.append((det, crop))
+
+    if not targets:
+        return
+
+    try:
+        results = classifier.classify_batch([c.image for _, c in targets])
+    except Exception:  # noqa: BLE001
+        logger.exception("live stream: SKU classification failed, keeping YOLO labels")
+        return
+
+    for (det, _), res in zip(targets, results):
+        if res is None:
+            continue
+        # Duoi nguong thi noi ro la "khong chac" thay vi im lang hien ten
+        # san pham: mot nhan sai nhung trong day tu tin con nguy hiem hon
+        # nhan "bottle" trung thuc, vi nguoi dung se tin no.
+        if res.confidence >= _LIVE_SKU_MIN_CONFIDENCE:
+            det["sku_label"] = res.sku
+            det["sku_confidence"] = res.confidence
+        else:
+            det["sku_label"] = f"? {res.sku}"
+            det["sku_confidence"] = res.confidence
 
 
 def _draw_detections(frame, detections: list[dict]) -> None:
@@ -95,7 +162,14 @@ def _draw_detections(frame, detections: list[dict]) -> None:
 
         cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2, cv2.LINE_AA)
 
-        label = f"{class_name} {confidence * 100:.0f}%"
+        # Uu tien ten SKU khi bo phan loai da nhan ra; van giu ten lop YOLO
+        # trong ngoac de con truy duoc tang nao dang sai khi ket qua la la.
+        sku_label = det.get("sku_label")
+        if sku_label:
+            sku_conf = float(det.get("sku_confidence") or 0.0)
+            label = f"{sku_label} {sku_conf * 100:.0f}% ({class_name})"
+        else:
+            label = f"{class_name} {confidence * 100:.0f}%"
         (tw, th), baseline = cv2.getTextSize(
             label, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 1
         )
@@ -227,6 +301,10 @@ async def _mjpeg_frames(
                         last_detections = await detector.detect(
                             det_buf.tobytes()
                         )
+                        # Chi phan loai o dung nhung khung vua chay detector
+                        # (moi detect_every_n khung), khong phai moi khung —
+                        # nhan duoc giu lai va ve lai cho toi lan detect sau.
+                        _label_with_sku(frame, last_detections)
                         last_infer_ms = (time.perf_counter() - started) * 1000.0
                     except Exception:  # noqa: BLE001
                         logger.exception(
