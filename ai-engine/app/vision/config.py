@@ -264,6 +264,16 @@ class VisionConfig:
     crop_padding: float = field(default_factory=lambda: _float("CROP_PADDING", 0.08))
     crop_min_size: int = field(default_factory=lambda: _int("CROP_MIN_SIZE", 24))
 
+    # ---- Chế độ quầy thanh toán ----
+    # Khi bật VÀ camera được đánh dấu là checkout zone: sản phẩm nhận diện
+    # được sẽ tự thêm vào đơn, KHÔNG cần một người trong khung. Đúng mô
+    # hình quầy thanh toán (đặt sản phẩm → thêm giỏ). Các camera kệ/cửa
+    # không đánh dấu checkout vẫn chạy grab-and-go (người cầm sản phẩm) như
+    # cũ — nhánh này hoàn toàn tách biệt.
+    checkout_scan_mode: bool = field(
+        default_factory=lambda: _bool("CHECKOUT_SCAN_MODE", False)
+    )
+
     # ---- Bỏ phiếu nhiều khung (phân biệt sản phẩm giống nhau) ----
     # Bật mặc định: đây là cách tăng độ chính xác trên các cặp lookalike
     # (Hảo Hảo/Gấu Đỏ, 7up/Sting) mà không cần đổi mô hình. Một track được

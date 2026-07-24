@@ -588,6 +588,49 @@ async def process_frame(
         result = await _post_event(event)
         emitted.append({"event": event, "backend": result})
 
+    # Chế độ quầy thanh toán: sản phẩm đặt trước camera quầy được tự động
+    # thêm vào đơn, KHÔNG cần một người trong khung. Đây là mô hình đúng
+    # cho quầy — khác grab-and-go ("người X lấy sản phẩm Y") vốn cần ghép
+    # người.
+    #
+    # Chỉ chạy khi CẢ HAI: camera được đánh dấu là checkout zone VÀ cờ
+    # scan_mode bật. Thêm một nhánh riêng thay vì sửa logic ghép người ở
+    # trên, để các camera kệ/cửa giữ nguyên hành vi cũ — không phá vỡ gì.
+    if (
+        camera_info
+        and camera_info.get("is_checkout_zone")
+        and getattr(vision_cfg, "checkout_scan_mode", False)
+    ):
+        for product, sku in products:
+            # Khoá theo chính track của sản phẩm (không phải track người),
+            # để một chai đặt yên trên quầy không bị đếm lại mỗi khung.
+            scan_key = _track_key(camera_key, f"scan-{product.track_id}")
+            if not _cooldown_ok(scan_key, sku):
+                continue
+            # track_id gửi backend là CỐ ĐỊNH cho quầy, không theo track
+            # sản phẩm: backend suy session giỏ hàng từ track_id, nên nếu
+            # mỗi sản phẩm mang track riêng thì mỗi sản phẩm rơi vào một
+            # giỏ khác nhau. Cố định theo camera để cả quầy dùng chung một
+            # đơn đang mở. Cooldown ở trên vẫn theo track sản phẩm nên
+            # không đếm lại cùng một chai.
+            checkout_track = _track_key(camera_key, "checkout")
+            event = {
+                "event_id": uuid.uuid4().hex,
+                "event_type": "product_scanned",
+                "organization_id": str(organization_id),
+                "branch_id": str(branch_id),
+                "camera_id": str(camera_id) if camera_id else None,
+                "track_id": checkout_track,
+                "product_id": None,
+                "product_sku": sku,
+                "quantity": 1,
+                "confidence": product.confidence,
+                "customer_id": str(customer_id) if customer_id else None,
+                "occurred_at": datetime.now(timezone.utc).isoformat(),
+            }
+            result = await _post_event(event)
+            emitted.append({"event": event, "backend": result})
+
     # Product-returned detection: a sku that was picked up (has a cooldown
     # entry, i.e. we actually emitted product_picked_up for it) but hasn't
     # been paired with this same, still-visible person for more than

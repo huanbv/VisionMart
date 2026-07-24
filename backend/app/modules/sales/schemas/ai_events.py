@@ -17,6 +17,10 @@ class AICartEventType(str, Enum):
     PRODUCT_PICKED_UP = "product_picked_up"
     PRODUCT_RETURNED = "product_returned"
     CHECKOUT_INITIATED = "checkout_initiated"
+    # Chế độ quầy thanh toán: sản phẩm đặt trước camera quầy, thêm thẳng vào
+    # đơn không cần ghép người. Xử lý giống PRODUCT_PICKED_UP (đều thêm một
+    # dòng hàng), chỉ khác nguồn phát — nên tái dùng cùng handler.
+    PRODUCT_SCANNED = "product_scanned"
 
 
 class AICartEventRequest(BaseModel):

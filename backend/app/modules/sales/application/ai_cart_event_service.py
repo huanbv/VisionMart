@@ -69,7 +69,12 @@ class AiCartEventService:
             local_track_id=event.track_id,
         )
 
-        if event.event_type == AICartEventType.PRODUCT_PICKED_UP:
+        if event.event_type in (
+            AICartEventType.PRODUCT_PICKED_UP,
+            AICartEventType.PRODUCT_SCANNED,
+        ):
+            # Cả hai đều thêm một dòng hàng vào giỏ. product_scanned đến từ
+            # camera quầy (không có track người), nhưng bước xử lý giống hệt.
             return await self._handle_picked_up(event, session_id, global_track_id)
 
         if event.event_type == AICartEventType.PRODUCT_RETURNED:
