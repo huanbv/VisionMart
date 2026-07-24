@@ -23,6 +23,20 @@ export const tokenStore = {
 
 const baseURL = import.meta.env.VITE_API_BASE_URL ?? "/api/v1";
 
+/**
+ * Timeout cho request tải file lên.
+ *
+ * 15 giây (mặc định bên dưới) là hợp lý cho API thường, nhưng QUÁ NGẮN cho
+ * upload: một video demo 116 MB trên đường truyền hộ gia đình cần hàng
+ * chục giây tới vài phút. Khi axios hết giờ, nó huỷ kết nối và nginx ghi
+ * 499 (client closed request) — backend thậm chí CHƯA nhận được request,
+ * nên log server sạch trơn và lỗi trông như "tải lên thất bại" không rõ
+ * nguyên nhân. Đã gặp đúng tình huống này trên production.
+ *
+ * 10 phút đủ cho 200 MB (giới hạn phía server) ở tốc độ chậm.
+ */
+export const UPLOAD_TIMEOUT_MS = 10 * 60 * 1000;
+
 export const apiClient: AxiosInstance = axios.create({
   baseURL,
   timeout: 15000,

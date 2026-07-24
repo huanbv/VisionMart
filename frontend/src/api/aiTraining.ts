@@ -1,4 +1,4 @@
-import { apiClient } from "./client";
+import { apiClient, UPLOAD_TIMEOUT_MS } from "./client";
 
 export interface TrainingImage {
   id: string;
@@ -66,7 +66,10 @@ export async function uploadTrainingImage(
   const { data } = await apiClient.post<TrainingImage>(
     "/ai/training/images",
     form,
-    { headers: { "Content-Type": "multipart/form-data" } }
+    {
+      headers: { "Content-Type": "multipart/form-data" },
+      timeout: UPLOAD_TIMEOUT_MS,
+    }
   );
   return data;
 }

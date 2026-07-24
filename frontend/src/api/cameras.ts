@@ -1,4 +1,4 @@
-import { apiClient } from "./client";
+import { apiClient, UPLOAD_TIMEOUT_MS } from "./client";
 
 export interface Camera {
   id: string;
@@ -190,6 +190,7 @@ export async function analyzeCameraFrame(
     {
       params: model ? { model } : undefined,
       headers: { "Content-Type": "multipart/form-data" },
+      timeout: UPLOAD_TIMEOUT_MS,
     },
   );
   return data;
@@ -256,7 +257,10 @@ export async function tracePipeline(
   const { data } = await apiClient.post<PipelineTraceResult>(
     `/cameras/${cameraId}/pipeline-trace`,
     form,
-    { headers: { "Content-Type": "multipart/form-data" } },
+    {
+      headers: { "Content-Type": "multipart/form-data" },
+      timeout: UPLOAD_TIMEOUT_MS,
+    },
   );
   return data;
 }
@@ -299,7 +303,10 @@ export async function uploadSimulatedStream(
   const { data } = await apiClient.post<Camera>(
     `/cameras/${id}/simulated-stream`,
     form,
-    { headers: { "Content-Type": "multipart/form-data" } },
+    {
+      headers: { "Content-Type": "multipart/form-data" },
+      timeout: UPLOAD_TIMEOUT_MS,
+    },
   );
   return data;
 }

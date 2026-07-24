@@ -1,4 +1,4 @@
-import { apiClient } from "./client";
+import { apiClient, UPLOAD_TIMEOUT_MS } from "./client";
 
 export interface Category {
   id: string;
@@ -136,7 +136,10 @@ export async function uploadProductImage(
   const { data } = await apiClient.post<Product>(
     `/products/${productId}/image`,
     form,
-    { headers: { "Content-Type": "multipart/form-data" } },
+    {
+      headers: { "Content-Type": "multipart/form-data" },
+      timeout: UPLOAD_TIMEOUT_MS,
+    },
   );
   return data;
 }
