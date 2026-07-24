@@ -12,9 +12,15 @@ import {
   Switch,
   Table,
   Tag,
+  Upload,
   message,
 } from "antd";
-import { DeleteOutlined, EditOutlined, PlusOutlined } from "@ant-design/icons";
+import {
+  DeleteOutlined,
+  EditOutlined,
+  PlusOutlined,
+  UploadOutlined,
+} from "@ant-design/icons";
 import type { ColumnsType } from "antd/es/table";
 
 import {
@@ -26,6 +32,7 @@ import {
   Product,
   ProductPayload,
   updateProduct,
+  uploadProductImage,
 } from "@/api/catalog";
 import { useAuth } from "@/contexts/AuthContext";
 
@@ -336,8 +343,47 @@ export default function ProductsPage() {
           <Form.Item label="Mô tả" name="description">
             <Input.TextArea rows={3} />
           </Form.Item>
-          <Form.Item label="Image URL" name="image_url" rules={[{ max: 1024 }]}>
-            <Input />
+          <Form.Item label="Ảnh sản phẩm">
+            {editing ? (
+              <Upload
+                accept="image/jpeg,image/png,image/webp"
+                maxCount={1}
+                showUploadList={false}
+                // customRequest thay vì `action`: antd tự POST sẽ không
+                // gắn bearer token của apiClient, và endpoint có xác thực
+                // nên sẽ trả 401.
+                customRequest={async ({ file, onSuccess, onError }) => {
+                  try {
+                    const updated = await uploadProductImage(
+                      editing.id,
+                      file as File,
+                    );
+                    form.setFieldValue("image_url", updated.image_url);
+                    message.success("Đã tải ảnh lên");
+                    onSuccess?.(updated);
+                  } catch (err) {
+                    message.error("Không tải được ảnh");
+                    onError?.(err as Error);
+                  }
+                }}
+              >
+                <Button icon={<UploadOutlined />}>Chọn ảnh từ máy</Button>
+              </Upload>
+            ) : (
+              // Ảnh phải gắn vào một sản phẩm đã tồn tại, nên lúc tạo mới
+              // chưa có id để tải lên. Nói rõ điều đó thay vì hiện một nút
+              // bấm vào không có tác dụng.
+              <span style={{ color: "#999" }}>
+                Lưu sản phẩm trước, rồi mở lại để tải ảnh lên.
+              </span>
+            )}
+          </Form.Item>
+          <Form.Item
+            label="hoặc dán URL ảnh"
+            name="image_url"
+            rules={[{ max: 1024 }]}
+          >
+            <Input placeholder="https://... (để trống nếu đã tải ảnh lên)" />
           </Form.Item>
           <Form.Item
             label="Attributes (JSON)"

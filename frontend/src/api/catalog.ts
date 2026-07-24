@@ -116,3 +116,45 @@ export async function updateProduct(
 export async function deleteProduct(id: string): Promise<void> {
   await apiClient.delete(`/products/${id}`);
 }
+
+/**
+ * Tải ảnh sản phẩm lên MinIO của hệ thống.
+ *
+ * Có endpoint này thì không còn phải tự host ảnh ở đâu đó rồi dán URL —
+ * vốn vừa phiền vừa tạo phụ thuộc vào một nơi lưu trữ ngoài tầm kiểm
+ * soát (link chết thì sản phẩm mất ảnh, không có cách nào biết trước).
+ *
+ * Trường `image_url` vẫn nhận URL ngoài như cũ, nên cách dán link không
+ * bị bỏ; đây là thêm một lựa chọn.
+ */
+export async function uploadProductImage(
+  productId: string,
+  file: File,
+): Promise<Product> {
+  const form = new FormData();
+  form.append("file", file);
+  const { data } = await apiClient.post<Product>(
+    `/products/${productId}/image`,
+    form,
+    { headers: { "Content-Type": "multipart/form-data" } },
+  );
+  return data;
+}
+
+/**
+ * Ảnh sản phẩm dưới dạng blob URL.
+ *
+ * Đi qua backend chứ không gắn thẳng `image_url` vào `<img src>`: khoá
+ * lưu trong MinIO không phải URL công khai, và thẻ `<img>` không gửi kèm
+ * bearer token nên endpoint có xác thực sẽ trả 401. Đây cũng là khuôn
+ * mà AiReviewPage đang dùng.
+ *
+ * Người gọi phải `URL.revokeObjectURL` khi không dùng nữa, nếu không mỗi
+ * lần render lại sẽ giữ thêm một blob trong bộ nhớ.
+ */
+export async function getProductImageUrl(productId: string): Promise<string> {
+  const { data } = await apiClient.get(`/products/${productId}/image`, {
+    responseType: "blob",
+  });
+  return URL.createObjectURL(data as Blob);
+}
