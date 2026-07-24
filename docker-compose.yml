@@ -137,7 +137,12 @@ services:
       # identical backend image/codebase, so any task path touching
       # app.modules.identity.application.jwt_service needs it too.
       - ./secrets:/run/secrets:ro
-    command: ["celery", "-A", "app.workers.celery_app", "worker", "--loglevel=info"]
+    # --concurrency=2: celery mặc định spawn MỘT tiến trình con mỗi CPU, và
+    # mỗi con tạo pool kết nối DB riêng. Trên VPS 4 nhân, 4 con × 30 kết nối
+    # vượt max_connections=100 của Postgres và làm TOÀN BỘ backend đổ lỗi
+    # TooManyConnectionsError — đã gặp trên production. Tải của đồ án rất
+    # nhẹ nên 2 tiến trình là thừa đủ.
+    command: ["celery", "-A", "app.workers.celery_app", "worker", "--loglevel=info", "--concurrency=2"]
     networks: [visionmart-net]
     logging: *default-logging
 
