@@ -179,6 +179,22 @@ def main() -> int:
     random.seed(args.seed)
     np.random.seed(args.seed)
 
+    # Kiểm tra hai thư mục đầu vào trước khi làm gì khác. Thiếu thư mục là
+    # tình huống thường gặp nhất khi chạy lần đầu (/app/training là named
+    # volume nên phải chép ảnh vào bằng `docker compose cp`), và một
+    # traceback FileNotFoundError không nói được rằng cần chép ảnh vào đâu.
+    for label, path in (("--products", args.products), ("--backgrounds", args.backgrounds)):
+        if not os.path.isdir(path):
+            logger.error("Không thấy thư mục %s: %s", label, path)
+            logger.error(
+                "Tạo và chép ảnh vào bằng:\n"
+                "  docker compose exec ai-engine mkdir -p %s\n"
+                "  docker compose cp <thư-mục-trên-máy-chủ>/. ai-engine:%s",
+                path,
+                path,
+            )
+            return 1
+
     classes = sorted(
         d for d in os.listdir(args.products)
         if os.path.isdir(os.path.join(args.products, d))
