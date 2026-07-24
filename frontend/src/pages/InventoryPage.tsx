@@ -24,7 +24,7 @@ import {
 import type { ColumnsType } from "antd/es/table";
 
 import { listBranches, type Branch } from "@/api/tenancy";
-import { listProducts, type Product } from "@/api/catalog";
+import { listAllProducts, type Product } from "@/api/catalog";
 import {
   adjustInventory,
   exportMovementsCsv,
@@ -117,9 +117,14 @@ export default function InventoryPage() {
     listBranches({ limit: 200 })
       .then((res) => setBranches(res.items))
       .catch(() => message.error("Không tải được chi nhánh"));
-    listProducts({ limit: 500 })
-      .then((res) => setProducts(res.items))
-      .catch(() => message.error("Không tải được sản phẩm"));
+    // Phân trang thay vì limit:500 — backend chặn ở 200 nên yêu cầu lớn
+    // hơn bị 422 và dropdown rỗng, đúng lỗi "không chọn được sản phẩm".
+    listAllProducts()
+      .then(setProducts)
+      .catch((err) => {
+        console.error("listAllProducts failed", err);
+        message.error("Không tải được sản phẩm");
+      });
   }, []);
 
   useEffect(() => {
