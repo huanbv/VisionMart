@@ -610,10 +610,15 @@ async def process_frame(
             # track_id gửi backend là CỐ ĐỊNH cho quầy, không theo track
             # sản phẩm: backend suy session giỏ hàng từ track_id, nên nếu
             # mỗi sản phẩm mang track riêng thì mỗi sản phẩm rơi vào một
-            # giỏ khác nhau. Cố định theo camera để cả quầy dùng chung một
-            # đơn đang mở. Cooldown ở trên vẫn theo track sản phẩm nên
-            # không đếm lại cùng một chai.
-            checkout_track = _track_key(camera_key, "checkout")
+            # giỏ khác nhau. Cố định để cả quầy dùng chung một đơn đang mở.
+            #
+            # KHÔNG dùng _track_key ở đây: nó chèn camera_key (một UUID) vào
+            # track_id, mà backend LẠI thêm tiền tố "cam:{camera_id}:track:"
+            # khi dựng session_id — thành ra camera UUID xuất hiện hai lần
+            # và session_id vượt 80 ký tự (giới hạn cột). Chuỗi ngắn
+            # "checkout" là đủ: backend đã bảo đảm duy nhất theo camera bằng
+            # tiền tố của nó. Cooldown ở trên vẫn theo track sản phẩm.
+            checkout_track = "checkout"
             event = {
                 "event_id": uuid.uuid4().hex,
                 "event_type": "product_scanned",

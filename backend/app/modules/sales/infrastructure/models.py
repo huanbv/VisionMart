@@ -75,7 +75,11 @@ class ShoppingCart(Entity):
         nullable=True,
         index=True,
     )
-    session_id: Mapped[str | None] = mapped_column(String(80), nullable=True, index=True)
+    # 150, không phải 80: session_id được ghép "cam:{camera_uuid}:track:
+    # {track_id}", mà track_id từ pipeline lại chứa thêm một camera_uuid —
+    # nên chuỗi mang tối đa hai UUID (mỗi cái 36 ký tự) cộng tiền tố, vượt
+    # 80 và làm INSERT giỏ hàng vỡ. 150 đủ dư cho cả hai UUID.
+    session_id: Mapped[str | None] = mapped_column(String(150), nullable=True, index=True)
     status: Mapped[CartStatus] = mapped_column(
         SAEnum(CartStatus, name="cart_status", values_callable=lambda x: [e.value for e in x]),
         nullable=False,
