@@ -1060,6 +1060,7 @@ export default function CamerasPage() {
         camera={roiFor}
         open={!!roiFor}
         onClose={() => setRoiFor(null)}
+        onSaved={load}
       />
 
       <Modal

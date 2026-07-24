@@ -44,10 +44,15 @@ export default function RoiZoneEditor({
   camera,
   open,
   onClose,
+  onSaved,
 }: {
   camera: Camera | null;
   open: boolean;
   onClose: () => void;
+  /** Gọi sau khi lưu thành công, để bảng camera nạp lại roi_zones mới —
+   *  nếu không, cột "Vùng nhận diện" và overlay xem trực tiếp vẫn dùng dữ
+   *  liệu cũ cho tới khi người dùng tự tải lại trang. */
+  onSaved?: () => void;
 }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const imgRef = useRef<HTMLImageElement | null>(null);
@@ -60,15 +65,31 @@ export default function RoiZoneEditor({
   const [draftName, setDraftName] = useState("");
   const [draftType, setDraftType] = useState<ZoneType>("checkout");
 
+  // Tăng mỗi lần mở một camera. Mọi kết quả bất đồng bộ (ảnh chụp, danh
+  // sách vùng) đều phải khai đúng "phiên" của mình mới được dùng: nếu
+  // người dùng đóng modal rồi mở camera khác trong lúc chờ, phản hồi đến
+  // muộn của camera cũ sẽ bị bỏ qua thay vì vẽ đè lên camera mới.
+  const epochRef = useRef(0);
+  // Đếm số lần ảnh nền thay đổi. Đây là lý do tồn tại: trước đây ảnh tải
+  // xong thì gọi thẳng redraw() trong callback, nhưng callback đó giữ bản
+  // redraw của lần render CŨ — khi ấy `zones` vẫn là vùng của camera
+  // trước. Ảnh luôn tải xong sau lời gọi API, nên bản redraw cũ chạy sau
+  // cùng và vẽ đè vùng camera cũ lên ảnh camera mới. Đổi thành state để
+  // useEffect bên dưới lo việc vẽ, luôn với `zones` mới nhất.
+  const [imgEpoch, setImgEpoch] = useState(0);
+
   // ---- tải ảnh nền + vùng đã lưu -----------------------------------
   const loadSnapshot = useCallback(async () => {
     if (!camera) return;
+    const myEpoch = epochRef.current;
     setLoading(true);
     setSnapshotErr(null);
     try {
       const res = await previewCameraStream(camera.id);
+      if (myEpoch !== epochRef.current) return;
       const img = new Image();
       img.onload = () => {
+        if (myEpoch !== epochRef.current) return;
         imgRef.current = img;
         // Đặt canvas đúng tỉ lệ ảnh thật thay vì để mặc định 640×480:
         // nếu kéo giãn, vùng vẽ vẫn lưu đúng (toạ độ phân số không đổi khi
@@ -80,14 +101,16 @@ export default function RoiZoneEditor({
           cv.height = img.naturalHeight;
         }
         setLoading(false);
-        redraw();
+        setImgEpoch((n) => n + 1);
       };
       img.onerror = () => {
+        if (myEpoch !== epochRef.current) return;
         setSnapshotErr("Không giải mã được ảnh chụp từ camera.");
         setLoading(false);
       };
       img.src = `data:image/jpeg;base64,${res.frame_base64}`;
     } catch (e: any) {
+      if (myEpoch !== epochRef.current) return;
       // Vẫn cho vẽ trên nền trống: camera có thể đang tắt, nhưng người
       // dùng đã biết bố cục cửa hàng và vẫn muốn khoanh vùng trước.
       setSnapshotErr(
@@ -100,12 +123,22 @@ export default function RoiZoneEditor({
 
   useEffect(() => {
     if (!open || !camera) return;
+    const myEpoch = ++epochRef.current;
     setDraft([]);
     setDraftName("");
     imgRef.current = null;
+    // Xoá vùng của camera trước ngay lập tức. Nếu để nguyên chờ API trả
+    // về, người dùng sẽ thấy vùng của camera khác trong khoảnh khắc đó và
+    // tưởng mình đã vẽ sai chỗ.
+    setZones([]);
+    setImgEpoch((n) => n + 1);
     getRoiZones(camera.id)
-      .then(setZones)
-      .catch(() => setZones([]));
+      .then((z) => {
+        if (myEpoch === epochRef.current) setZones(z);
+      })
+      .catch(() => {
+        if (myEpoch === epochRef.current) setZones([]);
+      });
     void loadSnapshot();
   }, [open, camera, loadSnapshot]);
 
@@ -167,7 +200,10 @@ export default function RoiZoneEditor({
       drawPoly(z.points, colorOf(z.type), true, `${z.name} (${labelOf(z.type)})`),
     );
     drawPoly(draft, colorOf(draftType), false);
-  }, [zones, draft, draftType]);
+    // imgEpoch nằm trong deps để việc ảnh nền tải xong cũng kích hoạt vẽ
+    // lại — thay cho lời gọi redraw() trực tiếp trong callback tải ảnh,
+    // vốn dùng lại `zones` cũ của camera trước.
+  }, [zones, draft, draftType, imgEpoch]);
 
   useEffect(redraw, [redraw]);
 
@@ -208,6 +244,7 @@ export default function RoiZoneEditor({
           ? `Đã lưu ${zones.length} vùng — có hiệu lực trong khoảng 30 giây.`
           : "Đã xoá hết vùng — camera nhận diện lại toàn khung hình.",
       );
+      onSaved?.();
       onClose();
     } catch (e: any) {
       message.error(e?.response?.data?.detail ?? "Lưu vùng thất bại.");
