@@ -84,6 +84,17 @@ _STALE_TRACK_SECONDS = 120.0
 # mọi khách qua quầy dồn chung một giỏ (lỗi "nhiều người thành một đơn").
 _CHECKOUT_SESSION: dict[str, tuple[float, int]] = {}
 
+# Khử trùng lặp cho quầy: mỗi phiên khách đếm mỗi SKU MỘT lần. Key =
+# "<camera_key>:<checkout_track>" (checkout_track đổi khi sang khách mới) ->
+# tập SKU đã ghi nhận. Vì sao KHÔNG dùng cooldown theo track như trước: sản
+# phẩm đặt yên trên quầy sống lâu hơn cooldown 5s nên bị đếm lại; và track_id
+# của đề xuất contour đổi khi vật xê dịch nhẹ nên mỗi lần thành "track mới" ->
+# đếm lại. Cả hai làm 1 sản phẩm thành 2-3. Khoá theo (phiên, SKU) loại bỏ cả
+# hai. Đánh đổi: một khách đặt 2 sản phẩm CÙNG loại sẽ chỉ tính 1 — chấp nhận
+# được cho quầy demo (mỗi loại 1), và không có tracking ổn định thì không thể
+# phân biệt "2 cái giống nhau" với "1 cái thấy hai lần".
+_CHECKOUT_SCANNED: dict[str, set[str]] = {}
+
 
 def _backend_base_url() -> str:
     return os.getenv("BACKEND_BASE_URL", "http://backend:8000/api/v1")
@@ -661,12 +672,21 @@ async def process_frame(
         # Chuỗi "checkout-<epoch>" đủ ngắn; backend đã bảo đảm duy nhất theo
         # camera bằng tiền tố của nó.
         checkout_track = _checkout_session_track(camera_key, now)
+        # Bộ SKU đã ghi nhận cho ĐÚNG phiên này. checkout_track đổi khi sang
+        # khách mới -> key mới -> tập rỗng -> khách kế quét lại từ đầu. Dọn các
+        # phiên cũ của chính camera này để dict không phình theo thời gian.
+        session_key = f"{camera_key}:{checkout_track}"
+        for old in [k for k in _CHECKOUT_SCANNED
+                    if k.startswith(f"{camera_key}:") and k != session_key]:
+            _CHECKOUT_SCANNED.pop(old, None)
+        scanned_skus = _CHECKOUT_SCANNED.setdefault(session_key, set())
         for product, sku in products:
-            # Khoá cooldown theo chính track của sản phẩm (không phải track
-            # người), để một chai đặt yên trên quầy không bị đếm lại mỗi khung.
-            scan_key = _track_key(camera_key, f"scan-{product.track_id}")
-            if not _cooldown_ok(scan_key, sku):
+            # Mỗi SKU chỉ tính MỘT lần cho mỗi phiên khách — xem chú thích
+            # _CHECKOUT_SCANNED. Thay cho cooldown theo track vốn đếm lại sản
+            # phẩm đứng yên và track_id nhấp nháy.
+            if sku in scanned_skus:
                 continue
+            scanned_skus.add(sku)
             event = {
                 "event_id": uuid.uuid4().hex,
                 "event_type": "product_scanned",
