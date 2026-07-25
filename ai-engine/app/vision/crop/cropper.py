@@ -48,6 +48,28 @@ class CropResult:
         return self.bbox[3] - self.bbox[1]
 
 
+def is_degenerate_box(
+    x1: float, y1: float, x2: float, y2: float, w: int, h: int,
+    *, area_frac: float = 0.85, side_frac: float = 0.92,
+) -> bool:
+    """True khi box gần như trùm cả khung — tức detector KHÔNG định vị được
+    sản phẩm, chỉ khoanh cả cảnh.
+
+    Đây là dấu hiệu của detector train bằng nhãn cả-khung (trainer.py ghi
+    '0.5 0.5 1.0 1.0'): mọi box ~ cả khung, nên "crop" ra chỉ là ảnh cảnh
+    chung chứ không phải sản phẩm cận cảnh. Cắt một ảnh như vậy rồi gọi là
+    'crop sản phẩm' là lừa cả người duyệt lẫn classifier, nên chỗ nào cần
+    crop cận cảnh thì nên bỏ qua box kiểu này.
+    """
+    if w <= 0 or h <= 0:
+        return False
+    bw, bh = max(0.0, x2 - x1), max(0.0, y2 - y1)
+    if (bw * bh) / float(w * h) >= area_frac:
+        return True
+    # Bắt cả trường hợp dải trùm gần hết một chiều (vd cả bề ngang quầy).
+    return (bw / w) >= side_frac and (bh / h) >= side_frac
+
+
 def crop_detection(
     frame_bgr: np.ndarray,
     x1: float,

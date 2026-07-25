@@ -119,11 +119,12 @@ def _annotate_and_crop(frame_bgr: Any, det: Any) -> tuple[bytes | None, bytes | 
     """
     import cv2
 
-    from app.vision.crop.cropper import crop_detection
+    from app.vision.crop.cropper import crop_detection, is_degenerate_box
 
     annotated_jpg: bytes | None = None
     crop_jpg: bytes | None = None
     try:
+        h, w = frame_bgr.shape[:2]
         x1, y1 = int(det.x1), int(det.y1)
         x2, y2 = int(det.x2), int(det.y2)
         canvas = frame_bgr.copy()
@@ -135,11 +136,24 @@ def _annotate_and_crop(frame_bgr: Any, det: Any) -> tuple[bytes | None, bytes | 
         if ok:
             annotated_jpg = buf.tobytes()
 
-        crop = crop_detection(frame_bgr, det.x1, det.y1, det.x2, det.y2)
-        if crop is not None:
-            ok, buf = cv2.imencode(".jpg", crop.image, [int(cv2.IMWRITE_JPEG_QUALITY), 92])
-            if ok:
-                crop_jpg = buf.tobytes()
+        # Box trùm cả khung -> "crop" chỉ là ảnh cảnh chung, không phải sản
+        # phẩm cận cảnh. KHÔNG lưu crop giả: để trống crop_key thì UI hiện mỗi
+        # khung hình (trung thực) thay vì một ảnh cắt trông như cả cảnh mà lại
+        # gắn mác "crop sản phẩm". Dấu hiệu detector chưa định vị được — xem
+        # chẩn đoán về YOLO_MODEL cả-khung.
+        if is_degenerate_box(det.x1, det.y1, det.x2, det.y2, w, h):
+            logger.warning(
+                "review: box trùm cả khung (%.0f%% diện tích) — detector chưa"
+                " định vị, bỏ crop giả. class=%s",
+                100.0 * max(0.0, (x2 - x1)) * max(0.0, (y2 - y1)) / float(max(1, w * h)),
+                getattr(det, "class_name", "?"),
+            )
+        else:
+            crop = crop_detection(frame_bgr, det.x1, det.y1, det.x2, det.y2)
+            if crop is not None:
+                ok, buf = cv2.imencode(".jpg", crop.image, [int(cv2.IMWRITE_JPEG_QUALITY), 92])
+                if ok:
+                    crop_jpg = buf.tobytes()
     except Exception:  # noqa: BLE001 — annotation is an aid, never a blocker
         logger.exception("review annotate/crop failed")
     return annotated_jpg, crop_jpg
