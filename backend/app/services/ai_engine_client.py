@@ -252,6 +252,13 @@ class AIEngineClient:
                     resp.raise_for_status()
                     async for chunk in resp.aiter_bytes():
                         yield chunk
+        except httpx.RemoteProtocolError as exc:
+            # Trình duyệt đóng luồng giữa chừng (đổi camera / đóng panel /
+            # rời trang) => ai-engine ngắt kết nối, httpx báo "peer closed
+            # connection". Đây là kết thúc BÌNH THƯỜNG của một luồng live,
+            # không phải sự cố: dừng im lặng thay vì ném traceback lên ASGI.
+            logger.debug("ai-engine live stream closed by client: %s", exc)
+            return
         except httpx.HTTPError as exc:
             logger.warning("ai-engine live stream failed: %s", exc)
             raise AIEngineError(str(exc)) from exc
