@@ -177,6 +177,10 @@ services:
       YOLO_MODEL: ${YOLO_MODEL:-yolov8n.pt}
       YOLO_CONF_THRESHOLD: ${YOLO_CONF_THRESHOLD:-0.25}
       YOLO_DEVICE: ${YOLO_DEVICE:-cpu}
+      # Bật ROI để vùng đã vẽ THỰC SỰ có tác dụng: che ngoài vùng (vật ngoài
+      # không bị thêm vào giỏ) và kích hoạt đề xuất contour trong vùng. No-op
+      # với camera chưa vẽ vùng nên an toàn cho camera kệ/cửa.
+      ENABLE_ROI: ${ENABLE_ROI:-true}
       # Fix #1 audit: bật đề xuất vùng contour để nhận gói mì (COCO 80 lớp
       # không có lớp mì). Chỉ có tác dụng trong ROI đã vẽ.
       ENABLE_CLASSICAL_PROPOSALS: ${ENABLE_CLASSICAL_PROPOSALS:-true}
