@@ -343,6 +343,9 @@ async def analyze_camera_frame(
             branch_id=str(camera.branch_id),
             camera_id=str(camera_id),
             recognize_face=False,
+            # Upload ảnh phân tích = nhập đơn thủ công: bỏ ROI + phiên riêng để
+            # luôn tạo một đơn mới trong giỏ AI, không đụng luồng camera live.
+            manual_scan=True,
         )
     except AIEngineError as exc:
         frame_error = str(exc)

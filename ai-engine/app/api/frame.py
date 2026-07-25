@@ -497,6 +497,7 @@ async def process_frame(
     camera_id: uuid.UUID | None = Form(None),
     recognize_face: bool = Form(False),
     min_confidence: float = Form(0.4),
+    manual_scan: bool = Form(False),
     image: UploadFile = File(...),
 ) -> dict[str, Any]:
     content = await image.read()
@@ -539,13 +540,19 @@ async def process_frame(
         # the same preprocessed frame YOLO saw, without re-preprocessing.
         # Vung nhan dien ve tren Admin di kem camera_info (da duoc cache
         # 30s trong _fetch_camera) — khong them mot luot goi mang nao.
-        roi_zones = zones_from_payload(
+        # Quét thủ công (nút Phân tích khung hình, upload ảnh): bỏ ROI để phân
+        # tích TOÀN ảnh — ảnh upload thường khác khung/ROI của camera live, áp
+        # ROI sẽ che mất sản phẩm. Live path giữ nguyên ROI.
+        roi_zones = [] if manual_scan else zones_from_payload(
             (camera_info or {}).get("roi_zones")
+        )
+        is_checkout = manual_scan or bool(
+            camera_info and camera_info.get("is_checkout_zone")
         )
         tracking = await track_frame_detailed(
             content,
             camera_key,
-            is_checkout_zone=bool(camera_info and camera_info.get("is_checkout_zone")),
+            is_checkout_zone=is_checkout,
             roi_zones=roi_zones,
         )
         detections = tracking.detections
@@ -681,7 +688,32 @@ async def process_frame(
     # Chỉ chạy khi CẢ HAI: camera được đánh dấu là checkout zone VÀ cờ
     # scan_mode bật. Thêm một nhánh riêng thay vì sửa logic ghép người ở
     # trên, để các camera kệ/cửa giữ nguyên hành vi cũ — không phá vỡ gì.
-    if (
+    if manual_scan:
+        # Nhập đơn thủ công từ ảnh upload: mỗi lần là một phiên RIÊNG (đơn mới),
+        # emit MỌI sản phẩm nhận được, KHÔNG dedup/đối soát theo phiên live. Nhờ
+        # phiên riêng nên không đụng vào giỏ đang chạy của luồng camera.
+        manual_track = f"manual-{uuid.uuid4().hex[:8]}"
+        present: dict[str, float] = {}
+        for product, sku in products:
+            present[sku] = max(present.get(sku, 0.0), float(product.confidence))
+        for sku, conf in present.items():
+            event = {
+                "event_id": uuid.uuid4().hex,
+                "event_type": "product_scanned",
+                "organization_id": str(organization_id),
+                "branch_id": str(branch_id),
+                "camera_id": str(camera_id) if camera_id else None,
+                "track_id": manual_track,
+                "product_id": None,
+                "product_sku": sku,
+                "quantity": 1,
+                "confidence": conf,
+                "customer_id": str(customer_id) if customer_id else None,
+                "occurred_at": datetime.now(timezone.utc).isoformat(),
+            }
+            result = await _post_event(event)
+            emitted.append({"event": event, "backend": result})
+    elif (
         camera_info
         and camera_info.get("is_checkout_zone")
         and getattr(vision_cfg, "checkout_scan_mode", False)
