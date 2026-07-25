@@ -125,17 +125,25 @@ def _checkout_gap_seconds() -> float:
         return 25.0
 
 
-def _checkout_session_track(camera_key: str, now: float) -> str:
+def _checkout_session_track(camera_key: str, now: float, has_products: bool) -> str:
     """track_id gửi backend cho quầy, xoay theo khoảng lặng để tách khách.
 
-    Backend suy session giỏ từ track_id, nên đổi track_id = mở giỏ mới. Trong
-    một đợt quét liên tục (cùng một khách), 'now - last' luôn nhỏ nên epoch
-    giữ nguyên -> mọi món của khách đó vào chung một giỏ. Sau khoảng lặng,
-    epoch tăng -> khách kế được giỏ riêng. Chuỗi 'checkout-<epoch>' ngắn, an
-    toàn với giới hạn cột session_id.
+    Backend suy session giỏ từ track_id, nên đổi track_id = mở giỏ mới. Khoảng
+    lặng đo bằng thời gian kể từ lần cuối quầy CÓ SẢN PHẨM, không phải kể từ
+    khung trước — vì nhánh này chạy mỗi khung kể cả khung trống. Nếu cập nhật
+    'last' mỗi khung thì 'now - last' luôn ~1 khung, KHÔNG BAO GIỜ vượt gap ->
+    epoch không xoay -> mọi khách dồn chung một giỏ (đúng lỗi đang gặp). Vì thế
+    chỉ chạm 'last' khi has_products: quầy trống đủ lâu (khách rời) thì lần đặt
+    kế của khách sau mới vượt gap và mở giỏ mới.
+
+    Chuỗi 'checkout-<epoch>' ngắn, an toàn với giới hạn cột session_id.
     """
-    gap = _checkout_gap_seconds()
     last, epoch = _CHECKOUT_SESSION.get(camera_key, (0.0, 0))
+    if not has_products:
+        # Khung trống: KHÔNG chạm 'last' để khoảng lặng tích luỹ. Trả epoch
+        # hiện tại (không có sản phẩm nào để gán nên giá trị này không dùng tới).
+        return f"checkout-{epoch}"
+    gap = _checkout_gap_seconds()
     if now - last > gap:
         epoch += 1
     _CHECKOUT_SESSION[camera_key] = (now, epoch)
@@ -671,7 +679,7 @@ async def process_frame(
         # session_id — camera UUID xuất hiện hai lần, session_id phình dài.
         # Chuỗi "checkout-<epoch>" đủ ngắn; backend đã bảo đảm duy nhất theo
         # camera bằng tiền tố của nó.
-        checkout_track = _checkout_session_track(camera_key, now)
+        checkout_track = _checkout_session_track(camera_key, now, bool(products))
         # Bộ SKU đã ghi nhận cho ĐÚNG phiên này. checkout_track đổi khi sang
         # khách mới -> key mới -> tập rỗng -> khách kế quét lại từ đầu. Dọn các
         # phiên cũ của chính camera này để dict không phình theo thời gian.
