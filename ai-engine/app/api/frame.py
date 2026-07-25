@@ -84,16 +84,34 @@ _STALE_TRACK_SECONDS = 120.0
 # mọi khách qua quầy dồn chung một giỏ (lỗi "nhiều người thành một đơn").
 _CHECKOUT_SESSION: dict[str, tuple[float, int]] = {}
 
-# Khử trùng lặp cho quầy: mỗi phiên khách đếm mỗi SKU MỘT lần. Key =
-# "<camera_key>:<checkout_track>" (checkout_track đổi khi sang khách mới) ->
-# tập SKU đã ghi nhận. Vì sao KHÔNG dùng cooldown theo track như trước: sản
-# phẩm đặt yên trên quầy sống lâu hơn cooldown 5s nên bị đếm lại; và track_id
-# của đề xuất contour đổi khi vật xê dịch nhẹ nên mỗi lần thành "track mới" ->
-# đếm lại. Cả hai làm 1 sản phẩm thành 2-3. Khoá theo (phiên, SKU) loại bỏ cả
-# hai. Đánh đổi: một khách đặt 2 sản phẩm CÙNG loại sẽ chỉ tính 1 — chấp nhận
-# được cho quầy demo (mỗi loại 1), và không có tracking ổn định thì không thể
-# phân biệt "2 cái giống nhau" với "1 cái thấy hai lần".
-_CHECKOUT_SCANNED: dict[str, set[str]] = {}
+# Khử trùng lặp + đối soát cho quầy: mỗi phiên khách đếm mỗi SKU MỘT lần, và
+# tự gỡ khỏi giỏ khi SKU biến mất khỏi khung đủ lâu. Key =
+# "<camera_key>:<checkout_track>" (đổi khi sang khách mới) -> { sku: lần thấy
+# cuối (giây, cùng đồng hồ với biến `now` = time.time() trong frame) }.
+#
+# Vì sao KHÔNG dùng cooldown theo track như trước: sản phẩm đặt yên trên quầy
+# sống lâu hơn cooldown 5s nên bị đếm lại; track_id của đề xuất contour đổi khi
+# vật xê dịch nhẹ nên mỗi lần thành "track mới" -> đếm lại. Cả hai làm 1 sản
+# phẩm thành 2-3. Khoá theo (phiên, SKU) loại bỏ cả hai.
+#
+# Đối soát: mỗi khung cập nhật "lần thấy cuối" cho SKU đang hiện; SKU đã ghi
+# nhận mà vắng mặt lâu hơn CHECKOUT_ABSENT_SECONDS thì phát product_returned để
+# GỠ khỏi giỏ — nên món nhận nhầm (vd Hảo Hảo thoáng qua) không bị khoá cứng,
+# và giỏ luôn phản ánh những gì đang thực sự trên quầy.
+#
+# Đánh đổi: một khách đặt 2 sản phẩm CÙNG loại chỉ tính 1 (không có tracking
+# ổn định thì không phân biệt "2 cái giống nhau" với "1 cái thấy hai lần").
+_CHECKOUT_SCANNED: dict[str, dict[str, float]] = {}
+
+
+def _checkout_absent_seconds() -> float:
+    """Vắng mặt bao lâu (giây) thì gỡ SKU khỏi giỏ quầy. Đủ lớn để nhiễu nhận
+    diện thoáng qua không làm món thật nhấp nháy; đủ nhỏ để nhấc sản phẩm ra là
+    giỏ cập nhật kịp. Chỉnh bằng CHECKOUT_ABSENT_SECONDS."""
+    try:
+        return float(os.getenv("CHECKOUT_ABSENT_SECONDS", "5"))
+    except ValueError:
+        return 5.0
 
 
 def _backend_base_url() -> str:
@@ -687,17 +705,43 @@ async def process_frame(
         for old in [k for k in _CHECKOUT_SCANNED
                     if k.startswith(f"{camera_key}:") and k != session_key]:
             _CHECKOUT_SCANNED.pop(old, None)
-        scanned_skus = _CHECKOUT_SCANNED.setdefault(session_key, set())
+        scanned = _CHECKOUT_SCANNED.setdefault(session_key, {})
+
+        # SKU đang hiện trong khung này (giữ confidence cao nhất để gửi kèm).
+        present: dict[str, float] = {}
         for product, sku in products:
-            # Mỗi SKU chỉ tính MỘT lần cho mỗi phiên khách — xem chú thích
-            # _CHECKOUT_SCANNED. Thay cho cooldown theo track vốn đếm lại sản
-            # phẩm đứng yên và track_id nhấp nháy.
-            if sku in scanned_skus:
-                continue
-            scanned_skus.add(sku)
+            present[sku] = max(present.get(sku, 0.0), float(product.confidence))
+
+        # 1) Thêm SKU mới; cập nhật "lần thấy cuối" cho SKU đang hiện.
+        for sku, conf in present.items():
+            if sku not in scanned:
+                event = {
+                    "event_id": uuid.uuid4().hex,
+                    "event_type": "product_scanned",
+                    "organization_id": str(organization_id),
+                    "branch_id": str(branch_id),
+                    "camera_id": str(camera_id) if camera_id else None,
+                    "track_id": checkout_track,
+                    "product_id": None,
+                    "product_sku": sku,
+                    "quantity": 1,
+                    "confidence": conf,
+                    "customer_id": str(customer_id) if customer_id else None,
+                    "occurred_at": datetime.now(timezone.utc).isoformat(),
+                }
+                result = await _post_event(event)
+                emitted.append({"event": event, "backend": result})
+            scanned[sku] = now
+
+        # 2) Đối soát: SKU đã ghi nhận nhưng vắng mặt quá lâu -> GỠ khỏi giỏ.
+        # Chạy cả khi quầy trống (present rỗng) nên nhấc hết sản phẩm ra thì giỏ
+        # cũng được dọn theo. Dùng product_returned mà backend đã hỗ trợ sẵn.
+        absent_sec = _checkout_absent_seconds()
+        for sku in [s for s, last in scanned.items()
+                    if s not in present and now - last > absent_sec]:
             event = {
                 "event_id": uuid.uuid4().hex,
-                "event_type": "product_scanned",
+                "event_type": "product_returned",
                 "organization_id": str(organization_id),
                 "branch_id": str(branch_id),
                 "camera_id": str(camera_id) if camera_id else None,
@@ -705,12 +749,13 @@ async def process_frame(
                 "product_id": None,
                 "product_sku": sku,
                 "quantity": 1,
-                "confidence": product.confidence,
+                "confidence": 1.0,
                 "customer_id": str(customer_id) if customer_id else None,
                 "occurred_at": datetime.now(timezone.utc).isoformat(),
             }
             result = await _post_event(event)
             emitted.append({"event": event, "backend": result})
+            scanned.pop(sku, None)
 
     # Product-returned detection: a sku that was picked up (has a cooldown
     # entry, i.e. we actually emitted product_picked_up for it) but hasn't
