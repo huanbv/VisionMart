@@ -151,3 +151,25 @@ def apply_roi(frame_bgr: np.ndarray, zones: list[RoiZone]) -> np.ndarray:
 
     masked = cv2.bitwise_and(frame_bgr, frame_bgr, mask=mask)
     return masked
+
+
+def point_in_zones(
+    zones: list[RoiZone], x: float, y: float, width: int, height: int
+) -> bool:
+    """True khi điểm pixel (x, y) nằm trong hợp của các vùng.
+
+    Dùng cho lớp phủ xem-trực-tiếp: chỉ VẼ box của vật có tâm nằm trong vùng
+    để hình khớp với hành vi thêm-vào-giỏ (vốn dựa trên mặt nạ ROI). Vùng
+    rỗng => coi như không giới hạn (trả True), giữ nguyên hành vi cũ khi camera
+    chưa vẽ vùng.
+    """
+    if not zones:
+        return True
+
+    import cv2
+
+    for zone in zones:
+        polygon = zone.to_pixel_polygon(width, height)
+        if cv2.pointPolygonTest(polygon, (float(x), float(y)), False) >= 0:
+            return True
+    return False

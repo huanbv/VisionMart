@@ -12,8 +12,9 @@ from app.vision.roi.zones import (
     RoiZone,
     apply_roi,
     load_roi_config,
+    point_in_zones,
     zones_from_payload,
 )
 
 __all__ = ["RoiZone", "apply_roi", "load_roi_config",
-    "zones_from_payload"]
+    "point_in_zones", "zones_from_payload"]

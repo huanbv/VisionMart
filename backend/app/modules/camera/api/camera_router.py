@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import uuid
 from typing import Any
@@ -512,12 +513,17 @@ async def live_camera_stream(
         )
 
     client = AIEngineClient()
+    # Chuyển vùng ROI xuống ai-engine để lớp phủ live chỉ vẽ box TRONG vùng,
+    # khớp với hành vi thêm-vào-giỏ (vốn dựa trên mặt nạ ROI). Không có vùng
+    # thì bỏ qua — panel giữ nguyên hành vi vẽ cả khung như trước.
+    roi_zones_json = json.dumps(camera.roi_zones) if camera.roi_zones else None
     return StreamingResponse(
         client.live_stream(
             stream_url=camera.stream_url,
             open_timeout_ms=get_settings().RTSP_CAPTURE_OPEN_TIMEOUT_MS,
             detect=detect,
             detect_every_n=detect_every_n,
+            roi_zones=roi_zones_json,
         ),
         media_type="multipart/x-mixed-replace; boundary=frame",
     )

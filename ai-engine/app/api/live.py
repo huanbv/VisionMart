@@ -30,6 +30,7 @@ the backend — rtsp.scan_all — is the source of truth for that).
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import time
 from typing import Any
@@ -42,6 +43,7 @@ from app.security import require_api_key
 from app.services.yolo_detector import YoloDetector
 from app.vision.classify import get_classifier
 from app.vision.crop.cropper import crop_detection
+from app.vision.roi import RoiZone, point_in_zones, zones_from_payload
 
 logger = logging.getLogger("ai-engine.live")
 
@@ -147,6 +149,28 @@ def _label_with_sku(frame, detections: list[dict]) -> None:
             det["sku_confidence"] = res.confidence
 
 
+def _filter_by_zones(
+    frame, detections: list[dict], zones: list[RoiZone]
+) -> list[dict]:
+    """Chỉ giữ box có TÂM nằm trong vùng ROI, để lớp phủ xem-trực-tiếp khớp
+    với hành vi thêm-vào-giỏ (vốn dựa trên mặt nạ ROI). Không có vùng => giữ
+    nguyên tất cả (hành vi cũ)."""
+    if not zones:
+        return detections
+    h, w = frame.shape[:2]
+    out: list[dict] = []
+    for det in detections:
+        bbox = det.get("bbox") or {}
+        try:
+            cx = (float(bbox["x1"]) + float(bbox["x2"])) / 2.0
+            cy = (float(bbox["y1"]) + float(bbox["y2"])) / 2.0
+        except (KeyError, TypeError, ValueError):
+            continue
+        if point_in_zones(zones, cx, cy, w, h):
+            out.append(det)
+    return out
+
+
 def _draw_detections(frame, detections: list[dict]) -> None:
     """Mutates `frame` in place, drawing a box + label per detection."""
     for det in detections:
@@ -231,6 +255,7 @@ async def _mjpeg_frames(
     jpeg_quality: int,
     detect: bool,
     detect_every_n: int,
+    zones: list[RoiZone] | None = None,
 ):
     fps = max(_MIN_FPS, min(_MAX_FPS, fps))
     interval = 1.0 / fps
@@ -313,10 +338,13 @@ async def _mjpeg_frames(
                         )
 
             if detector is not None:
-                _draw_detections(frame, last_detections)
+                # Lọc theo vùng NGAY TRƯỚC khi vẽ (dùng kích thước khung hiện
+                # tại), để panel chỉ hiện box trong vùng — khớp với giỏ.
+                visible = _filter_by_zones(frame, last_detections, zones or [])
+                _draw_detections(frame, visible)
                 _draw_hud(
                     frame,
-                    object_count=len(last_detections),
+                    object_count=len(visible),
                     infer_ms=last_infer_ms,
                     fps=achieved_fps,
                     model_name=detector.model_name,
@@ -352,7 +380,18 @@ async def live_stream(
     detect_every_n: int = Query(
         default=3, ge=_MIN_DETECT_EVERY_N, le=_MAX_DETECT_EVERY_N
     ),
+    roi_zones: str | None = Query(default=None, max_length=20000),
 ) -> StreamingResponse:
+    # roi_zones: JSON các vùng (toạ độ phân số) do backend chuyển xuống. Chỉ
+    # để LỌC box hiển thị cho khớp giỏ; lỗi parse thì bỏ qua (panel vẫn chạy,
+    # chỉ mất phần lọc) — không bao giờ làm hỏng luồng.
+    zones: list[RoiZone] = []
+    if roi_zones:
+        try:
+            zones = zones_from_payload(json.loads(roi_zones))
+        except Exception:  # noqa: BLE001
+            logger.warning("live stream: roi_zones parse lỗi, bỏ lọc vùng", exc_info=True)
+            zones = []
     return StreamingResponse(
         _mjpeg_frames(
             request,
@@ -362,6 +401,7 @@ async def live_stream(
             jpeg_quality,
             detect,
             detect_every_n,
+            zones,
         ),
         media_type=f"multipart/x-mixed-replace; boundary={_BOUNDARY.decode()}",
     )
