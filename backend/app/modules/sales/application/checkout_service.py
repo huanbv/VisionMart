@@ -128,9 +128,16 @@ class CheckoutService:
         cart.checkout_token = secrets.token_urlsafe(24)
         cart.checkout_requested_at = _now()
         cart.status = CartStatus.PENDING_CHECKOUT
-        cart.expires_at = _now() + timedelta(
-            minutes=self._settings.CART_CHECKOUT_CONFIRM_TIMEOUT_MINUTES
+        # Cart AI cho cửa sổ xác nhận dài hơn (15') và khi hết hạn sẽ bị DỌN
+        # hẳn (xem cart_sweeper), không resume — vì đơn AI chưa ai xác nhận
+        # thì nên biến mất khỏi màn hình, không quay lại trạng thái mua tiếp.
+        # Cart nhân viên tạo tay vẫn giữ cửa sổ ngắn và resume như cũ.
+        confirm_minutes = (
+            self._settings.AI_CART_EXPIRATION_MINUTES
+            if cart.source == CartSource.AI_VISION
+            else self._settings.CART_CHECKOUT_CONFIRM_TIMEOUT_MINUTES
         )
+        cart.expires_at = _now() + timedelta(minutes=confirm_minutes)
         await self._carts.commit()
         await self._carts.refresh(cart)
         await self._events.publish(sales_events.checkout_pending(cart, cart.checkout_token))

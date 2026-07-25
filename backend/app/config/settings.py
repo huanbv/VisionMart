@@ -126,6 +126,11 @@ class Settings(BaseSettings):
     # ---- Shopping Cart / AI checkout ----
     AI_ENGINE_API_KEY: str = "change-me-ai-engine-key"
     CART_EXPIRATION_MINUTES: int = 30
+    # Cart do AI dựng có vòng đời ngắn hơn cart thủ công: nếu 15 phút không
+    # có hoạt động nào (AI thêm/bớt món) và không ai xác nhận thanh toán,
+    # cart tự bị dọn (chuyển ABANDONED, nhả tồn kho). Tách khỏi
+    # CART_EXPIRATION_MINUTES để không đổi hành vi cart nhân viên tạo tay.
+    AI_CART_EXPIRATION_MINUTES: int = 15
     CART_SWEEPER_INTERVAL_SECONDS: int = 60
     CART_AI_MIN_CONFIDENCE: float = 0.6
 

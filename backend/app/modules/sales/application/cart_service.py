@@ -111,6 +111,13 @@ class CartService:
             organization_id, branch_id, session_id
         )
 
+    def _expiry_minutes(self, source: CartSource) -> int:
+        """TTL cart theo nguồn. Cart AI dùng cửa sổ ngắn hơn (15') để đơn
+        chưa xác nhận không đọng lâu trên màn hình; cart thủ công giữ 30'."""
+        if source == CartSource.AI_VISION:
+            return self._settings.AI_CART_EXPIRATION_MINUTES
+        return self._settings.CART_EXPIRATION_MINUTES
+
     # ------------------------------------------------------------------
     # Commands
     # ------------------------------------------------------------------
@@ -134,7 +141,7 @@ class CartService:
             if existing is not None:
                 return existing
 
-        expires_at = _now() + timedelta(minutes=self._settings.CART_EXPIRATION_MINUTES)
+        expires_at = _now() + timedelta(minutes=self._expiry_minutes(source))
         cart = ShoppingCart(
             organization_id=organization_id,
             branch_id=branch_id,
@@ -189,7 +196,7 @@ class CartService:
         lines.append(line)
         cart.items = lines
         cart.total_amount = self._sum_total(lines)
-        cart.expires_at = _now() + timedelta(minutes=self._settings.CART_EXPIRATION_MINUTES)
+        cart.expires_at = _now() + timedelta(minutes=self._expiry_minutes(cart.source))
         await self._carts.commit()
         await self._carts.refresh(cart)
         await self._events.publish(sales_events.cart_line_added(cart))
