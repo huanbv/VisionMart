@@ -260,6 +260,7 @@ def identify(
             yolo_confidence=float(getattr(det, "confidence", 0.0) or 0.0),
             classification=effective,
             classifier_min_confidence=min_conf,
+            classifier_min_margin=float(getattr(cfg, "classifier_min_margin", 0.0)),
             ocr=ocr,
         )
 

@@ -177,6 +177,12 @@ services:
       YOLO_MODEL: ${YOLO_MODEL:-yolov8n.pt}
       YOLO_CONF_THRESHOLD: ${YOLO_CONF_THRESHOLD:-0.25}
       YOLO_DEVICE: ${YOLO_DEVICE:-cpu}
+      # Fix #1 audit: bật đề xuất vùng contour để nhận gói mì (COCO 80 lớp
+      # không có lớp mì). Chỉ có tác dụng trong ROI đã vẽ.
+      ENABLE_CLASSICAL_PROPOSALS: ${ENABLE_CLASSICAL_PROPOSALS:-true}
+      # Fix #2 audit: margin tối thiểu để chấp nhận nhãn classifier — chặn
+      # vật lạ (cốc/sách/điện thoại) bị ép thành SKU. 0.0 = tắt.
+      CLASSIFIER_MIN_MARGIN: ${CLASSIFIER_MIN_MARGIN:-0.20}
       MINIO_ENDPOINT: ${MINIO_ENDPOINT:-minio:9000}
       MINIO_ROOT_USER: ${MINIO_ROOT_USER:-visionmart}
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-visionmart-minio}

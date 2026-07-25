@@ -95,6 +95,7 @@ def match_product(
     yolo_confidence: float,
     classification: Any | None = None,
     classifier_min_confidence: float = 0.55,
+    classifier_min_margin: float = 0.0,
     ocr_text: str | None = None,
     ocr_confidence: float | None = None,
     ocr: Any | None = None,
@@ -128,8 +129,23 @@ def match_product(
     if ocr_confidence is not None:
         stage_conf["ocr"] = round(float(ocr_confidence), 4)
 
+    # Cổng margin (mở-tập): vật lạ bị softmax ép về một SKU thường có top-1
+    # và top-2 sát nhau. Nếu margin dưới ngưỡng thì coi như classifier KHÔNG
+    # chắc chắn — bỏ qua nhánh chấp nhận bên dưới, để rơi xuống class_map/none
+    # thay vì thêm nhầm sản phẩm. margin=None (không có runner-up) coi như đạt.
+    margin_ok = (
+        classifier_min_margin <= 0.0
+        or cls_margin is None
+        or float(cls_margin) >= classifier_min_margin
+    )
+
     # --- 1. Classifier, when confident enough ---
-    if cls_sku and cls_conf is not None and cls_conf >= classifier_min_confidence:
+    if (
+        cls_sku
+        and cls_conf is not None
+        and cls_conf >= classifier_min_confidence
+        and margin_ok
+    ):
         final = combine_confidence(
             yolo=yolo_confidence, classifier=cls_conf, ocr=ocr_confidence
         )
@@ -200,7 +216,12 @@ def match_product(
         # reading we just rejected would overstate the confidence.
         final = combine_confidence(yolo=yolo_confidence)
         stage_conf["final"] = final
-        if cls_sku:
+        if cls_sku and cls_conf is not None and cls_conf >= classifier_min_confidence and not margin_ok:
+            reason = (
+                f"classifier margin thấp ({float(cls_margin):.2f} < "
+                f"{classifier_min_margin:.2f}) — nghi vật lạ; used class map"
+            )
+        elif cls_sku:
             reason = (
                 f"classifier below threshold ({cls_conf:.2f} < "
                 f"{classifier_min_confidence:.2f}); used class map"

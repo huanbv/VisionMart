@@ -260,6 +260,17 @@ class VisionConfig:
     classifier_min_confidence: float = field(
         default_factory=lambda: _float("CLASSIFIER_MIN_CONFIDENCE", 0.55)
     )
+    # Khoảng cách tối thiểu giữa lớp top-1 và top-2 (margin) để CHẤP NHẬN
+    # nhãn của classifier. Classifier chỉ có N lớp SKU và KHÔNG có lớp
+    # "unknown", nên một vật lạ (cốc, sách, điện thoại COCO khoanh được) vẫn
+    # bị softmax ép về một SKU. Vật thật thì một lớp trội hẳn (margin lớn);
+    # vật lạ thì xác suất chia đều giữa các lớp (margin nhỏ). Đòi hỏi margin
+    # tối thiểu là cách rẻ để loại phần lớn dương-tính-giả này mà không cần
+    # train lại. Đặt 0.0 để tắt (giữ hành vi cũ). Lưu ý: đây là biện pháp
+    # giảm thiểu, không thay được việc train một lớp nền/other cho classifier.
+    classifier_min_margin: float = field(
+        default_factory=lambda: _float("CLASSIFIER_MIN_MARGIN", 0.20)
+    )
     # Crop padding as a fraction of box size; label edges carry the brand.
     crop_padding: float = field(default_factory=lambda: _float("CROP_PADDING", 0.08))
     crop_min_size: int = field(default_factory=lambda: _int("CROP_MIN_SIZE", 24))
