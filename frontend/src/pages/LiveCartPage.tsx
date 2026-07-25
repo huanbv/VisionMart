@@ -12,6 +12,7 @@ import {
   Select,
   Space,
   Statistic,
+  Switch,
   Tag,
   Tooltip,
   Typography,
@@ -40,7 +41,9 @@ import {
   removeCartLine,
 } from "@/api/carts";
 import { type Branch, listBranches } from "@/api/tenancy";
+import { type Camera, listCameras } from "@/api/cameras";
 import { tokenStore } from "@/api/client";
+import LiveCameraView from "@/components/LiveCameraView";
 
 const REFRESH_MS = 30_000;
 
@@ -85,6 +88,38 @@ export default function LiveCartPage() {
   const [loading, setLoading] = useState(false);
   const [wsConnected, setWsConnected] = useState(false);
   const [qrByCart, setQrByCart] = useState<Record<string, CartCheckoutQrResponse>>({});
+  // Camera trực tiếp đặt cạnh giỏ để đối chiếu: sản phẩm AI thêm vào giỏ có
+  // đúng với cảnh thật trên quầy không.
+  const [cameras, setCameras] = useState<Camera[]>([]);
+  const [liveCameraId, setLiveCameraId] = useState<string | undefined>();
+  const [showLive, setShowLive] = useState(true);
+  const [liveDetect, setLiveDetect] = useState(true);
+
+  useEffect(() => {
+    if (!branchId) {
+      setCameras([]);
+      setLiveCameraId(undefined);
+      return;
+    }
+    (async () => {
+      try {
+        const res = await listCameras({ branch_id: branchId, is_active: true, limit: 100 });
+        setCameras(res.items);
+        // Ưu tiên camera quầy thanh toán (nơi giỏ AI được tạo) làm mặc định.
+        const preferred =
+          res.items.find((c) => c.is_checkout_zone) ?? res.items[0];
+        setLiveCameraId(preferred?.id);
+      } catch {
+        setCameras([]);
+        setLiveCameraId(undefined);
+      }
+    })();
+  }, [branchId]);
+
+  const liveCamera = useMemo(
+    () => cameras.find((c) => c.id === liveCameraId),
+    [cameras, liveCameraId],
+  );
 
   useEffect(() => {
     (async () => {
@@ -277,6 +312,69 @@ export default function LiveCartPage() {
             </Button>
           </Col>
         </Row>
+      </Card>
+
+      <Card
+        title={
+          <Space>
+            <Typography.Text strong>Camera trực tiếp</Typography.Text>
+            <Typography.Text type="secondary" style={{ fontWeight: 400 }}>
+              (đối chiếu giỏ hàng với cảnh thật trên quầy)
+            </Typography.Text>
+          </Space>
+        }
+        extra={
+          <Space size="large">
+            <Space>
+              <Typography.Text type="secondary">Khung nhận diện</Typography.Text>
+              <Switch checked={liveDetect} onChange={setLiveDetect} size="small" />
+            </Space>
+            <Space>
+              <Typography.Text type="secondary">Hiện camera</Typography.Text>
+              <Switch checked={showLive} onChange={setShowLive} size="small" />
+            </Space>
+          </Space>
+        }
+      >
+        {showLive ? (
+          <Row gutter={16} align="middle">
+            <Col flex="280px">
+              <Space direction="vertical" style={{ width: "100%" }}>
+                <Typography.Text type="secondary">Chọn camera</Typography.Text>
+                <Select
+                  style={{ width: "100%" }}
+                  placeholder="Chọn camera"
+                  value={liveCameraId}
+                  onChange={setLiveCameraId}
+                  notFoundContent="Chi nhánh chưa có camera"
+                  options={cameras.map((c) => ({
+                    label: `${c.name}${c.is_checkout_zone ? " — Quầy thanh toán" : ""}`,
+                    value: c.id,
+                  }))}
+                />
+                {liveCamera && !liveCamera.is_checkout_zone && (
+                  <Typography.Text type="warning" style={{ fontSize: 12 }}>
+                    Camera này không phải quầy thanh toán — giỏ AI thường tạo từ
+                    camera quầy.
+                  </Typography.Text>
+                )}
+              </Space>
+            </Col>
+            <Col flex="auto">
+              <div style={{ maxWidth: 720, margin: "0 auto" }}>
+                {liveCamera ? (
+                  <LiveCameraView camera={liveCamera} detect={liveDetect} />
+                ) : (
+                  <Empty description="Chưa chọn camera" />
+                )}
+              </div>
+            </Col>
+          </Row>
+        ) : (
+          <Typography.Text type="secondary">
+            Đã ẩn camera — bật lại bằng công tắc "Hiện camera".
+          </Typography.Text>
+        )}
       </Card>
 
       <Row gutter={16}>
