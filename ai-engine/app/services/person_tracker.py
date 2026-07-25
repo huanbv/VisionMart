@@ -92,6 +92,21 @@ class TrackedObject:
 # ByteTrack (đếm từ 1 lên) để hai bên không bao giờ đè id lên nhau.
 _PROPOSAL_ID_BASE = 1_000_000
 
+# Confidence danh nghĩa gán cho một đề xuất contour.
+#
+# QUAN TRỌNG: điểm số của đề xuất (propose_regions) là TỈ LỆ DIỆN TÍCH của
+# vùng (~0.01–0.05 cho một gói mì trên bàn), KHÔNG phải độ tin cậy kiểu
+# detector. Nếu đem tỉ lệ đó làm `confidence` thì frame.py sẽ loại vùng ngay
+# ở cổng `det.confidence < min_confidence` (mặc định 0.4) — tức mọi gói mì
+# do contour đề xuất bị vứt TRƯỚC khi tới classifier, "có thấy nhưng không
+# vào đơn". Cổng lọc ĐÚNG cho vùng contour là chính bộ phân loại SKU (ngưỡng
+# CLASSIFIER_MIN_CONFIDENCE = 0.55): lớp 'region' không có đường ánh xạ theo
+# tên lớp, nên chỉ khi classifier tự tin mới sinh ra SKU; vùng nhiễu vẫn bị
+# loại đúng chỗ đó. Vì thế ở đây gán một confidence cố định vượt cổng
+# detection để vùng CHẮC CHẮN tới được classifier, rồi để classifier quyết.
+_PROPOSAL_CONFIDENCE = 0.60
+
+
 
 def _iou(a: "TrackedObject", bx1: int, by1: int, bx2: int, by2: int) -> float:
     ix1, iy1 = max(a.x1, bx1), max(a.y1, by1)
@@ -137,7 +152,10 @@ def _merge_classical_proposals(
             TrackedObject(
                 track_id=int(pseudo_id),
                 class_name="region",
-                confidence=float(r.score),
+                # KHÔNG dùng r.score (tỉ lệ diện tích) làm confidence — xem
+                # chú thích _PROPOSAL_CONFIDENCE. Vùng to/nhỏ chênh nhau chút
+                # đỉnh để giữ thứ tự ưu tiên, nhưng luôn vượt cổng detection.
+                confidence=min(0.95, _PROPOSAL_CONFIDENCE + float(r.score)),
                 x1=float(r.x1),
                 y1=float(r.y1),
                 x2=float(r.x2),
