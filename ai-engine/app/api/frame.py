@@ -77,6 +77,13 @@ _LAST_CLEANUP_TS = 0.0
 _CLEANUP_INTERVAL_SECONDS = 60.0
 _STALE_TRACK_SECONDS = 120.0
 
+# --- phiên checkout theo từng camera quầy ---
+# camera_key -> (thời điểm quét gần nhất, số thứ tự phiên). Mỗi khách ở quầy
+# là một "phiên": khi có khoảng lặng (không quét được sản phẩm nào) đủ dài,
+# khách trước coi như đã rời, lần quét kế mở phiên mới -> giỏ mới. Nếu không,
+# mọi khách qua quầy dồn chung một giỏ (lỗi "nhiều người thành một đơn").
+_CHECKOUT_SESSION: dict[str, tuple[float, int]] = {}
+
 
 def _backend_base_url() -> str:
     return os.getenv("BACKEND_BASE_URL", "http://backend:8000/api/v1")
@@ -91,6 +98,37 @@ def _cooldown_seconds() -> float:
         return float(os.getenv("TRACK_PICK_COOLDOWN_SECONDS", "5"))
     except ValueError:
         return 5.0
+
+
+def _checkout_gap_seconds() -> float:
+    """Khoảng lặng (giây) để coi là khách mới ở quầy. Không quét được sản
+    phẩm nào lâu hơn ngần này -> khách trước đã rời, mở phiên/giỏ mới.
+
+    Đánh đổi: quá ngắn thì một khách quét chậm (ngập ngừng) bị tách làm hai
+    giỏ; quá dài thì hai khách liền nhau bị gộp một giỏ. 25 giây là mặc định
+    cân bằng; chỉnh bằng biến CHECKOUT_SESSION_GAP_SECONDS.
+    """
+    try:
+        return float(os.getenv("CHECKOUT_SESSION_GAP_SECONDS", "25"))
+    except ValueError:
+        return 25.0
+
+
+def _checkout_session_track(camera_key: str, now: float) -> str:
+    """track_id gửi backend cho quầy, xoay theo khoảng lặng để tách khách.
+
+    Backend suy session giỏ từ track_id, nên đổi track_id = mở giỏ mới. Trong
+    một đợt quét liên tục (cùng một khách), 'now - last' luôn nhỏ nên epoch
+    giữ nguyên -> mọi món của khách đó vào chung một giỏ. Sau khoảng lặng,
+    epoch tăng -> khách kế được giỏ riêng. Chuỗi 'checkout-<epoch>' ngắn, an
+    toàn với giới hạn cột session_id.
+    """
+    gap = _checkout_gap_seconds()
+    last, epoch = _CHECKOUT_SESSION.get(camera_key, (0.0, 0))
+    if now - last > gap:
+        epoch += 1
+    _CHECKOUT_SESSION[camera_key] = (now, epoch)
+    return f"checkout-{epoch}"
 
 
 def _return_missing_seconds() -> float:
@@ -611,24 +649,24 @@ async def process_frame(
         and camera_info.get("is_checkout_zone")
         and getattr(vision_cfg, "checkout_scan_mode", False)
     ):
+        # Một track_id cho cả khung này, xoay theo khoảng lặng giữa các khách.
+        # Tính một lần dựa trên hoạt động của quầy (có sản phẩm nào không),
+        # KHÔNG theo track từng sản phẩm — nếu mỗi sản phẩm một track_id thì
+        # mỗi sản phẩm rơi vào một giỏ khác nhau. Còn cố định "checkout" như
+        # trước thì mọi khách qua quầy dồn chung một giỏ (lỗi đang gặp).
+        #
+        # KHÔNG dùng _track_key ở đây: nó chèn camera_key (một UUID) vào, mà
+        # backend LẠI thêm tiền tố "cam:{camera_id}:track:" khi dựng
+        # session_id — camera UUID xuất hiện hai lần, session_id phình dài.
+        # Chuỗi "checkout-<epoch>" đủ ngắn; backend đã bảo đảm duy nhất theo
+        # camera bằng tiền tố của nó.
+        checkout_track = _checkout_session_track(camera_key, now)
         for product, sku in products:
-            # Khoá theo chính track của sản phẩm (không phải track người),
-            # để một chai đặt yên trên quầy không bị đếm lại mỗi khung.
+            # Khoá cooldown theo chính track của sản phẩm (không phải track
+            # người), để một chai đặt yên trên quầy không bị đếm lại mỗi khung.
             scan_key = _track_key(camera_key, f"scan-{product.track_id}")
             if not _cooldown_ok(scan_key, sku):
                 continue
-            # track_id gửi backend là CỐ ĐỊNH cho quầy, không theo track
-            # sản phẩm: backend suy session giỏ hàng từ track_id, nên nếu
-            # mỗi sản phẩm mang track riêng thì mỗi sản phẩm rơi vào một
-            # giỏ khác nhau. Cố định để cả quầy dùng chung một đơn đang mở.
-            #
-            # KHÔNG dùng _track_key ở đây: nó chèn camera_key (một UUID) vào
-            # track_id, mà backend LẠI thêm tiền tố "cam:{camera_id}:track:"
-            # khi dựng session_id — thành ra camera UUID xuất hiện hai lần
-            # và session_id vượt 80 ký tự (giới hạn cột). Chuỗi ngắn
-            # "checkout" là đủ: backend đã bảo đảm duy nhất theo camera bằng
-            # tiền tố của nó. Cooldown ở trên vẫn theo track sản phẩm.
-            checkout_track = "checkout"
             event = {
                 "event_id": uuid.uuid4().hex,
                 "event_type": "product_scanned",
