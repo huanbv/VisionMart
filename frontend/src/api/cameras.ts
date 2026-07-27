@@ -338,3 +338,18 @@ export async function updateRoiZones(
   );
   return data;
 }
+
+export interface TriggerScanResponse {
+  status: string;
+  camera_id: string;
+  camera_name: string;
+  captured_at: string;
+  frame_base64: string;
+  emitted_events: unknown[];
+  detections: Array<{ class_name: string; confidence: number; track_id: number }>;
+}
+
+export async function triggerCameraScan(cameraId: string): Promise<TriggerScanResponse> {
+  const { data } = await apiClient.post<TriggerScanResponse>(`/cameras/${cameraId}/trigger-scan`);
+  return data;
+}

@@ -307,3 +307,45 @@ async def abandon_cart(
     except ConflictError as e:
         raise HTTPException(status.HTTP_409_CONFLICT, str(e))
     return _cart_to_response(cart)
+
+
+@router.post("/bulk-abandon")
+async def bulk_abandon_carts(
+    payload: dict,
+    current: CurrentUser = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    cart_ids = payload.get("cart_ids", [])
+    service = build_cart_service(session)
+    count = 0
+    errors = []
+    if not cart_ids:
+        # Abandon all active carts for branch/org
+        branch_id = payload.get("branch_id")
+        b_id = uuid.UUID(str(branch_id)) if branch_id else None
+        active_carts, _ = await service.list(current.organization_id, branch_id=b_id, status=CartStatus.ACTIVE, limit=100)
+        pending_carts, _ = await service.list(current.organization_id, branch_id=b_id, status=CartStatus.PENDING_CHECKOUT, limit=100)
+        cart_ids = [c.id for c in active_carts + pending_carts]
+
+    for cid in cart_ids:
+        try:
+            uid = uuid.UUID(str(cid))
+            await service.abandon(current.organization_id, uid)
+            count += 1
+        except Exception as e:
+            errors.append(f"{cid}: {e}")
+
+    # Also notify AI Engine to reset checkout session if active
+    try:
+        import httpx
+        from app.core.config import get_settings
+        st = get_settings()
+        async with httpx.AsyncClient(timeout=3.0) as client:
+            await client.post(
+                f"{st.AI_ENGINE_BASE_URL}/ai/reset-session",
+                headers={"X-AI-Engine-Key": st.AI_ENGINE_API_KEY},
+            )
+    except Exception:
+        pass
+
+    return {"status": "ok", "abandoned": count, "errors": errors}

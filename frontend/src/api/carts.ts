@@ -151,3 +151,11 @@ export async function cancelCheckout(cartId: string): Promise<Cart> {
   );
   return data;
 }
+
+export async function bulkAbandonCarts(cartIds?: string[], branchId?: string): Promise<{ status: string; abandoned: number }> {
+  const { data } = await apiClient.post<{ status: string; abandoned: number }>(
+    "/carts/bulk-abandon",
+    { cart_ids: cartIds || [], branch_id: branchId },
+  );
+  return data;
+}

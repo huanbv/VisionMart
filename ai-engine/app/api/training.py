@@ -40,6 +40,17 @@ class TrainStatusResponse(BaseModel):
     weight_key: str | None = None
     error: str | None = None
     progress: str | None = None
+    started_at: float | None = None
+    finished_at: float | None = None
+    current_epoch: int | None = None
+    total_epochs: int | None = None
+    stage: str | None = None
+    images_total: int | None = None
+    images_done: int | None = None
+    class_counts: dict[str, int] | None = None
+    train_count: int | None = None
+    val_count: int | None = None
+
 
 
 class DeployRequest(BaseModel):

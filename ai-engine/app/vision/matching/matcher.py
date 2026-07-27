@@ -140,10 +140,15 @@ def match_product(
     )
 
     # --- 1. Classifier, when confident enough ---
+    actual_min_conf = (
+        max(classifier_min_confidence, 0.68)
+        if str(class_name).lower() == "region"
+        else classifier_min_confidence
+    )
     if (
         cls_sku
         and cls_conf is not None
-        and cls_conf >= classifier_min_confidence
+        and cls_conf >= actual_min_conf
         and margin_ok
     ):
         final = combine_confidence(
@@ -216,7 +221,7 @@ def match_product(
         # reading we just rejected would overstate the confidence.
         final = combine_confidence(yolo=yolo_confidence)
         stage_conf["final"] = final
-        if cls_sku and cls_conf is not None and cls_conf >= classifier_min_confidence and not margin_ok:
+        if cls_sku and cls_conf is not None and cls_conf >= actual_min_conf and not margin_ok:
             reason = (
                 f"classifier margin thấp ({float(cls_margin):.2f} < "
                 f"{classifier_min_margin:.2f}) — nghi vật lạ; used class map"
@@ -224,7 +229,7 @@ def match_product(
         elif cls_sku:
             reason = (
                 f"classifier below threshold ({cls_conf:.2f} < "
-                f"{classifier_min_confidence:.2f}); used class map"
+                f"{actual_min_conf:.2f}); used class map"
             )
         else:
             reason = "classifier unavailable; used class map"

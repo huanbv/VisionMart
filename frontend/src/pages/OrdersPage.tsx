@@ -11,12 +11,13 @@ import {
   Tag,
   message,
 } from "antd";
-import { CloseCircleOutlined, DownloadOutlined, EyeOutlined } from "@ant-design/icons";
+import { DeleteOutlined, CloseCircleOutlined, DownloadOutlined, EyeOutlined } from "@ant-design/icons";
 import type { ColumnsType } from "antd/es/table";
 import type { Dayjs } from "dayjs";
 
 import { listBranches, type Branch } from "@/api/tenancy";
 import {
+  bulkCancelOrders,
   cancelOrder,
   exportOrdersCsv,
   getOrder,
@@ -61,6 +62,9 @@ export default function OrdersPage() {
   const [detailLoading, setDetailLoading] = useState(false);
   const [cancelling, setCancelling] = useState(false);
 
+  const [selectedRowKeys, setSelectedRowKeys] = useState<React.Key[]>([]);
+  const [bulkCancelling, setBulkCancelling] = useState(false);
+
   const load = async () => {
     setLoading(true);
     try {
@@ -78,6 +82,22 @@ export default function OrdersPage() {
       message.error("Không tải được đơn hàng");
     } finally {
       setLoading(false);
+    }
+  };
+
+  const onBulkCancel = async () => {
+    if (!selectedRowKeys.length) return;
+    setBulkCancelling(true);
+    try {
+      const ids = selectedRowKeys.map((k) => String(k));
+      const res = await bulkCancelOrders(ids);
+      message.success(`Đã hủy ${res.cancelled} đơn hàng thành công`);
+      setSelectedRowKeys([]);
+      load();
+    } catch {
+      message.error("Hủy hàng loạt thất bại");
+    } finally {
+      setBulkCancelling(false);
     }
   };
 
@@ -223,6 +243,18 @@ export default function OrdersPage() {
           <Button icon={<DownloadOutlined />} onClick={() => void onExport()}>
             Xuất CSV
           </Button>
+          {selectedRowKeys.length > 0 && canEdit && (
+            <Popconfirm
+              title={`Bạn có chắc chắn muốn hủy/xóa ${selectedRowKeys.length} đơn hàng đã chọn?`}
+              onConfirm={onBulkCancel}
+              okText="Đồng ý"
+              cancelText="Hủy"
+            >
+              <Button danger type="primary" loading={bulkCancelling} icon={<DeleteOutlined />}>
+                Xóa / Hủy hàng loạt ({selectedRowKeys.length})
+              </Button>
+            </Popconfirm>
+          )}
         </Space>
       }
     >
@@ -231,6 +263,14 @@ export default function OrdersPage() {
         columns={columns}
         dataSource={data}
         loading={loading}
+        rowSelection={
+          canEdit
+            ? {
+                selectedRowKeys,
+                onChange: (keys) => setSelectedRowKeys(keys),
+              }
+            : undefined
+        }
         pagination={{
           current: page,
           pageSize: PAGE_SIZE,

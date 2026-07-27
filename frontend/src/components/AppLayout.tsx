@@ -26,6 +26,7 @@ import {
   ThunderboltOutlined,
   UserOutlined,
   VideoCameraOutlined,
+  PlayCircleOutlined,
 } from "@ant-design/icons";
 import { Link, Outlet, useLocation, useNavigate } from "react-router-dom";
 
@@ -90,6 +91,11 @@ const MENU_ITEMS = [
         key: "/live-cart",
         icon: <ThunderboltOutlined />,
         label: <Link to="/live-cart">Giỏ hàng AI (Live)</Link>,
+      },
+      {
+        key: "/video-analysis",
+        icon: <PlayCircleOutlined />,
+        label: <Link to="/video-analysis">Phân tích Video AI</Link>,
       },
     ],
   },

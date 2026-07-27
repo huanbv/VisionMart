@@ -87,7 +87,11 @@ async def ingest_cart_event(
 ) -> AICartEventResponse:
     service = build_ai_cart_event_service(session)
     reason, cart, order = await service.apply_ai_event(event)
-    accepted = reason in ("accepted", "accepted_pending_confirmation")
+    accepted = reason in (
+        "accepted",
+        "accepted_pending_confirmation",
+        "accepted_already_in_cart",  # SKU đã trong giỏ — idempotent, không phải lỗi
+    )
     return AICartEventResponse(
         accepted=accepted,
         # Keep the "pending confirmation" nuance visible to the AI engine /

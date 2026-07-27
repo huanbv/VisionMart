@@ -19,7 +19,7 @@ COPY requirements.txt requirements-dev.txt ./
 # Install CPU-only PyTorch first from the dedicated wheel index to avoid
 # pulling the huge CUDA-bundled wheels from PyPI.
 RUN pip install \
-        --index-url https://download.pytorch.org/whl/cpu \
+        --index-url https://download.pytorch.org/whl/cu121 \
         torch==2.4.1 torchvision==0.19.1
 RUN pip install -r requirements.txt -r requirements-dev.txt
 

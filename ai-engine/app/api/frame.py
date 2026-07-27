@@ -64,7 +64,7 @@ router = APIRouter(prefix="/ai", tags=["ai-frame"], dependencies=[Depends(requir
 
 _COOLDOWN: dict[str, float] = {}
 _CAMERA_CACHE: dict[str, tuple[float, dict[str, Any]]] = {}
-_CAMERA_TTL_SECONDS = 30.0
+_CAMERA_TTL_SECONDS = 300.0
 
 # --- "held product" state for product_returned detection ---
 # track_key -> {sku: last_seen_ts} for skus that were picked up and are
@@ -105,13 +105,13 @@ _CHECKOUT_SCANNED: dict[str, dict[str, float]] = {}
 
 
 def _checkout_absent_seconds() -> float:
-    """Vắng mặt bao lâu (giây) thì gỡ SKU khỏi giỏ quầy. Đủ lớn để nhiễu nhận
-    diện thoáng qua không làm món thật nhấp nháy; đủ nhỏ để nhấc sản phẩm ra là
-    giỏ cập nhật kịp. Chỉnh bằng CHECKOUT_ABSENT_SECONDS."""
+    """Vắng mặt bao lâu (giây) thì gỡ SKU khỏi giỏ quầy. Để 120s để sản phẩm
+    đặt trên quầy không bị mất giỏ do nhiễu camera hoặc bị che tay tạm thời.
+    Chỉnh bằng CHECKOUT_ABSENT_SECONDS."""
     try:
-        return float(os.getenv("CHECKOUT_ABSENT_SECONDS", "5"))
+        return float(os.getenv("CHECKOUT_ABSENT_SECONDS", "120"))
     except ValueError:
-        return 5.0
+        return 120.0
 
 
 def _backend_base_url() -> str:
@@ -134,17 +134,24 @@ def _checkout_gap_seconds() -> float:
     phẩm nào lâu hơn ngần này -> khách trước đã rời, mở phiên/giỏ mới.
 
     Đánh đổi: quá ngắn thì một khách quét chậm (ngập ngừng) bị tách làm hai
-    giỏ; quá dài thì hai khách liền nhau bị gộp một giỏ. 25 giây là mặc định
+    giỏ; quá dài thì hai khách liền nhau bị gộp một giỏ. 30 giây là mặc định
     cân bằng; chỉnh bằng biến CHECKOUT_SESSION_GAP_SECONDS.
     """
     try:
-        return float(os.getenv("CHECKOUT_SESSION_GAP_SECONDS", "25"))
+        return float(os.getenv("CHECKOUT_SESSION_GAP_SECONDS", "30"))
     except ValueError:
-        return 25.0
+        return 30.0
 
 
-def _checkout_session_track(camera_key: str, now: float, has_products: bool) -> str:
+def _checkout_session_track(
+    camera_key: str, now: float, has_products: bool
+) -> tuple[str, str | None]:
     """track_id gửi backend cho quầy, xoay theo khoảng lặng để tách khách.
+
+    Returns (current_track, previous_track_or_None).
+    previous_track != None khi epoch vừa tăng — tức là khách cũ vừa được phát
+    hiện rời đi và khách mới bắt đầu — caller nên gửi checkout_initiated cho
+    previous_track để backend đóng giỏ cũ và sẵn sàng cho giỏ mới.
 
     Backend suy session giỏ từ track_id, nên đổi track_id = mở giỏ mới. Khoảng
     lặng đo bằng thời gian kể từ lần cuối quầy CÓ SẢN PHẨM, không phải kể từ
@@ -158,14 +165,18 @@ def _checkout_session_track(camera_key: str, now: float, has_products: bool) -> 
     """
     last, epoch = _CHECKOUT_SESSION.get(camera_key, (0.0, 0))
     if not has_products:
-        # Khung trống: KHÔNG chạm 'last' để khoảng lặng tích luỹ. Trả epoch
-        # hiện tại (không có sản phẩm nào để gán nên giá trị này không dùng tới).
-        return f"checkout-{epoch}"
+        # Khung trống: KHÔNG chạm 'last' để khoảng lặng tích luỹ.
+        return f"checkout-{epoch}", None
     gap = _checkout_gap_seconds()
+    old_track: str | None = None
     if now - last > gap:
+        old_epoch = epoch
         epoch += 1
+        # Chỉ thông báo phiên cũ nếu đã từng có ít nhất 1 phiên (epoch > 0 trước khi tăng).
+        if old_epoch > 0 or last > 0.0:
+            old_track = f"checkout-{old_epoch}"
     _CHECKOUT_SESSION[camera_key] = (now, epoch)
-    return f"checkout-{epoch}"
+    return f"checkout-{epoch}", old_track
 
 
 def _return_missing_seconds() -> float:
@@ -218,13 +229,13 @@ async def _fetch_camera(camera_id: uuid.UUID) -> dict[str, Any] | None:
         async with httpx.AsyncClient(timeout=5.0) as client:
             resp = await client.get(url, headers={"X-AI-Engine-Key": _api_key()})
         if resp.status_code >= 400:
-            return None
+            return cached[1] if cached else None
         data = resp.json()
         _CAMERA_CACHE[key] = (now, data)
         return data
     except httpx.HTTPError:
         logger.exception("fetch camera failed")
-        return None
+        return cached[1] if cached else None
 
 
 async def _lookup_customer_by_face(
@@ -468,14 +479,33 @@ def _pair_products_with_persons(
     if not persons:
         return pairs
     for product, sku in products:
-        best: tuple[float, TrackedObject] | None = None
+        best_hand: tuple[float, TrackedObject] | None = None
+        best_centroid: tuple[float, TrackedObject] | None = None
+        
         for person in persons:
-            d = math.hypot(person.cx - product.cx, person.cy - product.cy)
-            if best is None or d < best[0]:
-                best = (d, person)
-        if best is None:
+            # Check hand wrist proximity if available
+            has_hands = (getattr(person, "left_hand", None) is not None) or (getattr(person, "right_hand", None) is not None)
+            if has_hands:
+                dl = math.hypot(person.left_hand[0] - product.cx, person.left_hand[1] - product.cy) if person.left_hand else float('inf')
+                dr = math.hypot(person.right_hand[0] - product.cx, person.right_hand[1] - product.cy) if person.right_hand else float('inf')
+                min_hand_dist = min(dl, dr)
+                if min_hand_dist < 80.0:  # Proximity threshold of 80px
+                    if best_hand is None or min_hand_dist < best_hand[0]:
+                        best_hand = (min_hand_dist, person)
+            
+            # Centroid fallback
+            dc = math.hypot(person.cx - product.cx, person.cy - product.cy)
+            if best_centroid is None or dc < best_centroid[0]:
+                best_centroid = (dc, person)
+                
+        if best_hand is not None:
+            chosen_person = best_hand[1]
+        elif best_centroid is not None and best_centroid[0] < 180.0:
+            chosen_person = best_centroid[1]
+        else:
             continue
-        track_key = _track_key(camera_key, best[1].track_id)
+            
+        track_key = _track_key(camera_key, chosen_person.track_id)
         pairs.append((track_key, product, sku))
     return pairs
 
@@ -490,13 +520,56 @@ def _cooldown_ok(track_key: str, sku: str) -> bool:
     return True
 
 
+@router.post("/reset-session")
+async def reset_checkout_session(
+    camera_id: str | None = Form(None),
+) -> dict[str, Any]:
+    global _CHECKOUT_SESSION, _CHECKOUT_SCANNED, _HELD, _COOLDOWN
+    if camera_id:
+        found = False
+        for cam_key in list(_CHECKOUT_SESSION.keys()):
+            if camera_id in cam_key:
+                last, epoch = _CHECKOUT_SESSION[cam_key]
+                _CHECKOUT_SESSION[cam_key] = (0.0, epoch + 1)
+                found = True
+        if not found:
+            _CHECKOUT_SESSION[camera_id] = (0.0, 1)
+        for k in list(_CHECKOUT_SCANNED.keys()):
+            if camera_id in k:
+                _CHECKOUT_SCANNED.pop(k, None)
+        try:
+            from app.services.person_tracker import reset_reid
+            reset_reid(camera_id)
+        except Exception:
+            pass
+    else:
+        for cam_key, (last, epoch) in list(_CHECKOUT_SESSION.items()):
+            _CHECKOUT_SESSION[cam_key] = (0.0, epoch + 1)
+        _CHECKOUT_SCANNED.clear()
+        _HELD.clear()
+        _COOLDOWN.clear()
+        try:
+            from app.services.person_tracker import reset_reid
+            for cam_key in list(_CHECKOUT_SESSION.keys()):
+                reset_reid(cam_key)
+        except Exception:
+            pass
+    try:
+        from app.services.sku_identifier import reset_cache as reset_sku_cache
+        reset_sku_cache()
+    except Exception:
+        pass
+    logger.info("Checkout session reset requested (camera_id=%s)", camera_id)
+    return {"status": "ok", "message": "Checkout session reset successfully"}
+
+
 @router.post("/frame")
 async def process_frame(
     organization_id: uuid.UUID = Form(...),
     branch_id: uuid.UUID = Form(...),
     camera_id: uuid.UUID | None = Form(None),
     recognize_face: bool = Form(False),
-    min_confidence: float = Form(0.4),
+    min_confidence: float = Form(0.3),
     manual_scan: bool = Form(False),
     image: UploadFile = File(...),
 ) -> dict[str, Any]:
@@ -598,7 +671,7 @@ async def process_frame(
     if vision_cfg.enable_sku_classifier:
         try:
             for item in sku_identifier.identify(
-                tracking.frame_bgr,
+                tracking.raw_frame if tracking.raw_frame is not None else tracking.frame_bgr,
                 [d for d in detections if d.confidence >= min_confidence],
                 camera_key=camera_key,
                 organization_id=str(organization_id),
@@ -611,6 +684,7 @@ async def process_frame(
             identified = {}
 
     for det in detections:
+        logger.warning("DET: class=%s, conf=%.3f, track_id=%s", det.class_name, det.confidence, det.track_id)
         if det.confidence < min_confidence:
             continue
         if det.class_name.lower() == "person":
@@ -660,25 +734,26 @@ async def process_frame(
         _HELD.setdefault(track_key, {})[sku] = now
 
     emitted: list[dict[str, Any]] = []
-    for track_key, product, sku in pairs:
-        if not _cooldown_ok(track_key, sku):
-            continue
-        event = {
-            "event_id": uuid.uuid4().hex,
-            "event_type": "product_picked_up",
-            "organization_id": str(organization_id),
-            "branch_id": str(branch_id),
-            "camera_id": str(camera_id) if camera_id else None,
-            "track_id": track_key,
-            "product_id": None,
-            "product_sku": sku,
-            "quantity": 1,
-            "confidence": product.confidence,
-            "customer_id": str(customer_id) if customer_id else None,
-            "occurred_at": datetime.now(timezone.utc).isoformat(),
-        }
-        result = await _post_event(event)
-        emitted.append({"event": event, "backend": result})
+    if not is_checkout:
+        for track_key, product, sku in pairs:
+            if not _cooldown_ok(track_key, sku):
+                continue
+            event = {
+                "event_id": uuid.uuid4().hex,
+                "event_type": "product_picked_up",
+                "organization_id": str(organization_id),
+                "branch_id": str(branch_id),
+                "camera_id": str(camera_id) if camera_id else None,
+                "track_id": track_key,
+                "product_id": None,
+                "product_sku": sku,
+                "quantity": 1,
+                "confidence": product.confidence,
+                "customer_id": str(customer_id) if customer_id else None,
+                "occurred_at": datetime.now(timezone.utc).isoformat(),
+            }
+            result = await _post_event(event)
+            emitted.append({"event": event, "backend": result})
 
     # Chế độ quầy thanh toán: sản phẩm đặt trước camera quầy được tự động
     # thêm vào đơn, KHÔNG cần một người trong khung. Đây là mô hình đúng
@@ -729,7 +804,34 @@ async def process_frame(
         # session_id — camera UUID xuất hiện hai lần, session_id phình dài.
         # Chuỗi "checkout-<epoch>" đủ ngắn; backend đã bảo đảm duy nhất theo
         # camera bằng tiền tố của nó.
-        checkout_track = _checkout_session_track(camera_key, now, bool(products))
+        checkout_track, prev_track = _checkout_session_track(camera_key, now, bool(products))
+
+        # Khi epoch vừa tăng (khách mới vào sau khoảng lặng), gửi
+        # checkout_initiated cho phiên CŨ để backend đóng giỏ đó lại.
+        # Khách mới sẽ tự động nhận giỏ mới (track_id mới → session_id mới).
+        if prev_track and products:
+            logger.warning(
+                "CHECKOUT SESSION CHANGE: prev=%s → new=%s, closing old cart via checkout_initiated",
+                prev_track, checkout_track,
+            )
+            close_event = {
+                "event_id": uuid.uuid4().hex,
+                "event_type": "checkout_initiated",
+                "organization_id": str(organization_id),
+                "branch_id": str(branch_id),
+                "camera_id": str(camera_id) if camera_id else None,
+                "track_id": prev_track,
+                "product_id": None,
+                "product_sku": None,
+                "quantity": 1,
+                "confidence": 1.0,
+                "customer_id": str(customer_id) if customer_id else None,
+                "occurred_at": datetime.now(timezone.utc).isoformat(),
+            }
+            close_result = await _post_event(close_event)
+            emitted.append({"event": close_event, "backend": close_result})
+            logger.warning("CHECKOUT SESSION CHANGE: close result=%s", close_result)
+
         # Bộ SKU đã ghi nhận cho ĐÚNG phiên này. checkout_track đổi khi sang
         # khách mới -> key mới -> tập rỗng -> khách kế quét lại từ đầu. Dọn các
         # phiên cũ của chính camera này để dict không phình theo thời gian.
@@ -739,38 +841,57 @@ async def process_frame(
             _CHECKOUT_SCANNED.pop(old, None)
         scanned = _CHECKOUT_SCANNED.setdefault(session_key, {})
 
-        # SKU đang hiện trong khung này (giữ confidence cao nhất để gửi kèm).
-        present: dict[str, float] = {}
+        # SKU đang hiện trong khung này (đếm số lượng từng SKU và lưu confidence cao nhất).
+        present_counts: dict[str, int] = {}
+        present_conf: dict[str, float] = {}
         for product, sku in products:
-            present[sku] = max(present.get(sku, 0.0), float(product.confidence))
+            present_counts[sku] = present_counts.get(sku, 0) + 1
+            present_conf[sku] = max(present_conf.get(sku, 0.0), float(product.confidence))
 
-        # 1) Thêm SKU mới; cập nhật "lần thấy cuối" cho SKU đang hiện.
-        for sku, conf in present.items():
-            if sku not in scanned:
-                event = {
-                    "event_id": uuid.uuid4().hex,
-                    "event_type": "product_scanned",
-                    "organization_id": str(organization_id),
-                    "branch_id": str(branch_id),
-                    "camera_id": str(camera_id) if camera_id else None,
-                    "track_id": checkout_track,
-                    "product_id": None,
-                    "product_sku": sku,
-                    "quantity": 1,
-                    "confidence": conf,
-                    "customer_id": str(customer_id) if customer_id else None,
-                    "occurred_at": datetime.now(timezone.utc).isoformat(),
-                }
-                result = await _post_event(event)
-                emitted.append({"event": event, "backend": result})
-            scanned[sku] = now
+        logger.warning("CHECKOUT RUN: products=%s, present_counts=%s, scanned_cached=%s", 
+                       [(p.class_name, s) for p, s in products], present_counts, list(scanned.keys()))
+
+        pending_events: list[dict[str, Any]] = []
+        for sku, count in present_counts.items():
+            conf = present_conf[sku]
+            info = scanned.get(sku)
+            already_scanned = isinstance(info, dict) and info.get("count", 0) > 0
+            if already_scanned:
+                logger.warning("CHECKOUT SKIP: sku=%s is already scanned (last_seen=%f)", sku, info.get("last_seen", 0.0))
+                scanned[sku]["last_seen"] = now
+                continue
+            logger.warning("CHECKOUT EVENT: creating product_scanned event for sku=%s, conf=%f", sku, conf)
+            event = {
+                "event_id": uuid.uuid4().hex,
+                "event_type": "product_scanned",
+                "organization_id": str(organization_id),
+                "branch_id": str(branch_id),
+                "camera_id": str(camera_id) if camera_id else None,
+                "track_id": checkout_track,
+                "product_id": None,
+                "product_sku": sku,
+                "quantity": 1,
+                "confidence": conf,
+                "customer_id": str(customer_id) if customer_id else None,
+                "occurred_at": datetime.now(timezone.utc).isoformat(),
+            }
+            pending_events.append(event)
+            scanned[sku] = {"count": 1, "last_seen": now}
+
+        if pending_events:
+            logger.warning("CHECKOUT EVENT SEND: sending events %s", [e["product_sku"] for e in pending_events])
+            event_results = await asyncio.gather(*[_post_event(e) for e in pending_events])
+            for e, r in zip(pending_events, event_results):
+                logger.warning("CHECKOUT EVENT RESULT: sku=%s, backend_response=%s", e["product_sku"], r)
+                emitted.append({"event": e, "backend": r})
 
         # 2) Đối soát: SKU đã ghi nhận nhưng vắng mặt quá lâu -> GỠ khỏi giỏ.
-        # Chạy cả khi quầy trống (present rỗng) nên nhấc hết sản phẩm ra thì giỏ
+        # Chạy cả khi quầy trống (present_counts rỗng) nên nhấc hết sản phẩm ra thì giỏ
         # cũng được dọn theo. Dùng product_returned mà backend đã hỗ trợ sẵn.
         absent_sec = _checkout_absent_seconds()
-        for sku in [s for s, last in scanned.items()
-                    if s not in present and now - last > absent_sec]:
+        for sku in [s for s, data in list(scanned.items())
+                    if s not in present_counts and isinstance(data, dict) and now - data.get("last_seen", 0.0) > absent_sec]:
+            curr_count = scanned[sku].get("count", 1) if isinstance(scanned[sku], dict) else 1
             event = {
                 "event_id": uuid.uuid4().hex,
                 "event_type": "product_returned",
@@ -780,7 +901,7 @@ async def process_frame(
                 "track_id": checkout_track,
                 "product_id": None,
                 "product_sku": sku,
-                "quantity": 1,
+                "quantity": curr_count,
                 "confidence": 1.0,
                 "customer_id": str(customer_id) if customer_id else None,
                 "occurred_at": datetime.now(timezone.utc).isoformat(),
@@ -797,70 +918,56 @@ async def process_frame(
     # don't know whether they kept the item (e.g. walked to checkout) or
     # put it down, so we stay silent and just let stale state expire (see
     # _cleanup_stale_state).
-    missing_seconds = _return_missing_seconds()
-    for track_key in present_track_keys:
-        held = _HELD.get(track_key)
-        if not held:
-            continue
-        currently_paired = paired_now.get(track_key, set())
-        for sku in list(held.keys()):
-            if sku in currently_paired:
+    if not is_checkout:
+        missing_seconds = _return_missing_seconds()
+        for track_key in present_track_keys:
+            held = _HELD.get(track_key)
+            if not held:
                 continue
-            last_seen = held[sku]
-            if now - last_seen < missing_seconds:
-                continue
-            pick_key = f"{track_key}:{sku}"
-            if pick_key not in _COOLDOWN:
-                # Was paired briefly but never actually resulted in a cart
-                # addition (still within the original pickup cooldown) —
-                # nothing to return.
+            currently_paired = paired_now.get(track_key, set())
+            for sku in list(held.keys()):
+                if sku in currently_paired:
+                    continue
+                last_seen = held[sku]
+                if now - last_seen < missing_seconds:
+                    continue
+                pick_key = f"{track_key}:{sku}"
+                if pick_key not in _COOLDOWN:
+                    # Was paired briefly but never actually resulted in a cart
+                    # addition (still within the original pickup cooldown) —
+                    # nothing to return.
+                    del held[sku]
+                    continue
+                event = {
+                    "event_id": uuid.uuid4().hex,
+                    "event_type": "product_returned",
+                    "organization_id": str(organization_id),
+                    "branch_id": str(branch_id),
+                    "camera_id": str(camera_id) if camera_id else None,
+                    "track_id": track_key,
+                    "product_id": None,
+                    "product_sku": sku,
+                    "quantity": 1,
+                    "confidence": 1.0,
+                    "customer_id": str(customer_id) if customer_id else None,
+                    "occurred_at": datetime.now(timezone.utc).isoformat(),
+                }
+                result = await _post_event(event)
+                emitted.append({"event": event, "backend": result})
                 del held[sku]
-                continue
-            event = {
-                "event_id": uuid.uuid4().hex,
-                "event_type": "product_returned",
-                "organization_id": str(organization_id),
-                "branch_id": str(branch_id),
-                "camera_id": str(camera_id) if camera_id else None,
-                "track_id": track_key,
-                "product_id": None,
-                "product_sku": sku,
-                "quantity": 1,
-                "confidence": 1.0,
-                "customer_id": str(customer_id) if customer_id else None,
-                "occurred_at": datetime.now(timezone.utc).isoformat(),
-            }
-            result = await _post_event(event)
-            emitted.append({"event": event, "backend": result})
-            del held[sku]
-            # Clear the cooldown too so picking the same item back up right
-            # away emits a fresh product_picked_up instead of being
-            # suppressed by the original cooldown window.
-            _COOLDOWN.pop(pick_key, None)
-        if not held:
-            _HELD.pop(track_key, None)
+                # Clear the cooldown too so picking the same item back up right
+                # away emits a fresh product_picked_up instead of being
+                # suppressed by the original cooldown window.
+                _COOLDOWN.pop(pick_key, None)
+            if not held:
+                _HELD.pop(track_key, None)
 
-    if camera_info and camera_info.get("is_checkout_zone") and persons:
-        for person in persons:
-            track_key = _track_key(camera_key, person.track_id)
-            if not _cooldown_ok(track_key, "__checkout__"):
-                continue
-            event = {
-                "event_id": uuid.uuid4().hex,
-                "event_type": "checkout_initiated",
-                "organization_id": str(organization_id),
-                "branch_id": str(branch_id),
-                "camera_id": str(camera_id) if camera_id else None,
-                "track_id": track_key,
-                "product_id": None,
-                "product_sku": None,
-                "quantity": 1,
-                "confidence": person.confidence,
-                "customer_id": str(customer_id) if customer_id else None,
-                "occurred_at": datetime.now(timezone.utc).isoformat(),
-            }
-            result = await _post_event(event)
-            emitted.append({"event": event, "backend": result})
+    # In checkout zone mode, DO NOT fire checkout_initiated automatically on every frame
+    # for random person tracks, which freezes active carts into PENDING_CHECKOUT prematurely
+    # and forces backend to spawn continuous duplicate carts. Checkout is initiated when
+    # staff or customer clicks Checkout/QR.
+    # if camera_info and camera_info.get("is_checkout_zone") and persons:
+    #     ...
 
     # Hand the debug set to the background queue. Returns immediately
     # whether or not it was accepted; a dropped sample is counted, not
@@ -898,7 +1005,16 @@ async def process_frame(
         "detections": [
             {
                 "track_id": d.track_id,
-                "class_name": d.class_name,
+                "class_name": (
+                    identified[d.track_id].match.sku
+                    if (d.track_id in identified and identified[d.track_id].match and identified[d.track_id].match.sku)
+                    else d.class_name
+                ),
+                "sku": (
+                    identified[d.track_id].match.sku
+                    if (d.track_id in identified and identified[d.track_id].match and identified[d.track_id].match.sku)
+                    else map_class_to_sku(str(organization_id), str(branch_id), d.class_name)
+                ),
                 "confidence": d.confidence,
                 "bbox": {"x1": d.x1, "y1": d.y1, "x2": d.x2, "y2": d.y2},
             }

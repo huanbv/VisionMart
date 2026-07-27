@@ -615,6 +615,50 @@ export default function AiTrainingPage() {
                 <Tag color={STATUS_COLORS[v] || "default"}>{v}</Tag>
               ),
             },
+            {
+              title: "Tiến độ",
+              key: "progress",
+              render: (_, row) => {
+                const total = row.total_epochs || row.epochs || 0;
+                const current = row.current_epoch || 0;
+                const stage = row.stage || "";
+                const imgTotal = row.images_total || 0;
+                const imgDone = row.images_done || 0;
+
+                let percent = 0;
+                if (row.status === "succeeded") {
+                  percent = 100;
+                } else if (row.status === "failed") {
+                  percent = 0;
+                } else if (stage === "preparing" && imgTotal > 0) {
+                  percent = Math.max(5, Math.round((imgDone / imgTotal) * 15));
+                } else if (stage === "uploading") {
+                  percent = 97;
+                } else if (total > 0 && current > 0) {
+                  percent = 15 + Math.min(80, Math.round((current / total) * 80));
+                } else if (row.status === "running" || row.status === "pending") {
+                  percent = 5;
+                }
+
+                if (row.status === "succeeded") {
+                  return <Progress percent={100} size="small" />;
+                }
+                if (row.status === "failed") {
+                  return <Progress percent={100} status="exception" size="small" />;
+                }
+                if (row.status === "running" || row.status === "pending") {
+                  return (
+                    <div style={{ width: 140 }}>
+                      <Progress percent={percent} size="small" status="active" />
+                      <div style={{ fontSize: 10, color: "#8c8c8c", marginTop: -2 }}>
+                        {stage === "preparing" ? "Chuẩn bị..." : `Epoch: ${current}/${total}`}
+                      </div>
+                    </div>
+                  );
+                }
+                return "—";
+              }
+            },
             { title: "Epochs", dataIndex: "epochs" },
             {
               title: "Tạo lúc",

@@ -99,9 +99,11 @@ class CheckoutService:
         # read-check-write on the cart row (see request_checkout below for
         # why this matters even though this path has no separate confirm
         # step of its own).
-        cart = await cart_lookup.require_active_for_update(
+        cart = await cart_lookup.get_cart_for_update(
             self._carts, organization_id, cart_id
         )
+        if cart.status not in (CartStatus.ACTIVE, CartStatus.PENDING_CHECKOUT):
+            raise ConflictError(f"Cart cannot be checked out (status={cart.status.value})")
         if not (cart.items or []):
             raise ValidationError("Cart is empty")
         return await self._finalize_checkout(cart, performed_by=performed_by)
@@ -336,4 +338,9 @@ class CheckoutService:
 
         await self._events.publish(sales_events.payment_succeeded(cart, order))
         await self._events.publish(sales_events.receipt_generated(cart, order))
+        try:
+            from app.services.ai_engine_client import AIEngineClient
+            await AIEngineClient().reset_session()
+        except Exception:
+            pass
         return cart, order

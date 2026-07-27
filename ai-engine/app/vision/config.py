@@ -269,7 +269,7 @@ class VisionConfig:
     # train lại. Đặt 0.0 để tắt (giữ hành vi cũ). Lưu ý: đây là biện pháp
     # giảm thiểu, không thay được việc train một lớp nền/other cho classifier.
     classifier_min_margin: float = field(
-        default_factory=lambda: _float("CLASSIFIER_MIN_MARGIN", 0.20)
+        default_factory=lambda: _float("CLASSIFIER_MIN_MARGIN", 0.0)
     )
     # Crop padding as a fraction of box size; label edges carry the brand.
     crop_padding: float = field(default_factory=lambda: _float("CROP_PADDING", 0.08))

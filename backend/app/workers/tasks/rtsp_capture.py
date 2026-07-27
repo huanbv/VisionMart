@@ -92,31 +92,35 @@ async def _run_scan() -> dict:
     if not settings.RTSP_CAPTURE_ENABLED:
         return {"skipped": "disabled"}
 
-    async with SessionLocal() as session:
-        cameras = await SqlAlchemyCameraRepository(session).list_active_with_stream(
-            limit=settings.RTSP_CAPTURE_MAX_CAMERAS,
-        )
-        if not cameras:
-            return {"cameras": 0}
+    try:
+        async with SessionLocal() as session:
+            cameras = await SqlAlchemyCameraRepository(session).list_active_with_stream(
+                limit=settings.RTSP_CAPTURE_MAX_CAMERAS,
+            )
+            if not cameras:
+                return {"cameras": 0}
 
-        ai_client = AIEngineClient()
-        storage = MinioStorage(settings)
-        notifications = NotificationService(
-            SqlAlchemyNotificationRepository(session)
-        )
-        dispatcher = DetectionAlertDispatcher(notifications, settings)
+            ai_client = AIEngineClient()
+            storage = MinioStorage(settings)
+            notifications = NotificationService(
+                SqlAlchemyNotificationRepository(session)
+            )
+            dispatcher = DetectionAlertDispatcher(notifications, settings)
 
-        results: dict[str, str] = {}
-        for camera in cameras:
-            try:
-                cam_id, status = await _capture_one(
-                    session, ai_client, storage, dispatcher, camera
-                )
-                results[cam_id] = status
-            except Exception as exc:  # noqa: BLE001
-                logger.exception("rtsp capture failed for camera %s", camera.id)
-                results[str(camera.id)] = f"error: {exc}"
-        return {"cameras": len(cameras), "results": results}
+            results: dict[str, str] = {}
+            for camera in cameras:
+                try:
+                    cam_id, status = await _capture_one(
+                        session, ai_client, storage, dispatcher, camera
+                    )
+                    results[cam_id] = status
+                except Exception as exc:  # noqa: BLE001
+                    logger.exception("rtsp capture failed for camera %s", camera.id)
+                    results[str(camera.id)] = f"error: {exc}"
+            return {"cameras": len(cameras), "results": results}
+    finally:
+        from app.database.session import engine
+        await engine.dispose()
 
 
 @celery_app.task(name="rtsp.scan_all", ignore_result=True)

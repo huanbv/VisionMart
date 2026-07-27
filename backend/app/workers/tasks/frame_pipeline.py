@@ -135,6 +135,8 @@ async def _run_scan() -> dict:
         except Exception:  # noqa: BLE001
             pass
         await redis_client.aclose()
+        from app.database.session import engine
+        await engine.dispose()
 
 
 @celery_app.task(name="frame_pipeline.scan_all", ignore_result=True)

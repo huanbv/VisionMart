@@ -51,7 +51,7 @@ class SqlAlchemyBranchRepository:
             )
         ).scalar_one()
 
-        items_stmt = base.order_by(Branch.created_at.desc()).offset(skip).limit(limit)
+        items_stmt = base.order_by(Branch.created_at.asc()).offset(skip).limit(limit)
         items = (await self._session.execute(items_stmt)).scalars().all()
         return list(items), int(total)
 

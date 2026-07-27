@@ -88,15 +88,15 @@ def start_loop(camera_id: str, key: str) -> subprocess.Popen:
             "-an",
             "-vf", "scale='min(1280,iw)':-2",
             "-c:v", "libx264",
-            "-preset", "ultrafast",
+            "-preset", "veryfast",
             "-tune", "zerolatency",
-            "-g", "25",
-            "-keyint_min", "25",
+            "-g", "10",
+            "-keyint_min", "10",
             "-sc_threshold", "0",
             "-pix_fmt", "yuv420p",
-            "-b:v", "2500k",
-            "-maxrate", "3000k",
-            "-bufsize", "5000k",
+            "-b:v", "4000k",
+            "-maxrate", "5000k",
+            "-bufsize", "8000k",
             # genpts: khi -stream_loop quay vòng, timestamp của vòng mới
             # phải được sinh lại, nếu không decoder phía sau vấp mốc thời
             # gian thụt lùi và vỡ hình đúng lúc video lặp.

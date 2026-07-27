@@ -33,7 +33,7 @@ export default function LiveCameraView({
       camera.id,
       (url) => setFrame(url),
       (msg) => setError(msg),
-      { detect, detectEveryN: 5 },
+      { detect, detectEveryN: 3 },
     );
     return () => handle.stop();
   }, [camera.id, detect]);

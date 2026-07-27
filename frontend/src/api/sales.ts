@@ -109,3 +109,8 @@ export async function cancelOrder(id: string): Promise<OrderDetail> {
   const { data } = await apiClient.post<OrderDetail>(`/orders/${id}/cancel`);
   return data;
 }
+
+export async function bulkCancelOrders(orderIds: string[]): Promise<{ status: string; cancelled: number }> {
+  const { data } = await apiClient.post<{ status: string; cancelled: number }>("/orders/bulk-cancel", { order_ids: orderIds });
+  return data;
+}

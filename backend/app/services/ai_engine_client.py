@@ -68,6 +68,16 @@ class AIEngineClient:
             logger.warning("ai-engine get vision-config failed: %s", exc)
             raise AIEngineError(str(exc)) from exc
 
+    async def reset_session(self, camera_id: str | None = None) -> None:
+        """Reset the AI engine's checkout session and scanned state."""
+        url = f"{self._base_url}/ai/reset-session"
+        data = {"camera_id": camera_id} if camera_id else {}
+        try:
+            async with httpx.AsyncClient(timeout=5.0) as client:
+                await client.post(url, data=data, headers=self._headers)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("ai-engine reset session failed: %s", exc)
+
     async def update_vision_config(self, settings: dict[str, Any]) -> dict[str, Any]:
         """Persist runtime overrides so the operator doesn't have to edit
         ``.env`` and restart. A null value clears that override."""
@@ -216,7 +226,7 @@ class AIEngineClient:
         self,
         *,
         stream_url: str,
-        fps: float = 8.0,
+        fps: float = 30.0,
         open_timeout_ms: int = 5000,
         detect: bool = True,
         detect_every_n: int = 3,
@@ -240,6 +250,7 @@ class AIEngineClient:
             "stream_url": stream_url,
             "fps": fps,
             "open_timeout_ms": open_timeout_ms,
+            "jpeg_quality": 90,
             "detect": "true" if detect else "false",
             "detect_every_n": detect_every_n,
         }

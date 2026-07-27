@@ -74,7 +74,8 @@ class _VotedClassification:
 
     def __init__(self, vote, base) -> None:
         self.sku = vote.sku
-        self.confidence = vote.agreement           # đồng thuận = độ tin cậy
+        # Giữ nguyên độ tin cậy gốc từ mô hình phân loại để không đẩy nhầm ảnh nhiễu/điện thoại thành 100%
+        self.confidence = getattr(base, "confidence", vote.agreement)
         self.runner_up_sku = vote.runner_up_sku
         # margin theo tỉ lệ đồng thuận: dẫn đầu trừ á quân trong hòm phiếu.
         second = 0.0
@@ -263,6 +264,12 @@ def identify(
             classifier_min_margin=float(getattr(cfg, "classifier_min_margin", 0.0)),
             ocr=ocr,
         )
+
+        logger.warning("IDENTIFY: track_id=%s, class_name=%s, pred_sku=%s, pred_conf=%s, match_sku=%s, reason=%s",
+                       track_id, getattr(det, "class_name", ""),
+                       getattr(effective, "sku", None) if effective else None,
+                       getattr(effective, "confidence", None) if effective else None,
+                       match.sku, match.reason)
 
         # Chỉ CHỐT (ngừng phân loại lại) khi phiếu đã đồng thuận và kết quả
         # đủ mạnh. Track còn lưỡng lự sẽ tiếp tục được bỏ phiếu ở khung sau

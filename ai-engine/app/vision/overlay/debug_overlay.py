@@ -26,6 +26,8 @@ class OverlayDetection:
     y1: float
     x2: float
     y2: float
+    left_hand: tuple[float, float] | None = None
+    right_hand: tuple[float, float] | None = None
 
 
 def draw_debug_overlay(
@@ -74,6 +76,12 @@ def draw_debug_overlay(
         else:
             label = f"{label} {det.confidence:.2f}"
         cv2.putText(out, label, (p1[0], max(0, p1[1] - 6)), font, 0.5, (0, 255, 0), 1, cv2.LINE_AA)
+        
+        # Draw hand keypoints
+        if det.left_hand is not None:
+            cv2.circle(out, (int(det.left_hand[0]), int(det.left_hand[1])), 6, (0, 255, 255), -1)
+        if det.right_hand is not None:
+            cv2.circle(out, (int(det.right_hand[0]), int(det.right_hand[1])), 6, (0, 255, 255), -1)
 
     # Top-left HUD text block.
     lines = [

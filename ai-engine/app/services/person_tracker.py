@@ -36,37 +36,122 @@ logger = logging.getLogger("ai-engine.person_tracker")
 _TRACKERS: dict[str, Any] = {}
 _LOCK = asyncio.Lock()
 
-# Shared-weights mode (SHARE_YOLO_WEIGHTS, the default): one model object
-# for the whole process instead of one per camera. See `_get_model`.
-_SHARED_MODEL: Any = None
-_SHARED_WEIGHTS: str | None = None
-# ByteTrack state stays per-camera even when the weights are shared —
-# sharing tracker state would merge two shoppers into one cart.
-_TRACKER_STATE: dict[str, Any] = {}
+_SHARED_POSE_MODEL: Any = None
+_SHARED_DET_MODEL: Any = None
+_POSE_TRACKER_STATE: dict[str, Any] = {}
+_DET_TRACKER_STATE: dict[str, Any] = {}
 _ACTIVE_CAMERA: dict[str, str] = {}
-# Serialises inference when one model serves many cameras: the tracker-state
-# swap plus the forward pass must not interleave between cameras.
 _MODEL_LOCK = asyncio.Lock()
 
-# Per-camera snapshot of the most recent frame's vision metadata (quality,
-# ROI zones, timings, optional debug-overlay JPEG). Additive/optional —
-# nothing reads this unless it explicitly asks via `get_last_vision_result`.
 _LAST_VISION_RESULT: dict[str, dict[str, Any]] = {}
+_LATEST_PERSON_BOXES: dict[str, list[dict]] = {}
+
+def get_latest_person_boxes(camera_key: str) -> list[dict]:
+    import time
+    now = time.time()
+    boxes = _LATEST_PERSON_BOXES.get(camera_key, [])
+    valid_boxes = [b for b in boxes if now - b["timestamp"] < 10.0]
+    _LATEST_PERSON_BOXES[camera_key] = valid_boxes
+    return valid_boxes
 
 
 def reset_trackers() -> None:
-    """Clear cached models so a YOLO_MODEL change takes effect.
-
-    Clears the shared model too — after a retrained weight is deployed the
-    process must pick it up, and leaving the old object cached would keep
-    serving the previous model until the next restart.
-    """
-    global _SHARED_MODEL, _SHARED_WEIGHTS
+    global _SHARED_POSE_MODEL, _SHARED_DET_MODEL
     _TRACKERS.clear()
-    _TRACKER_STATE.clear()
+    _POSE_TRACKER_STATE.clear()
+    _DET_TRACKER_STATE.clear()
     _ACTIVE_CAMERA.clear()
-    _SHARED_MODEL = None
-    _SHARED_WEIGHTS = None
+    _SHARED_POSE_MODEL = None
+    _SHARED_DET_MODEL = None
+
+
+class ReIDManager:
+    def __init__(self, similarity_threshold=0.72):
+        self.threshold = similarity_threshold
+        self.features_db = {}
+        self.tracker_to_mapped = {}
+        self.next_id = 1
+        self.latest_crops = {}
+
+    def _extract_features(self, crop):
+        if crop is None or crop.size == 0:
+            return None
+        import cv2
+        import numpy as np
+        hsv = cv2.cvtColor(crop, cv2.COLOR_BGR2HSV)
+        hist = cv2.calcHist([hsv], [0, 1], None, [16, 16], [0, 180, 0, 256])
+        cv2.normalize(hist, hist)
+        return hist.flatten()
+
+    def get_mapped_id(self, tracker_id, frame, bbox):
+        if tracker_id in self.tracker_to_mapped:
+            mapped_id = self.tracker_to_mapped[tracker_id]
+        else:
+            import cv2
+            import numpy as np
+            x1, y1, x2, y2 = map(int, bbox)
+            h, w = frame.shape[:2]
+            x1, y1 = max(0, x1), max(0, y1)
+            x2, y2 = min(w, x2), min(h, y2)
+            
+            crop = frame[y1:y2, x1:x2]
+            new_feat = self._extract_features(crop)
+            
+            if new_feat is None:
+                mapped_id = self.next_id
+                self.tracker_to_mapped[tracker_id] = mapped_id
+                self.next_id += 1
+            else:
+                best_match_id = None
+                best_score = -1.0
+                
+                for mid, db_feat in self.features_db.items():
+                    score = cv2.compareHist(new_feat, db_feat, cv2.HISTCMP_CORREL)
+                    if score > best_score:
+                        best_score = score
+                        best_match_id = mid
+
+                if best_score >= self.threshold and best_match_id is not None:
+                    mapped_id = best_match_id
+                    self.features_db[mapped_id] = 0.8 * self.features_db[mapped_id] + 0.2 * new_feat
+                    self.features_db[mapped_id] /= np.linalg.norm(self.features_db[mapped_id])
+                    logger.info("[ReID] Matched Tracker ID %d to Persistent ID %d (Similarity: %.2f)", tracker_id, mapped_id, best_score)
+                else:
+                    mapped_id = self.next_id
+                    self.features_db[mapped_id] = new_feat
+                    self.next_id += 1
+                    logger.info("[ReID] Registered Tracker ID %d as new Persistent ID %d", tracker_id, mapped_id)
+
+            self.tracker_to_mapped[tracker_id] = mapped_id
+
+        # Save/update cropped image for this person
+        try:
+            import cv2
+            x1, y1, x2, y2 = map(int, bbox)
+            h, w = frame.shape[:2]
+            x1, y1 = max(0, x1), max(0, y1)
+            x2, y2 = min(w, x2), min(h, y2)
+            crop = frame[y1:y2, x1:x2]
+            if crop is not None and crop.size > 0:
+                ok, buf = cv2.imencode(".jpg", crop)
+                if ok:
+                    self.latest_crops[mapped_id] = buf.tobytes()
+        except Exception:
+            pass
+
+        return mapped_id
+
+_REID_MANAGERS: dict[str, ReIDManager] = {}
+
+def reset_reid(camera_key: str) -> None:
+    if camera_key in _REID_MANAGERS:
+        _REID_MANAGERS[camera_key] = ReIDManager(similarity_threshold=0.72)
+        logger.info("[ReID] Reset database for camera=%s", camera_key)
+
+def get_person_crop_bytes(camera_key: str, mapped_id: int) -> bytes | None:
+    if camera_key in _REID_MANAGERS:
+        return _REID_MANAGERS[camera_key].latest_crops.get(mapped_id)
+    return None
 
 
 @dataclass(frozen=True)
@@ -78,6 +163,8 @@ class TrackedObject:
     y1: float
     x2: float
     y2: float
+    left_hand: tuple[float, float] | None = None
+    right_hand: tuple[float, float] | None = None
 
     @property
     def cx(self) -> float:
@@ -165,99 +252,55 @@ def _merge_classical_proposals(
     return merged
 
 
-def _get_model(camera_key: str):
-    """Return the YOLO model this camera should use.
-
-    Two modes, selected by ``SHARE_YOLO_WEIGHTS``:
-
-    **Shared (default).** One ``YOLO`` object for the whole process. The
-    weights are identical for every camera — the same ``YOLO_MODEL`` file
-    was being loaded N times — so N copies bought nothing but memory:
-    roughly 6 MB of parameters plus ~150-250 MB of resident CUDA/inference
-    context *per camera*. At 8 cameras that is over a gigabyte of duplicate
-    state, and it is the main reason RAM scaled with camera count.
-
-    Tracker state stays per-camera regardless of this setting. ultralytics
-    keeps ByteTrack state on the *model object*, keyed by nothing — so a
-    naively shared model would let two cameras' tracks overwrite each
-    other's ids, merging two different shoppers into one cart. The shared
-    path therefore serialises calls through ``_MODEL_LOCK`` and swaps the
-    per-camera tracker state in around each call (see
-    ``_use_camera_tracker``).
-
-    **Per-camera.** The previous behaviour, kept behind the flag: it
-    genuinely parallelises better on a multi-GPU box, where the memory is
-    available and the lock would be the bottleneck instead.
-    """
-    from ultralytics import YOLO
-
-    cfg = get_vision_config()
-    weights = os.getenv("YOLO_MODEL", "yolov8n.pt")
-
-    if not getattr(cfg, "share_yolo_weights", True):
-        if camera_key in _TRACKERS:
-            return _TRACKERS[camera_key]
-        model = YOLO(weights)
-        _TRACKERS[camera_key] = model
-        logger.info("YOLO loaded for camera=%s (per-camera mode)", camera_key)
-        return model
-
-    global _SHARED_MODEL, _SHARED_WEIGHTS
-    if _SHARED_MODEL is None or _SHARED_WEIGHTS != weights:
-        _SHARED_MODEL = YOLO(weights)
-        _SHARED_WEIGHTS = weights
-        logger.info("YOLO loaded once, shared across all cameras: %s", weights)
-    return _SHARED_MODEL
+def _get_pose_model():
+    global _SHARED_POSE_MODEL
+    if _SHARED_POSE_MODEL is None:
+        from ultralytics import YOLO
+        # Search in /models/ first, then fallbacks
+        pose_path = "/models/yolov8n-pose.pt"
+        if not os.path.exists(pose_path):
+            pose_path = "models/yolov8n-pose.pt"
+        if not os.path.exists(pose_path):
+            pose_path = "yolov8n-pose.pt"
+        _SHARED_POSE_MODEL = YOLO(pose_path)
+        logger.info("YOLO Pose model loaded: %s", pose_path)
+    return _SHARED_POSE_MODEL
 
 
-def _use_camera_tracker(model, camera_key: str) -> None:
-    """Swap in this camera's ByteTrack state before a shared-model call.
+def _get_det_model():
+    global _SHARED_DET_MODEL
+    if _SHARED_DET_MODEL is None:
+        from ultralytics import YOLO
+        det_path = "/models/yolov8n.pt"
+        if not os.path.exists(det_path):
+            det_path = "models/yolov8n.pt"
+        if not os.path.exists(det_path):
+            det_path = "yolov8n.pt"
+        _SHARED_DET_MODEL = YOLO(det_path)
+        logger.info("YOLO Detection model loaded: %s", det_path)
+    return _SHARED_DET_MODEL
 
-    ultralytics stores the active trackers on ``model.predictor.trackers``.
-    When one model serves several cameras, that list must be exchanged per
-    call or track ids from different cameras collide — and a collision here
-    is not cosmetic: ``frame.py`` derives the cart session id from the
-    track id, so two shoppers would share one cart.
 
-    Best-effort by design: if ultralytics changes where it keeps this (it
-    is not public API), the swap silently does nothing and tracking
-    degrades to what a single shared tracker gives — still correct
-    detections, just less stable ids. That is an acceptable failure; raising
-    here would take the camera offline over an internal-attribute rename.
-    """
+def _use_camera_tracker_custom(model, camera_key: str, tracker_state_dict: dict) -> None:
     predictor = getattr(model, "predictor", None)
     if predictor is None:
-        return  # first call for this model — nothing to preserve yet
+        return
     try:
         current = getattr(predictor, "trackers", None)
         if current is not None:
-            _TRACKER_STATE[_ACTIVE_CAMERA.get("key", camera_key)] = current
-        saved = _TRACKER_STATE.get(camera_key)
+            tracker_state_dict[_ACTIVE_CAMERA.get("key_" + str(id(model)), camera_key)] = current
+        saved = tracker_state_dict.get(camera_key)
         if saved is not None:
             predictor.trackers = saved
         elif current is not None:
-            # Camera mới trên model đã ấm: XOÁ thuộc tính, tuyệt đối không
-            # gán None. ultralytics khởi tạo tracker trong on_predict_start
-            # bằng đúng một điều kiện:
-            #
-            #     if hasattr(predictor, "trackers") and persist: return
-            #
-            # nghĩa là chỉ cần thuộc tính TỒN TẠI (kể cả None) là nó bỏ qua
-            # khởi tạo, rồi bước postprocess truy cập trackers[i] và nổ
-            # "TypeError: 'NoneType' object is not subscriptable" — đánh sập
-            # cả /ai/frame cho camera đó vĩnh viễn, trong khi camera có
-            # trạng thái cũ vẫn chạy (đúng kiểu lỗi 200/500 xen kẽ đã gặp
-            # trên VPS khi hai camera thay phiên trên một model dùng chung).
-            # delattr khiến hasattr trả False và ultralytics tự tạo tracker
-            # mới sạch cho camera này.
             try:
                 delattr(predictor, "trackers")
             except AttributeError:
                 pass
-    except Exception:  # noqa: BLE001 — see docstring
+    except Exception:
         logger.debug("tracker state swap unavailable", exc_info=True)
     finally:
-        _ACTIVE_CAMERA["key"] = camera_key
+        _ACTIVE_CAMERA["key_" + str(id(model))] = camera_key
 
 
 def get_last_vision_result(camera_key: str) -> dict[str, Any] | None:
@@ -290,6 +333,8 @@ def _build_overlay_jpeg_base64(
             y1=d.y1,
             x2=d.x2,
             y2=d.y2,
+            left_hand=d.left_hand,
+            right_hand=d.right_hand,
         )
         for d in detections
     ]
@@ -329,6 +374,7 @@ class TrackingOutcome:
     frame_bgr: Any        # post ROI/enhancement — exactly what YOLO received
     opencv_ms: float
     yolo_bytetrack_ms: float
+    raw_frame: Any = None
 
 
 async def track_frame(
@@ -366,58 +412,119 @@ async def track_frame_detailed(
     frame_bgr = vision_result.frame
 
     async with _LOCK:
-        model = _get_model(camera_key)
+        model_pose = _get_pose_model()
+        model_det = _get_det_model()
 
     loop = asyncio.get_event_loop()
 
     def _run() -> list[TrackedObject]:
-        # ultralytics treats a raw ndarray as BGR (OpenCV's native order) —
-        # do NOT convert to RGB here, see app/vision/pipeline.py docstring.
-        results = model.track(
-            source=frame_bgr,
+        img = vision_result.raw_frame if vision_result.raw_frame is not None else frame_bgr
+        
+        if camera_key not in _REID_MANAGERS:
+            _REID_MANAGERS[camera_key] = ReIDManager(similarity_threshold=0.72)
+        reid_manager = _REID_MANAGERS[camera_key]
+
+        # 1. Run pose estimation tracking on persons
+        pose_results = model_pose.track(
+            source=img,
+            persist=True,
+            tracker="bytetrack.yaml",
+            classes=[0],
+            verbose=False,
+        )
+        out: list[TrackedObject] = []
+        keypoints_xy = []
+        if pose_results:
+            first_pose = pose_results[0]
+            names_pose = first_pose.names or {}
+            if first_pose.boxes is not None and first_pose.boxes.id is not None:
+                boxes = first_pose.boxes
+                ids = boxes.id.int().cpu().tolist()
+                if first_pose.keypoints is not None and first_pose.keypoints.xy is not None:
+                    keypoints_xy = first_pose.keypoints.xy.cpu().numpy()
+                
+                for i, tid in enumerate(ids):
+                    cls_idx = int(boxes.cls[i]) if boxes.cls is not None else 0
+                    class_name = names_pose.get(cls_idx, "person")
+                    conf = float(boxes.conf[i]) if boxes.conf is not None else 0.0
+                    xy = boxes.xyxy[i].tolist()
+                    
+                    mapped_tid = reid_manager.get_mapped_id(tid, img, xy)
+
+                    left_hand = None
+                    right_hand = None
+                    if i < len(keypoints_xy):
+                        kpts = keypoints_xy[i]
+                        if len(kpts) > 10:
+                            lw = kpts[9]
+                            rw = kpts[10]
+                            if lw[0] != 0 or lw[1] != 0:
+                                left_hand = (float(lw[0]), float(lw[1]))
+                            if rw[0] != 0 or rw[1] != 0:
+                                right_hand = (float(rw[0]), float(rw[1]))
+                                
+                    out.append(
+                        TrackedObject(
+                            track_id=int(mapped_tid),
+                            class_name=str(class_name),
+                            confidence=conf,
+                            x1=float(xy[0]),
+                            y1=float(xy[1]),
+                            x2=float(xy[2]),
+                            y2=float(xy[3]),
+                            left_hand=left_hand,
+                            right_hand=right_hand,
+                        )
+                    )
+                
+                import time
+                latest_boxes = []
+                for obj in out:
+                    if obj.class_name == "person":
+                        latest_boxes.append({
+                            "mapped_id": obj.track_id,
+                            "bbox": [obj.x1, obj.y1, obj.x2, obj.y2],
+                            "timestamp": time.time()
+                        })
+                _LATEST_PERSON_BOXES[camera_key] = latest_boxes
+
+        # 2. Run object detection tracking on products
+        det_results = model_det.track(
+            source=img,
             persist=True,
             tracker="bytetrack.yaml",
             verbose=False,
         )
-        out: list[TrackedObject] = []
-        if not results:
-            return out
-        first = results[0]
-        names = first.names or {}
-        if first.boxes is None:
-            return out
-        for box in first.boxes:
-            tid = box.id
-            if tid is None:
-                continue
-            cls_idx = int(box.cls[0]) if box.cls is not None else -1
-            class_name = names.get(cls_idx, str(cls_idx))
-            conf = float(box.conf[0]) if box.conf is not None else 0.0
-            xy = box.xyxy[0].tolist()
-            out.append(
-                TrackedObject(
-                    track_id=int(tid[0]),
-                    class_name=str(class_name),
-                    confidence=conf,
-                    x1=float(xy[0]),
-                    y1=float(xy[1]),
-                    x2=float(xy[2]),
-                    y2=float(xy[3]),
-                )
-            )
+        if det_results:
+            first_det = det_results[0]
+            names_det = first_det.names or {}
+            if first_det.boxes is not None and first_det.boxes.id is not None:
+                boxes = first_det.boxes
+                ids = boxes.id.int().cpu().tolist()
+                for i, tid in enumerate(ids):
+                    cls_idx = int(boxes.cls[i]) if boxes.cls is not None else -1
+                    class_name = names_det.get(cls_idx, str(cls_idx))
+                    if class_name.lower() == "person":
+                        continue
+                    conf = float(boxes.conf[i]) if boxes.conf is not None else 0.0
+                    xy = boxes.xyxy[i].tolist()
+                    out.append(
+                        TrackedObject(
+                            track_id=int(tid),
+                            class_name=str(class_name),
+                            confidence=conf,
+                            x1=float(xy[0]),
+                            y1=float(xy[1]),
+                            x2=float(xy[2]),
+                            y2=float(xy[3]),
+                        )
+                    )
         return out
 
     yolo_timer = StageTimer()
-    if getattr(cfg, "share_yolo_weights", True):
-        # One model object serves every camera, so the tracker-state swap
-        # and the forward pass must be atomic with respect to other
-        # cameras — otherwise camera B's swap lands between camera A's swap
-        # and its inference, and A tracks with B's state.
-        async with _MODEL_LOCK:
-            _use_camera_tracker(model, camera_key)
-            with yolo_timer:
-                detections = await loop.run_in_executor(None, _run)
-    else:
+    async with _MODEL_LOCK:
+        _use_camera_tracker_custom(model_pose, camera_key, _POSE_TRACKER_STATE)
+        _use_camera_tracker_custom(model_det, camera_key, _DET_TRACKER_STATE)
         with yolo_timer:
             detections = await loop.run_in_executor(None, _run)
 
@@ -428,6 +535,15 @@ async def track_frame_detailed(
         detections = _merge_classical_proposals(
             frame_bgr, detections, camera_key
         )
+
+    if vision_result.zones:
+        from app.vision.roi import point_in_zones
+        fh, fw = frame_bgr.shape[:2]
+        detections = [
+            d for d in detections
+            if str(getattr(d, "class_name", "")).lower() == "person"
+            or point_in_zones(vision_result.zones, d.cx, d.cy, fw, fh)
+        ]
 
     record_pipeline_timing(
         camera_key,
@@ -479,4 +595,5 @@ async def track_frame_detailed(
         frame_bgr=frame_bgr,
         opencv_ms=vision_result.opencv_ms,
         yolo_bytetrack_ms=yolo_timer.elapsed_ms,
+        raw_frame=vision_result.raw_frame,
     )

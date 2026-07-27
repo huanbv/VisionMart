@@ -523,6 +523,7 @@ async def live_camera_stream(
     return StreamingResponse(
         client.live_stream(
             stream_url=camera.stream_url,
+            fps=30.0,
             open_timeout_ms=get_settings().RTSP_CAPTURE_OPEN_TIMEOUT_MS,
             detect=detect,
             detect_every_n=detect_every_n,
@@ -530,6 +531,64 @@ async def live_camera_stream(
         ),
         media_type="multipart/x-mixed-replace; boundary=frame",
     )
+
+
+@router.post("/{camera_id}/trigger-scan")
+async def trigger_camera_scan(
+    camera_id: uuid.UUID,
+    current: CurrentUser = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """Capture 1 frame from the live camera stream right now, run AI Engine analysis,
+    update the cart, and return the detection breakdown & frame overlay to the frontend instantly."""
+    service = _service(session)
+    try:
+        camera = await service.get(current.organization_id, camera_id)
+    except NotFoundError as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+
+    if not camera.stream_url:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, detail="Camera has no stream_url configured")
+
+    client = AIEngineClient()
+    try:
+        cap_res = await client.capture(
+            stream_url=camera.stream_url,
+            open_timeout_ms=get_settings().RTSP_CAPTURE_OPEN_TIMEOUT_MS,
+        )
+    except AIEngineError as exc:
+        raise HTTPException(status.HTTP_502_BAD_GATEWAY, detail=f"AI engine error: {exc}") from exc
+
+    image_b64 = cap_res.get("frame_base64")
+    if not image_b64:
+        raise HTTPException(status.HTTP_502_BAD_GATEWAY, detail="Failed to capture frame from camera stream")
+
+    import base64
+    image_bytes = base64.b64decode(image_b64)
+
+    frame_res = {}
+    try:
+        frame_res = await client.detect_frame(
+            content=image_bytes,
+            filename="manual_capture.jpg",
+            content_type="image/jpeg",
+            organization_id=str(current.organization_id),
+            branch_id=str(camera.branch_id),
+            camera_id=str(camera_id),
+            manual_scan=False,
+        )
+    except Exception as exc:
+        logger.exception("AI engine detect_frame failed during manual trigger scan: %s", exc)
+
+    return {
+        "status": "ok",
+        "camera_id": str(camera_id),
+        "camera_name": camera.name,
+        "captured_at": datetime.utcnow().isoformat(),
+        "frame_base64": image_b64,
+        "emitted_events": frame_res.get("emitted_events", []),
+        "detections": frame_res.get("detections", []),
+    }
 
 
 @router.post("/{camera_id}/simulated-stream", response_model=CameraResponse)

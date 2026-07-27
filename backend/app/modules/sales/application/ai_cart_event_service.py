@@ -16,6 +16,8 @@ calls anything on `CheckoutService` that would confirm or pay.
 
 from __future__ import annotations
 
+import asyncio
+
 from app.config.settings import get_settings
 from app.core.exceptions import ConflictError
 from app.modules.catalog.infrastructure.models import Product
@@ -27,6 +29,15 @@ from app.modules.sales.application.checkout_service import CheckoutService
 from app.modules.sales.application.visitor_linker import resolve_global_track_id
 from app.modules.sales.infrastructure.models import CartSource, Order, ShoppingCart
 from app.modules.sales.schemas.ai_events import AICartEventRequest, AICartEventType
+
+_CART_LOCKS: dict[str, asyncio.Lock] = {}
+_LOCK_MUTEX = asyncio.Lock()
+
+async def _get_cart_lock(session_id: str) -> asyncio.Lock:
+    async with _LOCK_MUTEX:
+        if session_id not in _CART_LOCKS:
+            _CART_LOCKS[session_id] = asyncio.Lock()
+        return _CART_LOCKS[session_id]
 
 
 class AiCartEventService:
@@ -69,21 +80,23 @@ class AiCartEventService:
             local_track_id=event.track_id,
         )
 
-        if event.event_type in (
-            AICartEventType.PRODUCT_PICKED_UP,
-            AICartEventType.PRODUCT_SCANNED,
-        ):
-            # Cả hai đều thêm một dòng hàng vào giỏ. product_scanned đến từ
-            # camera quầy (không có track người), nhưng bước xử lý giống hệt.
-            return await self._handle_picked_up(event, session_id, global_track_id)
+        lock = await _get_cart_lock(session_id)
+        async with lock:
+            if event.event_type in (
+                AICartEventType.PRODUCT_PICKED_UP,
+                AICartEventType.PRODUCT_SCANNED,
+            ):
+                # Cả hai đều thêm một dòng hàng vào giỏ. product_scanned đến từ
+                # camera quầy (không có track người), nhưng bước xử lý giống hệt.
+                return await self._handle_picked_up(event, session_id, global_track_id)
 
-        if event.event_type == AICartEventType.PRODUCT_RETURNED:
-            return await self._handle_returned(event, session_id)
+            if event.event_type == AICartEventType.PRODUCT_RETURNED:
+                return await self._handle_returned(event, session_id)
 
-        if event.event_type == AICartEventType.CHECKOUT_INITIATED:
-            return await self._handle_checkout_initiated(event, session_id)
+            if event.event_type == AICartEventType.CHECKOUT_INITIATED:
+                return await self._handle_checkout_initiated(event, session_id)
 
-        return "rejected_unknown_event", None, None
+            return "rejected_unknown_event", None, None
 
     async def _handle_picked_up(
         self, event: AICartEventRequest, session_id: str, global_track_id: str
@@ -92,6 +105,22 @@ class AiCartEventService:
         if product is None:
             return "rejected_unknown_product", None, None
         cart = await self._get_or_create_ai_cart(event, session_id)
+
+        # Dedup: với event đến từ quầy tự động (PRODUCT_SCANNED), mỗi SKU
+        # chỉ được thêm 1 lần / phiên giỏ — ngay cả khi AI engine khởi động
+        # lại và mất bộ nhớ đệm _CHECKOUT_SCANNED. Backend (DB) là nguồn
+        # sự thật; nếu SKU đã có trong giỏ do AI thêm, bỏ qua lần này.
+        # PRODUCT_PICKED_UP (kệ hàng) cho phép thêm nhiều lần vì khách có
+        # thể nhặt nhiều món cùng loại nên không áp dụng quy tắc này.
+        if event.event_type == AICartEventType.PRODUCT_SCANNED:
+            existing_skus = {
+                li.get("sku")
+                for li in (cart.items or [])
+                if li.get("added_via") == "ai"
+            }
+            if product.sku in existing_skus:
+                return "accepted_already_in_cart", cart, None
+
         try:
             cart = await self._carts.add_line(
                 event.organization_id,

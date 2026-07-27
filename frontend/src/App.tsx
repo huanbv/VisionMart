@@ -17,6 +17,7 @@ import DetectionsPage from "@/pages/DetectionsPage";
 import EmployeesPage from "@/pages/EmployeesPage";
 import InventoryPage from "@/pages/InventoryPage";
 import LiveCartPage from "@/pages/LiveCartPage";
+import VideoAnalysisPage from "@/pages/VideoAnalysisPage";
 import LoginPage from "@/pages/LoginPage";
 import NotificationsPage from "@/pages/NotificationsPage";
 import OrdersPage from "@/pages/OrdersPage";
@@ -53,6 +54,7 @@ export default function App() {
         <Route path="/pos" element={<PosPage />} />
         <Route path="/orders" element={<OrdersPage />} />
         <Route path="/live-cart" element={<LiveCartPage />} />
+        <Route path="/video-analysis" element={<VideoAnalysisPage />} />
         <Route path="/customers" element={<CustomersPage />} />
         <Route path="/employees" element={<EmployeesPage />} />
         <Route path="/cameras" element={<CamerasPage />} />

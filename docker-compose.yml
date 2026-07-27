@@ -142,7 +142,7 @@ services:
     # vượt max_connections=100 của Postgres và làm TOÀN BỘ backend đổ lỗi
     # TooManyConnectionsError — đã gặp trên production. Tải của đồ án rất
     # nhẹ nên 2 tiến trình là thừa đủ.
-    command: ["celery", "-A", "app.workers.celery_app", "worker", "--loglevel=info", "--concurrency=2"]
+    command: ["celery", "-A", "app.workers.celery_app", "worker", "--loglevel=info", "--pool=solo"]
     networks: [visionmart-net]
     logging: *default-logging
 
@@ -176,7 +176,7 @@ services:
     environment:
       YOLO_MODEL: ${YOLO_MODEL:-yolov8n.pt}
       YOLO_CONF_THRESHOLD: ${YOLO_CONF_THRESHOLD:-0.25}
-      YOLO_DEVICE: ${YOLO_DEVICE:-cpu}
+      YOLO_DEVICE: ${YOLO_DEVICE:-cuda}
       # Bật ROI để vùng đã vẽ THỰC SỰ có tác dụng: che ngoài vùng (vật ngoài
       # không bị thêm vào giỏ) và kích hoạt đề xuất contour trong vùng. No-op
       # với camera chưa vẽ vùng nên an toàn cho camera kệ/cửa.
@@ -214,6 +214,13 @@ services:
       timeout: 5s
       retries: 5
       start_period: 20s
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
     networks: [visionmart-net]
     logging: *default-logging
 

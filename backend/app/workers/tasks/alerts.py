@@ -17,9 +17,13 @@ logger = logging.getLogger(__name__)
 
 
 async def _run_scan() -> dict:
-    async with SessionLocal() as session:
-        service = AlertService(session)
-        return await service.scan_all_organizations()
+    try:
+        async with SessionLocal() as session:
+            service = AlertService(session)
+            return await service.scan_all_organizations()
+    finally:
+        from app.database.session import engine
+        await engine.dispose()
 
 
 @celery_app.task(name="alerts.scan_all", ignore_result=True)

@@ -51,8 +51,7 @@ router = APIRouter(tags=["live"], dependencies=[Depends(require_api_key)])
 
 _BOUNDARY = b"frame"
 _MIN_FPS = 1.0
-_MAX_FPS = 15.0
-_MAX_CONSECUTIVE_FAILURES = 10
+_MAX_FPS = 30.0
 _MIN_DETECT_EVERY_N = 1
 _MAX_DETECT_EVERY_N = 15
 
@@ -152,14 +151,19 @@ def _label_with_sku(frame, detections: list[dict]) -> None:
 def _filter_by_zones(
     frame, detections: list[dict], zones: list[RoiZone]
 ) -> list[dict]:
-    """Chỉ giữ box có TÂM nằm trong vùng ROI, để lớp phủ xem-trực-tiếp khớp
-    với hành vi thêm-vào-giỏ (vốn dựa trên mặt nạ ROI). Không có vùng => giữ
+    """Chỉ giữ box có TÂM nằm trong vùng ROI, hoặc lớp là 'person', để lớp phủ xem-trực-tiếp khớp
+    với hành vi thêm-vào-giỏ (vẫn dựa trên mặt nạ ROI). Không có vùng => giữ
     nguyên tất cả (hành vi cũ)."""
     if not zones:
         return detections
     h, w = frame.shape[:2]
     out: list[dict] = []
     for det in detections:
+        class_name = str(det.get("class_name") or "").lower()
+        if class_name == "person":
+            out.append(det)
+            continue
+
         bbox = det.get("bbox") or {}
         try:
             cx = (float(bbox["x1"]) + float(bbox["x2"])) / 2.0
@@ -169,6 +173,18 @@ def _filter_by_zones(
         if point_in_zones(zones, cx, cy, w, h):
             out.append(det)
     return out
+
+
+def _iou(boxA, boxB):
+    xA = max(boxA[0], boxB[0])
+    yA = max(boxA[1], boxB[1])
+    xB = min(boxA[2], boxB[2])
+    yB = min(boxA[3], boxB[3])
+    interArea = max(0, xB - xA + 1) * max(0, yB - yA + 1)
+    boxAArea = (boxA[2] - boxA[0] + 1) * (boxA[3] - boxA[1] + 1)
+    boxBArea = (boxB[2] - boxB[0] + 1) * (boxB[3] - boxB[1] + 1)
+    iou_score = interArea / float(boxAArea + boxBArea - interArea + 1e-6)
+    return iou_score
 
 
 def _draw_detections(frame, detections: list[dict]) -> None:
@@ -298,8 +314,13 @@ async def _mjpeg_frames(
 
             ok, frame = await asyncio.to_thread(cap.read)
             if not ok or frame is None:
+                # Seek back to frame 0 for file-based streams
+                try:
+                    await asyncio.to_thread(cap.set, cv2.CAP_PROP_POS_FRAMES, 0)
+                except Exception:
+                    pass
                 consecutive_failures += 1
-                if consecutive_failures >= _MAX_CONSECUTIVE_FAILURES:
+                if consecutive_failures >= 10:
                     logger.warning(
                         "live stream: %d consecutive read failures, stopping %s",
                         consecutive_failures,
@@ -330,6 +351,35 @@ async def _mjpeg_frames(
                         # (moi detect_every_n khung), khong phai moi khung —
                         # nhan duoc giu lai va ve lai cho toi lan detect sau.
                         _label_with_sku(frame, last_detections)
+
+                        # Match detected people with the latest persistent tracker boxes!
+                        try:
+                            import re
+                            match = re.search(r"cam-([a-f0-9\-]{36})", stream_url)
+                            camera_key = match.group(1) if match else "default"
+                            
+                            from app.services.person_tracker import get_latest_person_boxes
+                            tracker_boxes = get_latest_person_boxes(camera_key)
+                            
+                            for det in last_detections:
+                                if str(det.get("class_name")).lower() == "person":
+                                    bbox = det.get("bbox") or {}
+                                    det_box = [bbox.get("x1", 0), bbox.get("y1", 0), bbox.get("x2", 0), bbox.get("y2", 0)]
+                                    
+                                    best_iou = 0.0
+                                    matched_id = None
+                                    for tb in tracker_boxes:
+                                        score = _iou(det_box, tb["bbox"])
+                                        if score > best_iou:
+                                            best_iou = score
+                                            matched_id = tb["mapped_id"]
+                                    
+                                    if best_iou > 0.4 and matched_id is not None:
+                                        det["sku_label"] = f"Khach hang #{matched_id}"
+                                        det["sku_confidence"] = 1.0
+                        except Exception:
+                            logger.exception("live stream: person ID matching failed")
+
                         last_infer_ms = (time.perf_counter() - started) * 1000.0
                     except Exception:  # noqa: BLE001
                         logger.exception(
@@ -364,7 +414,9 @@ async def _mjpeg_frames(
                 b"Content-Length: " + str(len(chunk)).encode("ascii") + b"\r\n\r\n"
                 + chunk + b"\r\n"
             )
-            await asyncio.sleep(interval)
+            processing_time = time.perf_counter() - now
+            sleep_duration = max(0.001, interval - processing_time)
+            await asyncio.sleep(sleep_duration)
     finally:
         await asyncio.to_thread(cap.release)
 
@@ -373,9 +425,9 @@ async def _mjpeg_frames(
 async def live_stream(
     request: Request,
     stream_url: str = Query(..., min_length=1, max_length=1024),
-    fps: float = Query(default=8.0, ge=_MIN_FPS, le=_MAX_FPS),
+    fps: float = Query(default=30.0, ge=_MIN_FPS, le=_MAX_FPS),
     open_timeout_ms: int = Query(default=5000, ge=500, le=30000),
-    jpeg_quality: int = Query(default=70, ge=10, le=95),
+    jpeg_quality: int = Query(default=90, ge=10, le=95),
     detect: bool = Query(default=True),
     detect_every_n: int = Query(
         default=3, ge=_MIN_DETECT_EVERY_N, le=_MAX_DETECT_EVERY_N

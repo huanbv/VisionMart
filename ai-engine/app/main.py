@@ -118,3 +118,33 @@ async def _stop_telemetry() -> None:
     from app.services import telemetry_client
 
     await telemetry_client.stop()
+
+
+@app.get("/active-persons/{camera_id}")
+async def get_active_persons(camera_id: str):
+    import time
+    from app.api.frame import _TRACK_LAST_SEEN
+    now = time.time()
+    active = []
+    prefix = f"{camera_id}:person-"
+    for key, last_seen in list(_TRACK_LAST_SEEN.items()):
+        if key.startswith(prefix) and (now - last_seen) < 10.0:
+            try:
+                mapped_id = int(key.split("person-")[-1])
+                active.append({
+                    "mapped_id": mapped_id,
+                    "crop_url": f"/ai/person-crop/{camera_id}/{mapped_id}"
+                })
+            except Exception:
+                pass
+    return {"active_persons": active}
+
+
+@app.get("/person-crop/{camera_id}/{mapped_id}")
+async def get_person_crop(camera_id: str, mapped_id: int):
+    from fastapi import HTTPException
+    from app.services.person_tracker import get_person_crop_bytes
+    crop_bytes = get_person_crop_bytes(camera_id, mapped_id)
+    if crop_bytes is None:
+        raise HTTPException(status_code=404, detail="Crop not found")
+    return Response(content=crop_bytes, media_type="image/jpeg")

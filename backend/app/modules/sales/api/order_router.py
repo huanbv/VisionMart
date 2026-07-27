@@ -281,3 +281,24 @@ async def cancel_order(
         await session.rollback()
         raise HTTPException(status.HTTP_409_CONFLICT, detail=str(exc)) from exc
     return _to_detail(order)
+
+
+@router.post("/bulk-cancel")
+async def bulk_cancel_orders(
+    payload: dict,
+    current: CurrentUser = Depends(require_roles("super_admin", "org_admin")),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    order_ids = payload.get("order_ids", [])
+    service = _service(session)
+    count = 0
+    errors = []
+    for oid in order_ids:
+        try:
+            uid = uuid.UUID(str(oid))
+            await service.cancel_order(current.organization_id, uid, performed_by=current.user_id)
+            count += 1
+        except Exception as e:
+            errors.append(f"{oid}: {e}")
+    await session.commit()
+    return {"status": "ok", "cancelled": count, "errors": errors}

@@ -15,6 +15,21 @@ export default defineConfig({
     port: 3000,
     strictPort: true,
     allowedHosts: ["visionmart.thehuan.com", "localhost"],
+    proxy: {
+      "/api": {
+        target: "http://localhost:8000",
+        changeOrigin: true,
+      },
+      "/ai": {
+        target: "http://localhost:8100",
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/ai/, ""),
+      },
+      "/ws": {
+        target: "ws://localhost:8000",
+        ws: true,
+      },
+    },
   },
   preview: {
     port: 3000,

@@ -64,7 +64,8 @@ export default function NotificationBell() {
       const token = tokenStore.getAccess();
       if (!token || cancelled) return;
       const proto = window.location.protocol === "https:" ? "wss" : "ws";
-      const url = `${proto}://${window.location.host}/ws/notifications?token=${encodeURIComponent(token)}`;
+      const host = window.location.port === "3000" ? `${window.location.hostname}:8000` : window.location.host;
+      const url = `${proto}://${host}/ws/notifications?token=${encodeURIComponent(token)}`;
       try {
         ws = new WebSocket(url);
       } catch {

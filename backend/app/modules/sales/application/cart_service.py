@@ -227,10 +227,22 @@ class CartService:
         await self._carts.commit()
         await self._carts.refresh(cart)
         await self._events.publish(sales_events.cart_line_removed(cart))
+
+        # Auto-abandon AI carts the moment the last item is removed so that
+        # empty carts never show as "active" in the live dashboard.  A fresh
+        # cart will be opened the next time the AI detects a product.
+        if not lines and cart.source == CartSource.AI_VISION:
+            cart.status = CartStatus.ABANDONED
+            await self._carts.commit()
+            await self._carts.refresh(cart)
+            await self._events.publish(sales_events.cart_abandoned(cart))
+
         return cart
 
     async def abandon(self, organization_id: uuid.UUID, cart_id: uuid.UUID) -> ShoppingCart:
-        cart = await cart_lookup.require_active(self._carts, organization_id, cart_id)
+        cart = await cart_lookup.get_cart(self._carts, organization_id, cart_id)
+        if cart.status not in (CartStatus.ACTIVE, CartStatus.PENDING_CHECKOUT):
+            raise ConflictError(f"Cart cannot be abandoned (status={cart.status.value})")
         for li in cart.items or []:
             try:
                 await inventory_reservation.release(
@@ -246,6 +258,11 @@ class CartService:
         await self._carts.commit()
         await self._carts.refresh(cart)
         await self._events.publish(sales_events.cart_abandoned(cart))
+        try:
+            from app.services.ai_engine_client import AIEngineClient
+            await AIEngineClient().reset_session()
+        except Exception:
+            pass
         return cart
 
     # ------------------------------------------------------------------

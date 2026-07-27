@@ -66,7 +66,7 @@ export function openMjpegStream(
 
   const baseURL = (import.meta.env.VITE_API_BASE_URL as string | undefined) ?? "/api/v1";
   const detect = options.detect ?? true;
-  const detectEveryN = options.detectEveryN ?? 3;
+  const detectEveryN = options.detectEveryN ?? 2;
   const params = new URLSearchParams({
     detect: String(detect),
     detect_every_n: String(detectEveryN),
