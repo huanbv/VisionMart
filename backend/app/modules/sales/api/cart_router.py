@@ -320,12 +320,27 @@ async def bulk_abandon_carts(
     count = 0
     errors = []
     if not cart_ids:
-        # Abandon all active carts for branch/org
+        # "Xóa tất cả" — không giới hạn 1 trang. list() vẫn phân trang nội bộ
+        # (an toàn cho bộ nhớ/DB), nhưng vòng lặp này gom HẾT các trang thay
+        # vì chỉ lấy trang đầu — trước đây limit=100 khiến nút "Xóa tất cả"
+        # chỉ dọn được 100 giỏ/loại mỗi lần bấm, phải bấm hàng chục lần mới
+        # hết một backlog vài nghìn giỏ tồn đọng.
         branch_id = payload.get("branch_id")
         b_id = uuid.UUID(str(branch_id)) if branch_id else None
-        active_carts, _ = await service.list(current.organization_id, branch_id=b_id, status=CartStatus.ACTIVE, limit=100)
-        pending_carts, _ = await service.list(current.organization_id, branch_id=b_id, status=CartStatus.PENDING_CHECKOUT, limit=100)
-        cart_ids = [c.id for c in active_carts + pending_carts]
+        cart_ids = []
+        for cart_status in (CartStatus.ACTIVE, CartStatus.PENDING_CHECKOUT):
+            skip = 0
+            while True:
+                page, _ = await service.list(
+                    current.organization_id, branch_id=b_id, status=cart_status,
+                    skip=skip, limit=500,
+                )
+                if not page:
+                    break
+                cart_ids.extend(c.id for c in page)
+                skip += len(page)
+                if len(page) < 500:
+                    break
 
     for cid in cart_ids:
         try:

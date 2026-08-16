@@ -116,10 +116,19 @@ interface ActivePerson {
   crop_url: string;
 }
 
-function ActivePersonsPanel({ camera }: { camera: Camera }) {
+function ActivePersonsPanel({ camera, paused = false }: { camera: Camera; paused?: boolean }) {
   const [activePersons, setActivePersons] = useState<ActivePerson[]>([]);
 
   useEffect(() => {
+    if (paused) {
+      // Tạm dừng nhận diện AI thì panel này cũng phải dừng theo — poll tiếp
+      // vừa tốn request vô ích (không có gì mới để lấy, luồng đã dừng) vừa
+      // khiến admin thấy "khách đang ở quầy" cập nhật liên tục dù đã bấm
+      // Tạm dừng, ngỡ rằng AI vẫn đang chạy ngầm.
+      setActivePersons([]);
+      return;
+    }
+
     let active = true;
     const fetchActive = async () => {
       try {
@@ -140,7 +149,7 @@ function ActivePersonsPanel({ camera }: { camera: Camera }) {
       active = false;
       clearInterval(id);
     };
-  }, [camera.id]);
+  }, [camera.id, paused]);
 
   if (activePersons.length === 0) return null;
 
@@ -373,10 +382,14 @@ export default function LiveCartPage() {
   };
 
   const onBulkAbandonCarts = async () => {
+    // Không gửi ID của riêng trang đang hiển thị (carts state chỉ tải tối
+    // đa 100 giỏ/loại) — gọi KHÔNG kèm cart_ids để backend tự gom HẾT các
+    // trang rồi hủy toàn bộ trong một lượt, tránh phải bấm lại nhiều lần
+    // khi số giỏ tồn đọng vượt quá 1 trang.
     try {
-      const res = await bulkAbandonCarts(carts.map((c) => c.id), branchId);
+      const res = await bulkAbandonCarts(undefined, branchId);
       message.success(`Đã hủy ${res.abandoned} giỏ hàng thành công`);
-      addLog("remove", "Đã xóa / hủy hàng loạt tất cả giỏ hàng");
+      addLog("remove", `Đã xóa / hủy hàng loạt ${res.abandoned} giỏ hàng`);
       load();
     } catch {
       message.error("Hủy hàng loạt giỏ hàng thất bại");
@@ -471,13 +484,14 @@ export default function LiveCartPage() {
               </Button>
               {carts.length > 0 && (
                 <Popconfirm
-                  title={`Bạn có chắc muốn HỦY/XÓA tất cả ${carts.length} giỏ hàng đang mở không?`}
+                  title="Bạn có chắc muốn HỦY/XÓA TOÀN BỘ giỏ hàng đang mở không?"
+                  description={`Đang hiển thị ${carts.length} giỏ — nhưng thao tác này xóa TẤT CẢ giỏ đang mở của chi nhánh, kể cả những giỏ chưa tải lên trang này.`}
                   onConfirm={onBulkAbandonCarts}
                   okText="Xóa tất cả"
                   cancelText="Bỏ qua"
                 >
                   <Button danger type="primary" icon={<DeleteOutlined />} style={{ fontWeight: 600 }}>
-                    🗑️ Xóa / Hủy tất cả ({carts.length})
+                    🗑️ Xóa / Hủy tất cả
                   </Button>
                 </Popconfirm>
               )}
@@ -640,7 +654,7 @@ export default function LiveCartPage() {
                       paused={aiPaused}
                       onStatusChange={setStreamStatus}
                     />
-                    <ActivePersonsPanel camera={liveCamera} />
+                    <ActivePersonsPanel camera={liveCamera} paused={aiPaused} />
                   </div>
                 ) : (
                   <Empty description="Chưa chọn camera" />
@@ -661,13 +675,14 @@ export default function LiveCartPage() {
             extra={
               carts.length > 0 && (
                 <Popconfirm
-                  title={`Xóa tất cả ${carts.length} giỏ hàng đang mở?`}
+                  title="Xóa TOÀN BỘ giỏ hàng đang mở của chi nhánh?"
+                  description={`Không chỉ ${carts.length} giỏ đang hiển thị — kể cả những giỏ chưa tải lên trang này.`}
                   onConfirm={onBulkAbandonCarts}
                   okText="Xóa hết"
                   cancelText="Bỏ qua"
                 >
                   <Button danger size="small" type="primary" icon={<DeleteOutlined />}>
-                    Xóa tất cả ({carts.length})
+                    Xóa tất cả
                   </Button>
                 </Popconfirm>
               )
@@ -712,13 +727,14 @@ export default function LiveCartPage() {
               Danh sách Giỏ hàng đang mở ({carts.length})
             </Typography.Text>
             <Popconfirm
-              title={`Bạn có chắc muốn hủy/xóa tất cả ${carts.length} giỏ hàng đang mở không?`}
+              title="Bạn có chắc muốn hủy/xóa TOÀN BỘ giỏ hàng đang mở không?"
+              description={`Đang hiển thị ${carts.length} giỏ — thao tác này xóa tất cả, kể cả giỏ chưa tải lên trang này.`}
               onConfirm={onBulkAbandonCarts}
               okText="Xóa tất cả"
               cancelText="Hủy"
             >
               <Button danger icon={<DeleteOutlined />}>
-                Xóa / Hủy tất cả giỏ hàng ({carts.length})
+                Xóa / Hủy tất cả giỏ hàng
               </Button>
             </Popconfirm>
           </div>
