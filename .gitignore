@@ -104,3 +104,15 @@ docs/seminar/
 docs/seminar_midterm/
 docs/seminar_midternv2/
 docs/thesis/
+
+# ===== File tạm / thử nghiệm — không thuộc mã nguồn =====
+# Video mẫu tải tay khi test trang Phân tích video (5.5MB nhị phân).
+test.mp4
+*.mp4
+# Script nháp, chạy tay để kiểm tra DB — không phải một phần ứng dụng.
+scratch/
+ai-engine/test_pose.py
+# Output biên dịch của TypeScript (sinh lại từ vite.config.ts).
+frontend/vite.config.js
+frontend/vite.config.d.ts
+*.tsbuildinfo
