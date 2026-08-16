@@ -77,6 +77,10 @@ _LAST_CLEANUP_TS = 0.0
 _CLEANUP_INTERVAL_SECONDS = 60.0
 _STALE_TRACK_SECONDS = 120.0
 
+# TTL cho _CHECKOUT_PERSON_SESSIONS — xem _cleanup_stale_state. Dài hơn nhiều
+# CHECKOUT_SESSION_GAP_SECONDS (30s) để không đụng khách đang trong phiên.
+_STALE_PERSON_SESSION_SECONDS = 1800.0
+
 # --- phiên checkout theo từng camera quầy ---
 # camera_key -> (thời điểm quét gần nhất, số thứ tự phiên). Mỗi khách ở quầy
 # là một "phiên": khi có khoảng lặng (không quét được sản phẩm nào) đủ dài,
@@ -84,24 +88,47 @@ _STALE_TRACK_SECONDS = 120.0
 # mọi khách qua quầy dồn chung một giỏ (lỗi "nhiều người thành một đơn").
 _CHECKOUT_SESSION: dict[str, tuple[float, int]] = {}
 
-# Khử trùng lặp + đối soát cho quầy: mỗi phiên khách đếm mỗi SKU MỘT lần, và
-# tự gỡ khỏi giỏ khi SKU biến mất khỏi khung đủ lâu. Key =
-# "<camera_key>:<checkout_track>" (đổi khi sang khách mới) -> { sku: lần thấy
-# cuối (giây, cùng đồng hồ với biến `now` = time.time() trong frame) }.
+# Khử trùng lặp + đối soát cho quầy: mỗi PHYSICAL PRODUCT (không phải mỗi
+# lần thấy) đếm đúng MỘT lần, và tự gỡ khỏi giỏ khi vắng mặt khỏi khung đủ
+# lâu. Key = "<camera_key>:<session_key>" — session_key giờ theo TỪNG NGƯỜI
+# ("checkout-p<mapped_person_id>-<epoch>", xem _checkout_person_session) hoặc
+# theo camera khi không xác định được người ("checkout-noperson-<epoch>",
+# xem _checkout_session_track) — thay vì luôn 1 session/camera như thiết kế
+# ban đầu. Value = { sku: {"logical_ids": set[str]} }, quantity = số phần tử
+# của logical_ids (mỗi phần tử là MỘT sản phẩm vật lý — xem
+# _PHYSICAL_PRODUCTS/_TRACK_ALIAS bên dưới cho cách một physical product
+# được xác lập/bắc cầu qua occlusion trước khi được thêm vào set này).
+_CHECKOUT_SCANNED: dict[str, dict[str, dict[str, Any]]] = {}
+
+# --- Multi-person checkout: physical-product identity xuyên occlusion ngắn ---
 #
-# Vì sao KHÔNG dùng cooldown theo track như trước: sản phẩm đặt yên trên quầy
-# sống lâu hơn cooldown 5s nên bị đếm lại; track_id của đề xuất contour đổi khi
-# vật xê dịch nhẹ nên mỗi lần thành "track mới" -> đếm lại. Cả hai làm 1 sản
-# phẩm thành 2-3. Khoá theo (phiên, SKU) loại bỏ cả hai.
+# track_id thô từ ByteTrack có thể đổi khi vật bị che tay/chồng lấn một chút.
+# Nếu dùng thẳng track_id để đếm số lượng, một Coca duy nhất bị che 1 giây rồi
+# lộ lại (track_id mới) sẽ bị đếm thành 2. Lớp "physical product" bên dưới là
+# một tầng gián tiếp thuần RAM (không phải bảng DB): mỗi sản phẩm thật có một
+# `logical_product_id` ổn định, còn track_id chỉ là chi tiết kỹ thuật tạm thời
+# trỏ vào nó.
 #
-# Đối soát: mỗi khung cập nhật "lần thấy cuối" cho SKU đang hiện; SKU đã ghi
-# nhận mà vắng mặt lâu hơn CHECKOUT_ABSENT_SECONDS thì phát product_returned để
-# GỠ khỏi giỏ — nên món nhận nhầm (vd Hảo Hảo thoáng qua) không bị khoá cứng,
-# và giỏ luôn phản ánh những gì đang thực sự trên quầy.
-#
-# Đánh đổi: một khách đặt 2 sản phẩm CÙNG loại chỉ tính 1 (không có tracking
-# ổn định thì không phân biệt "2 cái giống nhau" với "1 cái thấy hai lần").
-_CHECKOUT_SCANNED: dict[str, dict[str, float]] = {}
+# camera_key -> { raw_track_id: logical_product_id }
+_TRACK_ALIAS: dict[str, dict[int, str]] = {}
+
+# camera_key -> { logical_product_id: {
+#     "sku": str, "current_track_id": int, "cx": float, "cy": float,
+#     "first_seen": float, "last_seen": float,
+#     "owner_person_id": int | None,   # mapped_id từ ReIDManager, sticky
+#     "session_key": str | None,       # checkout-p<id>-<epoch> hoặc
+#                                       # checkout-noperson-<epoch>, sticky
+#     "state": "CANDIDATE" | "ASSOCIATED" | "FALLBACK",
+#     "unassigned_since": float | None,
+#     "counted": bool,                 # đã phát product_scanned chưa
+# } }
+_PHYSICAL_PRODUCTS: dict[str, dict[str, dict[str, Any]]] = {}
+
+# Phiên checkout THEO TỪNG NGƯỜI (khác _CHECKOUT_SESSION vốn gộp cả camera).
+# camera_key -> { mapped_person_id: (last_seen, epoch) }. Cùng cơ chế
+# gap-timeout với _CHECKOUT_SESSION, nhưng áp riêng từng người để hai khách
+# đứng chung quầy không bị dồn chung một order.
+_CHECKOUT_PERSON_SESSIONS: dict[str, dict[int, tuple[float, int]]] = {}
 
 
 def _checkout_absent_seconds() -> float:
@@ -141,6 +168,74 @@ def _checkout_gap_seconds() -> float:
         return float(os.getenv("CHECKOUT_SESSION_GAP_SECONDS", "30"))
     except ValueError:
         return 30.0
+
+
+def _reacquire_window_seconds() -> float:
+    """Cửa sổ (giây) để coi một track_id mới là TIẾP DIỄN của một track vừa
+    biến mất, thay vì một sản phẩm mới. Ngắn hơn nhiều so với
+    CHECKOUT_ABSENT_SECONDS (120s, dùng để gỡ khỏi giỏ) — mục đích khác nhau:
+    cái này chỉ bắc cầu qua occlusion/che tay thoáng qua."""
+    try:
+        return float(os.getenv("PRODUCT_REACQUIRE_WINDOW_SECONDS", "5"))
+    except ValueError:
+        return 5.0
+
+
+def _reacquire_max_dist_px() -> float:
+    """Khoảng cách tối đa (px, trên khung đã tiền xử lý) giữa vị trí cuối của
+    track cũ và track mới để coi là cùng vật lý. Hàng đặt trên quầy gần như
+    đứng yên nên ngưỡng nhỏ là đủ; ngưỡng lớn dễ bắc cầu nhầm 2 vật khác nhau
+    đặt gần nhau."""
+    try:
+        return float(os.getenv("PRODUCT_REACQUIRE_MAX_DIST_PX", "60"))
+    except ValueError:
+        return 60.0
+
+
+def _unassigned_grace_seconds() -> float:
+    """Sản phẩm chưa ghép được với người nào thì đợi bao lâu (giây) trước khi
+    rơi về giỏ "không xác định người" (checkout-noperson). Tránh trường hợp
+    người bị mất detection 1-2 khung khiến sản phẩm của họ bị gán nhầm session
+    ngay lập tức."""
+    try:
+        return float(os.getenv("CHECKOUT_UNASSIGNED_GRACE_SECONDS", "5"))
+    except ValueError:
+        return 5.0
+
+
+def _checkout_person_assoc_max_dist_px() -> float:
+    """Khoảng cách tối đa (px) giữa tâm người và tâm sản phẩm để ghép chủ sở
+    hữu tại quầy. Lớn hơn ngưỡng centroid của grab-and-go (180px) vì ở quầy
+    hàng thường ĐẶT xuống chứ không cầm sát tay — người có thể đứng lùi ra
+    một chút so với sản phẩm trên mặt quầy."""
+    try:
+        return float(os.getenv("CHECKOUT_PERSON_ASSOC_MAX_DIST_PX", "220"))
+    except ValueError:
+        return 220.0
+
+
+def _checkout_person_session(
+    camera_key: str, mapped_person_id: int, now: float
+) -> tuple[str, str | None]:
+    """Bản sao của `_checkout_session_track`, áp riêng cho TỪNG NGƯỜI thay vì
+    gộp cả camera — đây là mảnh còn thiếu để nhiều khách đứng chung quầy có
+    order riêng. Cùng ngữ nghĩa gap-timeout, cùng biến CHECKOUT_SESSION_GAP_SECONDS.
+
+    Chỉ gọi hàm này cho người ĐANG THẤY trong khung hiện tại (từ `persons`),
+    nên epoch chỉ xoay khi người đó thực sự quay lại sau một khoảng vắng mặt
+    dài hơn gap — không phải khi họ đơn thuần rời khỏi khung một lúc.
+    """
+    per_cam = _CHECKOUT_PERSON_SESSIONS.setdefault(camera_key, {})
+    last, epoch = per_cam.get(mapped_person_id, (0.0, 0))
+    gap = _checkout_gap_seconds()
+    old_session: str | None = None
+    if now - last > gap and last > 0.0:
+        old_session = f"checkout-p{mapped_person_id}-{epoch}"
+        epoch += 1
+    elif last == 0.0:
+        epoch = 1
+    per_cam[mapped_person_id] = (now, epoch)
+    return f"checkout-p{mapped_person_id}-{epoch}", old_session
 
 
 def _checkout_session_track(
@@ -216,6 +311,44 @@ def _cleanup_stale_state(now: float) -> None:
     ]
     for key in stale_cooldowns:
         _COOLDOWN.pop(key, None)
+
+    # --- Multi-person checkout state (xem _TRACK_ALIAS/_PHYSICAL_PRODUCTS/
+    # _CHECKOUT_PERSON_SESSIONS ở đầu file) ---
+    #
+    # _PHYSICAL_PRODUCTS tự dọn theo CHECKOUT_ABSENT_SECONDS ngay trong nhánh
+    # checkout mỗi khung (không cần chạm ở đây). Hai chỗ CÒN LẠI thì không:
+    #
+    # 1. _CHECKOUT_PERSON_SESSIONS: một khi một mapped_person_id từng xuất
+    #    hiện, entry của họ sống mãi trong dict (chỉ epoch đổi, key thì
+    #    không) — khách rời hẳn quầy không bao giờ được dọn. Trên một
+    #    camera chạy nhiều ngày với hàng nghìn khách khác nhau, dict này
+    #    phình vô hạn. TTL dài hơn nhiều so với CHECKOUT_SESSION_GAP_SECONDS
+    #    (30s) để không đụng vào một khách đang trong phiên hợp lệ.
+    for cam_key, per_cam in list(_CHECKOUT_PERSON_SESSIONS.items()):
+        stale_persons = [
+            pid for pid, (last_seen, _epoch) in per_cam.items()
+            if now - last_seen > _STALE_PERSON_SESSION_SECONDS
+        ]
+        for pid in stale_persons:
+            per_cam.pop(pid, None)
+        if not per_cam:
+            _CHECKOUT_PERSON_SESSIONS.pop(cam_key, None)
+
+    # 2. _TRACK_ALIAS: khi một physical product bị GC (hết CHECKOUT_ABSENT_
+    #    SECONDS), chỉ track_id HIỆN TẠI của nó được gỡ khỏi alias (xem bước
+    #    4 trong nhánh checkout). Nếu vật đó từng được bắc cầu qua nhiều
+    #    track_id trong đời (103 -> 104 -> 105), các track_id CŨ (103, 104)
+    #    vẫn còn trỏ tới một logical_id đã không còn trong _PHYSICAL_PRODUCTS
+    #    — vô hại về hành vi (có guard `logical_id in phys` ở nơi đọc) nhưng
+    #    là rác tích luỹ vô thời hạn. Quét bỏ mọi alias trỏ tới logical_id
+    #    không còn tồn tại.
+    for cam_key, alias_map in list(_TRACK_ALIAS.items()):
+        live_ids = _PHYSICAL_PRODUCTS.get(cam_key, {})
+        dangling = [tid for tid, lid in alias_map.items() if lid not in live_ids]
+        for tid in dangling:
+            alias_map.pop(tid, None)
+        if not alias_map:
+            _TRACK_ALIAS.pop(cam_key, None)
 
 
 async def _fetch_camera(camera_id: uuid.UUID) -> dict[str, Any] | None:
@@ -510,6 +643,60 @@ def _pair_products_with_persons(
     return pairs
 
 
+def _nearest_person_for_product(
+    product_cx: float, product_cy: float, persons: list[TrackedObject]
+) -> TrackedObject | None:
+    """Người gần nhất trong bán kính cho phép — dùng để gán chủ sở hữu ban
+    đầu cho một sản phẩm ở quầy. Không ưu tiên khoảng cách tay như
+    `_pair_products_with_persons`: hàng ở quầy thường được ĐẶT xuống, không
+    cầm liên tục, nên chỉ xét khoảng cách tâm bbox."""
+    best: TrackedObject | None = None
+    best_d = _checkout_person_assoc_max_dist_px()
+    for person in persons:
+        d = math.hypot(person.cx - product_cx, person.cy - product_cy)
+        if d < best_d:
+            best_d = d
+            best = person
+    return best
+
+
+def _find_bridge_match(
+    camera_key: str, sku: str, cx: float, cy: float, now: float, claimed_this_frame: set[str]
+) -> str | None:
+    """Tìm một physical product ĐÃ TỒN TẠI (cùng SKU, vừa mất track gần đây,
+    ở gần vị trí này) mà track_id mới có khả năng là chính nó tái xuất hiện
+    sau occlusion ngắn. Trả về logical_product_id nếu tìm thấy, None nếu
+    không có ứng viên đủ tin cậy — KHÔNG cố đoán khi không chắc, theo đúng
+    yêu cầu tránh heuristic phức tạp hoá quá mức.
+
+    `claimed_this_frame` chặn hai track_id mới trong CÙNG một khung tranh
+    nhau bắc cầu vào cùng một physical product.
+    """
+    products = _PHYSICAL_PRODUCTS.get(camera_key)
+    if not products:
+        return None
+    window = _reacquire_window_seconds()
+    max_dist = _reacquire_max_dist_px()
+    best_id: str | None = None
+    best_d = max_dist
+    for logical_id, pp in products.items():
+        if logical_id in claimed_this_frame:
+            continue
+        if pp["sku"] != sku:
+            continue
+        # pp đang "sống" trong chính khung này (vừa cập nhật bởi track_id đã
+        # biết) nằm trong claimed_this_frame nên đã bị loại ở trên — ở đây
+        # last_seen luôn thuộc một khung TRƯỚC đó.
+        age = now - pp["last_seen"]
+        if age > window:
+            continue
+        d = math.hypot(pp["cx"] - cx, pp["cy"] - cy)
+        if d < best_d:
+            best_d = d
+            best_id = logical_id
+    return best_id
+
+
 def _cooldown_ok(track_key: str, sku: str) -> bool:
     key = f"{track_key}:{sku}"
     now = time.time()
@@ -525,6 +712,7 @@ async def reset_checkout_session(
     camera_id: str | None = Form(None),
 ) -> dict[str, Any]:
     global _CHECKOUT_SESSION, _CHECKOUT_SCANNED, _HELD, _COOLDOWN
+    global _TRACK_ALIAS, _PHYSICAL_PRODUCTS, _CHECKOUT_PERSON_SESSIONS
     if camera_id:
         found = False
         for cam_key in list(_CHECKOUT_SESSION.keys()):
@@ -537,6 +725,11 @@ async def reset_checkout_session(
         for k in list(_CHECKOUT_SCANNED.keys()):
             if camera_id in k:
                 _CHECKOUT_SCANNED.pop(k, None)
+        for cam_key in list(_TRACK_ALIAS.keys()):
+            if camera_id in cam_key:
+                _TRACK_ALIAS.pop(cam_key, None)
+                _PHYSICAL_PRODUCTS.pop(cam_key, None)
+                _CHECKOUT_PERSON_SESSIONS.pop(cam_key, None)
         try:
             from app.services.person_tracker import reset_reid
             reset_reid(camera_id)
@@ -548,6 +741,9 @@ async def reset_checkout_session(
         _CHECKOUT_SCANNED.clear()
         _HELD.clear()
         _COOLDOWN.clear()
+        _TRACK_ALIAS.clear()
+        _PHYSICAL_PRODUCTS.clear()
+        _CHECKOUT_PERSON_SESSIONS.clear()
         try:
             from app.services.person_tracker import reset_reid
             for cam_key in list(_CHECKOUT_SESSION.keys()):
@@ -793,122 +989,216 @@ async def process_frame(
         and camera_info.get("is_checkout_zone")
         and getattr(vision_cfg, "checkout_scan_mode", False)
     ):
-        # Một track_id cho cả khung này, xoay theo khoảng lặng giữa các khách.
-        # Tính một lần dựa trên hoạt động của quầy (có sản phẩm nào không),
-        # KHÔNG theo track từng sản phẩm — nếu mỗi sản phẩm một track_id thì
-        # mỗi sản phẩm rơi vào một giỏ khác nhau. Còn cố định "checkout" như
-        # trước thì mọi khách qua quầy dồn chung một giỏ (lỗi đang gặp).
-        #
-        # KHÔNG dùng _track_key ở đây: nó chèn camera_key (một UUID) vào, mà
-        # backend LẠI thêm tiền tố "cam:{camera_id}:track:" khi dựng
-        # session_id — camera UUID xuất hiện hai lần, session_id phình dài.
-        # Chuỗi "checkout-<epoch>" đủ ngắn; backend đã bảo đảm duy nhất theo
-        # camera bằng tiền tố của nó.
-        checkout_track, prev_track = _checkout_session_track(camera_key, now, bool(products))
+        # === Multi-person checkout ===
+        # track_id (thô) --alias/bridge--> logical_product_id --sticky--> owner
+        # person --sticky--> session_key --gửi backend làm-> track_id sự kiện.
+        # Chi tiết từng bước xem docstring của _TRACK_ALIAS/_PHYSICAL_PRODUCTS
+        # ở đầu file. Camera kệ hàng (grab-and-go, nhánh `if not is_checkout`
+        # phía trên) không đụng tới nhánh này.
+        alias = _TRACK_ALIAS.setdefault(camera_key, {})
+        phys = _PHYSICAL_PRODUCTS.setdefault(camera_key, {})
 
-        # Khi epoch vừa tăng (khách mới vào sau khoảng lặng), gửi
-        # checkout_initiated cho phiên CŨ để backend đóng giỏ đó lại.
-        # Khách mới sẽ tự động nhận giỏ mới (track_id mới → session_id mới).
-        if prev_track and products:
-            logger.warning(
-                "CHECKOUT SESSION CHANGE: prev=%s → new=%s, closing old cart via checkout_initiated",
-                prev_track, checkout_track,
-            )
-            close_event = {
-                "event_id": uuid.uuid4().hex,
-                "event_type": "checkout_initiated",
-                "organization_id": str(organization_id),
-                "branch_id": str(branch_id),
-                "camera_id": str(camera_id) if camera_id else None,
-                "track_id": prev_track,
-                "product_id": None,
-                "product_sku": None,
-                "quantity": 1,
-                "confidence": 1.0,
-                "customer_id": str(customer_id) if customer_id else None,
-                "occurred_at": datetime.now(timezone.utc).isoformat(),
-            }
-            close_result = await _post_event(close_event)
-            emitted.append({"event": close_event, "backend": close_result})
-            logger.warning("CHECKOUT SESSION CHANGE: close result=%s", close_result)
+        # 0) Giữ phiên của MỌI người đang thấy trong khung — kể cả người chưa
+        # ghép được với sản phẩm nào ở khung này — để epoch của họ không xoay
+        # chỉ vì khung này họ chưa cầm/đặt gì.
+        person_sessions: dict[int, str] = {}
+        for p in persons:
+            session_key, prev_session = _checkout_person_session(camera_key, p.track_id, now)
+            person_sessions[p.track_id] = session_key
+            if prev_session:
+                logger.warning(
+                    "CHECKOUT PERSON SESSION CHANGE: person=%s prev=%s -> new=%s",
+                    p.track_id, prev_session, session_key,
+                )
+                close_event = {
+                    "event_id": uuid.uuid4().hex,
+                    "event_type": "checkout_initiated",
+                    "organization_id": str(organization_id),
+                    "branch_id": str(branch_id),
+                    "camera_id": str(camera_id) if camera_id else None,
+                    "track_id": prev_session,
+                    "product_id": None,
+                    "product_sku": None,
+                    "quantity": 1,
+                    "confidence": 1.0,
+                    "customer_id": str(customer_id) if customer_id else None,
+                    "occurred_at": datetime.now(timezone.utc).isoformat(),
+                }
+                close_result = await _post_event(close_event)
+                emitted.append({"event": close_event, "backend": close_result})
 
-        # Bộ SKU đã ghi nhận cho ĐÚNG phiên này. checkout_track đổi khi sang
-        # khách mới -> key mới -> tập rỗng -> khách kế quét lại từ đầu. Dọn các
-        # phiên cũ của chính camera này để dict không phình theo thời gian.
-        session_key = f"{camera_key}:{checkout_track}"
-        for old in [k for k in _CHECKOUT_SCANNED
-                    if k.startswith(f"{camera_key}:") and k != session_key]:
-            _CHECKOUT_SCANNED.pop(old, None)
-        scanned = _CHECKOUT_SCANNED.setdefault(session_key, {})
-
-        # SKU đang hiện trong khung này (đếm số lượng từng SKU và lưu confidence cao nhất).
-        present_counts: dict[str, int] = {}
-        present_conf: dict[str, float] = {}
+        # 1) Aliasing physical product cho mọi sản phẩm thấy trong khung này.
+        # Pass 1 (track_id đã biết) chạy trước và "claim" ngay, để pass 2
+        # (bắc cầu occlusion) không nhận nhầm một pp vừa sống trong chính
+        # khung này làm ứng viên track-mất.
+        claimed_this_frame: set[str] = set()
+        seen_logical_ids: set[str] = set()
+        unresolved: list[tuple[Any, str]] = []
         for product, sku in products:
-            present_counts[sku] = present_counts.get(sku, 0) + 1
-            present_conf[sku] = max(present_conf.get(sku, 0.0), float(product.confidence))
+            logical_id = alias.get(product.track_id)
+            if logical_id is not None and logical_id in phys:
+                pp = phys[logical_id]
+                pp["current_track_id"] = product.track_id
+                pp["cx"], pp["cy"] = product.cx, product.cy
+                pp["last_seen"] = now
+                claimed_this_frame.add(logical_id)
+                seen_logical_ids.add(logical_id)
+            else:
+                unresolved.append((product, sku))
 
-        logger.warning("CHECKOUT RUN: products=%s, present_counts=%s, scanned_cached=%s", 
-                       [(p.class_name, s) for p, s in products], present_counts, list(scanned.keys()))
-
-        pending_events: list[dict[str, Any]] = []
-        for sku, count in present_counts.items():
-            conf = present_conf[sku]
-            info = scanned.get(sku)
-            already_scanned = isinstance(info, dict) and info.get("count", 0) > 0
-            if already_scanned:
-                logger.warning("CHECKOUT SKIP: sku=%s is already scanned (last_seen=%f)", sku, info.get("last_seen", 0.0))
-                scanned[sku]["last_seen"] = now
+        for product, sku in unresolved:
+            # QUYẾT ĐỊNH "sản phẩm vật lý mới hay không" LUÔN đi qua bridge
+            # trước — không có nhánh nào tăng quantity trước khi biết chắc
+            # đây không phải một track vừa bị mất rồi tái xuất hiện.
+            bridged_id = _find_bridge_match(
+                camera_key, sku, product.cx, product.cy, now, claimed_this_frame
+            )
+            if bridged_id is not None:
+                pp = phys[bridged_id]
+                pp["current_track_id"] = product.track_id
+                pp["cx"], pp["cy"] = product.cx, product.cy
+                pp["last_seen"] = now
+                alias[product.track_id] = bridged_id
+                claimed_this_frame.add(bridged_id)
+                seen_logical_ids.add(bridged_id)
+                logger.info(
+                    "CHECKOUT BRIDGE: track=%s reconnected to physical=%s (sku=%s) — KHÔNG tăng quantity",
+                    product.track_id, bridged_id, sku,
+                )
                 continue
-            logger.warning("CHECKOUT EVENT: creating product_scanned event for sku=%s, conf=%f", sku, conf)
+            # Bridge không match được ứng viên đáng tin -> sản phẩm vật lý mới.
+            logical_id = f"{sku}:{product.track_id}:{int(now * 1000)}"
+            alias[product.track_id] = logical_id
+            phys[logical_id] = {
+                "sku": sku,
+                "current_track_id": product.track_id,
+                "cx": product.cx,
+                "cy": product.cy,
+                "first_seen": now,
+                "last_seen": now,
+                "owner_person_id": None,
+                "session_key": None,
+                "state": "CANDIDATE",
+                "unassigned_since": now,
+                "counted": False,
+            }
+            claimed_this_frame.add(logical_id)
+            seen_logical_ids.add(logical_id)
+            logger.info(
+                "CHECKOUT NEW PHYSICAL PRODUCT: logical=%s sku=%s track=%s",
+                logical_id, sku, product.track_id,
+            )
+
+        # 2) Ghép chủ sở hữu — CHỈ cho sản phẩm CHƯA có session_key. Một khi
+        # đã gán (sticky), các khung sau KHÔNG tính lại dù người khác đứng
+        # gần hơn — trừ khi physical product này thực sự kết thúc lifecycle
+        # (bị GC ở bước 4) và một logical_id mới được tạo.
+        grace = _unassigned_grace_seconds()
+        for logical_id in seen_logical_ids:
+            pp = phys[logical_id]
+            if pp["session_key"] is not None:
+                continue
+            nearest = _nearest_person_for_product(pp["cx"], pp["cy"], persons)
+            if nearest is not None:
+                session_key = person_sessions.get(nearest.track_id)
+                if session_key is None:
+                    session_key, _ = _checkout_person_session(camera_key, nearest.track_id, now)
+                    person_sessions[nearest.track_id] = session_key
+                pp["owner_person_id"] = nearest.track_id
+                pp["session_key"] = session_key
+                pp["state"] = "ASSOCIATED"
+                pp["unassigned_since"] = None
+                logger.info(
+                    "CHECKOUT OWNER: logical=%s sku=%s -> person=%s session=%s",
+                    logical_id, pp["sku"], nearest.track_id, session_key,
+                )
+                continue
+            # Chưa thấy người nào đủ gần — CANDIDATE, thử ghép lại ở khung
+            # sau thay vì rơi ngay về "không xác định người".
+            if pp["unassigned_since"] is None:
+                pp["unassigned_since"] = now
+            if now - pp["unassigned_since"] < grace:
+                continue
+            fallback_track, _fb_prev = _checkout_session_track(camera_key, now, True)
+            # fallback_track đã có dạng "checkout-<epoch>" (xem
+            # _checkout_session_track) — KHÔNG nối thêm tiền tố "checkout-"
+            # lần nữa, kẻo ra "checkout-noperson-checkout-3".
+            pp["session_key"] = f"checkout-noperson-{fallback_track.removeprefix('checkout-')}"
+            pp["state"] = "FALLBACK"
+            logger.info(
+                "CHECKOUT FALLBACK: logical=%s sku=%s -> %s (không tìm được người sau %.0fs grace)",
+                logical_id, pp["sku"], pp["session_key"], grace,
+            )
+
+        # 3) Phát product_scanned cho sản phẩm VỪA được gán session lần đầu
+        # (pp["counted"] còn False). Mỗi physical product chỉ tạo đúng MỘT
+        # cart-add event trong suốt lifecycle của nó — đúng yêu cầu mục 1.
+        pending_events: list[dict[str, Any]] = []
+        for logical_id in seen_logical_ids:
+            pp = phys[logical_id]
+            if pp["session_key"] is None or pp["counted"]:
+                continue
+            scanned_key = f"{camera_key}:{pp['session_key']}"
+            scanned = _CHECKOUT_SCANNED.setdefault(scanned_key, {})
+            bucket = scanned.setdefault(pp["sku"], {"logical_ids": set()})
+            bucket["logical_ids"].add(logical_id)
+            pp["counted"] = True
             event = {
                 "event_id": uuid.uuid4().hex,
                 "event_type": "product_scanned",
                 "organization_id": str(organization_id),
                 "branch_id": str(branch_id),
                 "camera_id": str(camera_id) if camera_id else None,
-                "track_id": checkout_track,
+                "track_id": pp["session_key"],
                 "product_id": None,
-                "product_sku": sku,
+                "product_sku": pp["sku"],
                 "quantity": 1,
-                "confidence": conf,
-                "customer_id": str(customer_id) if customer_id else None,
-                "occurred_at": datetime.now(timezone.utc).isoformat(),
-            }
-            pending_events.append(event)
-            scanned[sku] = {"count": 1, "last_seen": now}
-
-        if pending_events:
-            logger.warning("CHECKOUT EVENT SEND: sending events %s", [e["product_sku"] for e in pending_events])
-            event_results = await asyncio.gather(*[_post_event(e) for e in pending_events])
-            for e, r in zip(pending_events, event_results):
-                logger.warning("CHECKOUT EVENT RESULT: sku=%s, backend_response=%s", e["product_sku"], r)
-                emitted.append({"event": e, "backend": r})
-
-        # 2) Đối soát: SKU đã ghi nhận nhưng vắng mặt quá lâu -> GỠ khỏi giỏ.
-        # Chạy cả khi quầy trống (present_counts rỗng) nên nhấc hết sản phẩm ra thì giỏ
-        # cũng được dọn theo. Dùng product_returned mà backend đã hỗ trợ sẵn.
-        absent_sec = _checkout_absent_seconds()
-        for sku in [s for s, data in list(scanned.items())
-                    if s not in present_counts and isinstance(data, dict) and now - data.get("last_seen", 0.0) > absent_sec]:
-            curr_count = scanned[sku].get("count", 1) if isinstance(scanned[sku], dict) else 1
-            event = {
-                "event_id": uuid.uuid4().hex,
-                "event_type": "product_returned",
-                "organization_id": str(organization_id),
-                "branch_id": str(branch_id),
-                "camera_id": str(camera_id) if camera_id else None,
-                "track_id": checkout_track,
-                "product_id": None,
-                "product_sku": sku,
-                "quantity": curr_count,
                 "confidence": 1.0,
                 "customer_id": str(customer_id) if customer_id else None,
                 "occurred_at": datetime.now(timezone.utc).isoformat(),
             }
-            result = await _post_event(event)
-            emitted.append({"event": event, "backend": result})
-            scanned.pop(sku, None)
+            pending_events.append(event)
+
+        if pending_events:
+            event_results = await asyncio.gather(*[_post_event(e) for e in pending_events])
+            for e, r in zip(pending_events, event_results):
+                logger.warning(
+                    "CHECKOUT EVENT RESULT: sku=%s session=%s backend=%s",
+                    e["product_sku"], e["track_id"], r,
+                )
+                emitted.append({"event": e, "backend": r})
+
+        # 4) Đối soát + GC: physical product vắng mặt quá lâu (đã ra khỏi cả
+        # cửa sổ bắc cầu từ lâu) -> coi là rời quầy thật sự. Gỡ khỏi giỏ nếu
+        # đã tính, rồi xoá khỏi state để không phình bộ nhớ theo thời gian.
+        absent_sec = _checkout_absent_seconds()
+        expired = [lid for lid, pp in phys.items() if now - pp["last_seen"] > absent_sec]
+        for logical_id in expired:
+            pp = phys.pop(logical_id)
+            alias.pop(pp["current_track_id"], None)
+            if pp["counted"] and pp["session_key"]:
+                scanned_key = f"{camera_key}:{pp['session_key']}"
+                bucket = _CHECKOUT_SCANNED.get(scanned_key, {}).get(pp["sku"])
+                if bucket and logical_id in bucket["logical_ids"]:
+                    bucket["logical_ids"].discard(logical_id)
+                    event = {
+                        "event_id": uuid.uuid4().hex,
+                        "event_type": "product_returned",
+                        "organization_id": str(organization_id),
+                        "branch_id": str(branch_id),
+                        "camera_id": str(camera_id) if camera_id else None,
+                        "track_id": pp["session_key"],
+                        "product_id": None,
+                        "product_sku": pp["sku"],
+                        "quantity": 1,
+                        "confidence": 1.0,
+                        "customer_id": str(customer_id) if customer_id else None,
+                        "occurred_at": datetime.now(timezone.utc).isoformat(),
+                    }
+                    result = await _post_event(event)
+                    emitted.append({"event": event, "backend": result})
+                    if not bucket["logical_ids"]:
+                        _CHECKOUT_SCANNED[scanned_key].pop(pp["sku"], None)
 
     # Product-returned detection: a sku that was picked up (has a cooldown
     # entry, i.e. we actually emitted product_picked_up for it) but hasn't
