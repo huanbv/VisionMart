@@ -5,6 +5,18 @@ from __future__ import annotations
 from celery import Celery
 from celery.schedules import schedule
 
+import app.models  # noqa: F401 — nạp TOÀN BỘ model registry trước khi bất kỳ
+# task nào chạy. SQLAlchemy chỉ resolve khoá ngoại lúc mapper thực sự được
+# dùng (query/flush đầu tiên), không phải lúc class được import — nên một
+# task module chỉ import đúng model nó cần (vd ShoppingCart) vẫn có thể vỡ
+# ngay khi flush, nếu model liên quan qua FK (vd Customer) chưa từng được
+# import ở đâu trong tiến trình. Đây chính là nguyên nhân cart_sweeper task
+# lỗi PendingRollbackError/NoReferencedTableError('customers') ở MỌI lần
+# chạy trong 3 tuần liền — 9000+ giỏ AI hết hạn không bao giờ được dọn vì
+# task luôn crash trước khi kịp abandon() cart nào. Import ở đây (module mà
+# mọi task file đều `from app.workers.celery_app import celery_app`) đảm
+# bảo registry đầy đủ ngay từ lúc worker khởi động, không phụ thuộc thứ tự
+# import riêng của từng task.
 from app.config.settings import get_settings
 
 _settings = get_settings()
