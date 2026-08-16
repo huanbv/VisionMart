@@ -152,6 +152,17 @@ else
   die "Migration THẤT BẠI — code đã lên nhưng schema thì chưa. Sửa rồi chạy lại: docker compose exec backend alembic upgrade head"
 fi
 
+# Nginx cache IP nội bộ Docker của upstream (backend/ai-engine) trong bộ
+# nhớ worker process — khi build ở trên recreate container, IP đổi nhưng
+# nginx không tự biết, nên request tiếp tục bay vào IP CŨ và ăn 502 Bad
+# Gateway cho tới khi có ai restart nginx thủ công. Xảy ra 2 lần liên tiếp
+# trong thực tế (deploy xong -> login 502 -> phải restart nginx tay) nên
+# đưa hẳn vào đây thay vì dựa vào người vận hành nhớ làm.
+if $COMPOSE ps --services 2>/dev/null | grep -qx nginx; then
+  log "Restarting nginx (làm mới IP upstream sau khi container backend/ai-engine đổi)"
+  $COMPOSE restart nginx
+fi
+
 log "Container status"
 $COMPOSE ps
 
