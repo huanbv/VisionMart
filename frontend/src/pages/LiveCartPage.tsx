@@ -53,7 +53,7 @@ import {
 import { type Branch, listBranches } from "@/api/tenancy";
 import { type Camera, listCameras, triggerCameraScan } from "@/api/cameras";
 import { tokenStore } from "@/api/client";
-import LiveCameraView from "@/components/LiveCameraView";
+import LiveCameraView, { type LiveStreamStatus } from "@/components/LiveCameraView";
 
 const REFRESH_MS = 5_000;
 
@@ -188,6 +188,8 @@ export default function LiveCartPage() {
   const [liveCameraId, setLiveCameraId] = useState<string | undefined>();
   const [showLive, setShowLive] = useState(true);
   const [liveDetect, setLiveDetect] = useState(true);
+  const [aiPaused, setAiPaused] = useState(false);
+  const [streamStatus, setStreamStatus] = useState<LiveStreamStatus>("connecting");
   const [aiLogs, setAiLogs] = useState<AiLogItem[]>([]);
 
   const addLog = useCallback((type: AiLogItem["type"], messageText: string, detail?: string) => {
@@ -539,37 +541,66 @@ export default function LiveCartPage() {
                   )}
                 </div>
 
-                <Card size="small" style={{ background: "#fafafa", borderRadius: 8 }}>
-                  <Typography.Text strong style={{ fontSize: 13, display: "block", marginBottom: 6 }}>
-                    ⚡ Tiến độ nhận diện AI
-                  </Typography.Text>
-                  <Steps
-                    direction="vertical"
-                    size="small"
-                    current={carts.length > 0 ? 3 : 1}
-                    items={[
-                      {
-                        title: "Luồng Camera Live",
-                        description: "RTSP 8 FPS đang mở",
-                        icon: <EyeOutlined />,
-                      },
-                      {
-                        title: "AI YOLOv8 Nhận dạng",
-                        description: "Đang quét ROI payzone (Min 40%)",
-                        icon: <SyncOutlined spin />,
-                      },
-                      {
-                        title: "Gửi sự kiện cart-events",
-                        description: "Tự động phát hiện & khớp SKU",
-                        icon: <CloudUploadOutlined />,
-                      },
-                      {
-                        title: "Xác nhận & Vào giỏ",
-                        description: carts.length > 0 ? `Có ${carts.reduce((s, c) => s + c.lines.length, 0)} món trong giỏ` : "Chờ đặt món lên quầy",
-                        icon: <ShoppingCartOutlined />,
-                      },
-                    ]}
-                  />
+                <Card
+                  size="small"
+                  style={{ background: "#fafafa", borderRadius: 8 }}
+                  styles={{ body: { paddingBottom: 8 } }}
+                >
+                  <Space style={{ width: "100%", justifyContent: "space-between", marginBottom: 6 }}>
+                    <Typography.Text strong style={{ fontSize: 13 }}>
+                      ⚡ Tiến độ nhận diện AI
+                    </Typography.Text>
+                    <Button
+                      size="small"
+                      type={aiPaused ? "primary" : "default"}
+                      onClick={() => setAiPaused((v) => !v)}
+                    >
+                      {aiPaused ? "▶️ Tiếp tục" : "⏸️ Tạm dừng"}
+                    </Button>
+                  </Space>
+                  {aiPaused ? (
+                    <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                      Nhận diện AI đang tạm dừng — bấm "Tiếp tục" để bật lại.
+                    </Typography.Text>
+                  ) : streamStatus === "error" ? (
+                    <Typography.Text type="warning" style={{ fontSize: 12 }}>
+                      ⚠️ Mất luồng camera — đang tự động thử kết nối lại…
+                    </Typography.Text>
+                  ) : (
+                    <Steps
+                      direction="vertical"
+                      size="small"
+                      current={
+                        streamStatus === "connecting"
+                          ? 0
+                          : carts.length > 0
+                            ? 3
+                            : 1
+                      }
+                      items={[
+                        {
+                          title: "Luồng Camera Live",
+                          description: streamStatus === "live" ? "RTSP 8 FPS đang mở" : "Đang kết nối…",
+                          icon: streamStatus === "live" ? <EyeOutlined /> : <SyncOutlined spin />,
+                        },
+                        {
+                          title: "AI YOLOv8 Nhận dạng",
+                          description: "Đang quét ROI payzone (Min 40%)",
+                          icon: <SyncOutlined spin />,
+                        },
+                        {
+                          title: "Gửi sự kiện cart-events",
+                          description: "Tự động phát hiện & khớp SKU",
+                          icon: <CloudUploadOutlined />,
+                        },
+                        {
+                          title: "Xác nhận & Vào giỏ",
+                          description: carts.length > 0 ? `Có ${carts.reduce((s, c) => s + c.lines.length, 0)} món trong giỏ` : "Chờ đặt món lên quầy",
+                          icon: <ShoppingCartOutlined />,
+                        },
+                      ]}
+                    />
+                  )}
                 </Card>
 
                 <Card size="small" title="📋 Nhật ký sự kiện AI & Realtime" style={{ maxHeight: 200, overflowY: "auto", borderRadius: 8 }}>
@@ -603,7 +634,12 @@ export default function LiveCartPage() {
               <div style={{ width: "100%", margin: "0 auto" }}>
                 {liveCamera ? (
                   <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-                    <LiveCameraView camera={liveCamera} detect={liveDetect} />
+                    <LiveCameraView
+                      camera={liveCamera}
+                      detect={liveDetect}
+                      paused={aiPaused}
+                      onStatusChange={setStreamStatus}
+                    />
                     <ActivePersonsPanel camera={liveCamera} />
                   </div>
                 ) : (

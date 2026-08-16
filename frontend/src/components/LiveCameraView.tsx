@@ -1,9 +1,18 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Typography } from "antd";
 
 import type { Camera } from "@/api/cameras";
 import { openMjpegStream } from "@/utils/mjpegStream";
 import RoiOverlay from "@/components/RoiOverlay";
+
+/** Trạng thái luồng, báo ra ngoài cho panel tiến độ AI (nếu component cha cần). */
+export type LiveStreamStatus = "connecting" | "live" | "error" | "paused";
+
+// Mất luồng thì thử lại sau ngần này (giây) thay vì treo lỗi vĩnh viễn cho
+// tới khi người dùng đổi camera hay bấm lại switch — camera RTSP rớt tạm
+// thời (mất điện, khởi động lại đầu ghi) là chuyện thường, nên tự phục hồi
+// khi luồng có lại là hành vi đúng, không cần người canh chừng.
+const RETRY_DELAY_MS = 5_000;
 
 /**
  * Ô xem camera trực tiếp, tách riêng để tái dùng ngoài trang Cameras (ví
@@ -13,30 +22,92 @@ import RoiOverlay from "@/components/RoiOverlay";
  *
  * Vẽ ROI overlay theo toạ độ phân số (0–1) như ở trang Cameras, và dùng
  * objectFit "contain" để vùng vẽ không lệch khỏi vị trí thật.
+ *
+ * `paused`: khi true, không mở luồng (và không tự thử lại) — dùng cho nút
+ * Tạm dừng nhận diện AI ở trang giỏ hàng live. Khi chuyển paused false lại,
+ * luồng được mở lại ngay.
  */
 export default function LiveCameraView({
   camera,
   detect = true,
   showLabels = true,
+  paused = false,
+  onStatusChange,
 }: {
   camera: Camera;
   detect?: boolean;
   showLabels?: boolean;
+  paused?: boolean;
+  onStatusChange?: (status: LiveStreamStatus) => void;
 }) {
   const [frame, setFrame] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const onStatusChangeRef = useRef(onStatusChange);
+  onStatusChangeRef.current = onStatusChange;
 
   useEffect(() => {
-    setFrame(null);
-    setError(null);
-    const handle = openMjpegStream(
-      camera.id,
-      (url) => setFrame(url),
-      (msg) => setError(msg),
-      { detect, detectEveryN: 3 },
+    if (paused) {
+      setFrame(null);
+      setError(null);
+      onStatusChangeRef.current?.("paused");
+      return;
+    }
+
+    let stopped = false;
+    let retryTimer: ReturnType<typeof setTimeout> | null = null;
+    let handle: { stop: () => void } | null = null;
+
+    const connect = () => {
+      if (stopped) return;
+      setFrame(null);
+      setError(null);
+      onStatusChangeRef.current?.("connecting");
+      handle = openMjpegStream(
+        camera.id,
+        (url) => {
+          setFrame(url);
+          onStatusChangeRef.current?.("live");
+        },
+        (msg) => {
+          setError(msg);
+          onStatusChangeRef.current?.("error");
+          if (!stopped) {
+            retryTimer = setTimeout(connect, RETRY_DELAY_MS);
+          }
+        },
+        { detect, detectEveryN: 3 },
+      );
+    };
+    connect();
+
+    return () => {
+      stopped = true;
+      if (retryTimer) clearTimeout(retryTimer);
+      handle?.stop();
+    };
+  }, [camera.id, detect, paused]);
+
+  if (paused) {
+    return (
+      <div
+        style={{
+          position: "relative",
+          width: "100%",
+          aspectRatio: "16 / 9",
+          background: "#141414",
+          borderRadius: 4,
+          overflow: "hidden",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+        }}
+      >
+        <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+          ⏸️ Đã tạm dừng nhận diện AI
+        </Typography.Text>
+      </div>
     );
-    return () => handle.stop();
-  }, [camera.id, detect]);
+  }
 
   return (
     <div
@@ -55,6 +126,8 @@ export default function LiveCameraView({
             position: "absolute",
             inset: 0,
             display: "flex",
+            flexDirection: "column",
+            gap: 4,
             alignItems: "center",
             justifyContent: "center",
             padding: 8,
@@ -63,6 +136,9 @@ export default function LiveCameraView({
         >
           <Typography.Text type="danger" style={{ fontSize: 12 }}>
             {error}
+          </Typography.Text>
+          <Typography.Text type="secondary" style={{ fontSize: 11 }}>
+            Đang tự động thử kết nối lại…
           </Typography.Text>
         </div>
       ) : frame ? (
