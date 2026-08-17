@@ -72,7 +72,13 @@ import { tokenStore } from "@/api/client";
 
 const AI_FRAME_URL = "/ai/ai/frame";
 const AI_RESET_URL = "/ai/ai/reset-session";
-const AI_ENGINE_KEY = "change-me-ai-engine-key";
+// Đọc từ biến môi trường lúc build (VITE_AI_ENGINE_KEY trong .env) thay vì
+// hardcode literal — key thật không nằm trong lịch sử git. Vẫn nằm trong
+// bundle JS gửi tới trình duyệt (không tránh được vì gọi ai-engine thẳng
+// từ client, xem comment ở AI_FRAME_URL), fallback placeholder chỉ để dev
+// local không set biến vẫn chạy được (sẽ bị ai-engine từ chối 401 nếu
+// AI_ENGINE_API_KEY thật khác giá trị mặc định — không phải lỗi ẩn).
+const AI_ENGINE_KEY = import.meta.env.VITE_AI_ENGINE_KEY ?? "change-me-ai-engine-key";
 const REFRESH_MS = 3_000;
 
 const IGNORED_COCO_CLASSES = new Set([
