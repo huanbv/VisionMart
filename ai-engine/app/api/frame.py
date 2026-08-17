@@ -662,6 +662,8 @@ def _nearest_person_for_product(
     product_cy: float,
     persons: list[TrackedObject],
     now: float,
+    frame_w: float,
+    frame_h: float,
 ) -> TrackedObject | None:
     """Chủ sở hữu ứng viên cho một sản phẩm ở quầy — xét theo QUỸ ĐẠO, không
     phải khoảng cách hiện tại.
@@ -689,6 +691,7 @@ def _nearest_person_for_product(
     for person in persons:
         touched_at = trajectory_last_near_ts(
             camera_key, person.track_id, product_cx, product_cy,
+            frame_w=frame_w, frame_h=frame_h,
             now=now, window_seconds=window, radius_px=reach_radius,
         )
         if touched_at is None:
@@ -1133,11 +1136,20 @@ async def process_frame(
         # gần hơn — trừ khi physical product này thực sự kết thúc lifecycle
         # (bị GC ở bước 4) và một logical_id mới được tạo.
         grace = _unassigned_grace_seconds()
+        # Khung THẬT SỰ mà YOLO/pose thấy (raw_frame nếu có, khớp đúng cái
+        # person_tracker.py dùng khi ghi quỹ đạo) — cx/cy của person lẫn pp
+        # đều tính trên khung này, nên quy đổi quỹ đạo ngược lại cũng phải
+        # dùng đúng kích thước này, không phải kích thước bất kỳ khung nào
+        # khác (vd frame đã tiền xử lý/resize).
+        _traj_frame = tracking.raw_frame if tracking.raw_frame is not None else tracking.frame_bgr
+        _traj_fh, _traj_fw = _traj_frame.shape[:2]
         for logical_id in seen_logical_ids:
             pp = phys[logical_id]
             if pp["session_key"] is not None:
                 continue
-            nearest = _nearest_person_for_product(camera_key, pp["cx"], pp["cy"], persons, now)
+            nearest = _nearest_person_for_product(
+                camera_key, pp["cx"], pp["cy"], persons, now, _traj_fw, _traj_fh
+            )
             if nearest is not None:
                 session_key = person_sessions.get(nearest.track_id)
                 if session_key is None:

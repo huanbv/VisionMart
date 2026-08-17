@@ -74,38 +74,67 @@ _TRAJECTORY_MAXLEN = 60
 _TRAJECTORY_STALE_SECONDS = 300.0
 
 
-def record_person_position(camera_key: str, mapped_id: int, cx: float, cy: float, ts: float) -> None:
+def record_person_position(
+    camera_key: str, mapped_id: int, cx: float, cy: float, ts: float,
+    frame_w: float, frame_h: float,
+) -> None:
+    """Lưu vị trí theo toạ độ PHÂN SỐ (0-1), không phải pixel tuyệt đối —
+    cùng quy ước với RoiZone (vision/roi/zones.py). Bắt buộc, vì quỹ đạo
+    được GHI từ khung hình của pipeline /ai/frame nhưng lại được VẼ trên
+    khung hình của luồng live riêng (live.py) — hai nơi có thể khác kích
+    thước. Lưu pixel tuyệt đối rồi vẽ thẳng lên một khung hình khác kích
+    thước sẽ ra toạ độ sai lệch (từng gặp: đường vẽ toé ra như pháo hoa
+    thay vì một đường đi mượt). Người gọi luôn phải quy đổi ngược sang
+    pixel bằng kích thước khung hình CỦA CHÍNH MÌNH — xem
+    get_person_trajectory_px/get_all_trajectories_xy/trajectory_last_near_ts."""
+    if frame_w <= 0 or frame_h <= 0:
+        return
     per_cam = _PERSON_TRAJECTORIES.setdefault(camera_key, {})
     traj = per_cam.get(mapped_id)
     if traj is None:
         traj = collections.deque(maxlen=_TRAJECTORY_MAXLEN)
         per_cam[mapped_id] = traj
-    traj.append((cx, cy, ts))
+    traj.append((cx / frame_w, cy / frame_h, ts))
 
 
-def get_person_trajectory(camera_key: str, mapped_id: int) -> list[tuple[float, float, float]]:
+def get_person_trajectory_px(
+    camera_key: str, mapped_id: int, frame_w: float, frame_h: float,
+) -> list[tuple[float, float, float]]:
+    """Quỹ đạo quy đổi ra pixel theo kích thước khung hình CỦA NGƯỜI GỌI
+    (frame_w/frame_h) — không phải kích thước lúc ghi."""
     per_cam = _PERSON_TRAJECTORIES.get(camera_key)
     if not per_cam:
         return []
     traj = per_cam.get(mapped_id)
-    return list(traj) if traj else []
+    if not traj:
+        return []
+    return [(fx * frame_w, fy * frame_h, ts) for fx, fy, ts in traj]
 
 
-def get_all_trajectories_xy(camera_key: str) -> dict[int, list[tuple[float, float]]]:
-    """Chỉ (x, y) — dùng để vẽ overlay, không cần timestamp."""
+def get_all_trajectories_xy(
+    camera_key: str, frame_w: float, frame_h: float,
+) -> dict[int, list[tuple[float, float]]]:
+    """(x, y) pixel theo kích thước khung hình của người gọi — dùng để vẽ
+    overlay, không cần timestamp."""
     per_cam = _PERSON_TRAJECTORIES.get(camera_key)
     if not per_cam:
         return {}
-    return {mid: [(x, y) for x, y, _ts in traj] for mid, traj in per_cam.items()}
+    return {
+        mid: [(fx * frame_w, fy * frame_h) for fx, fy, _ts in traj]
+        for mid, traj in per_cam.items()
+    }
 
 
 def trajectory_last_near_ts(
     camera_key: str, mapped_id: int, px: float, py: float,
-    *, now: float, window_seconds: float, radius_px: float,
+    *, frame_w: float, frame_h: float,
+    now: float, window_seconds: float, radius_px: float,
 ) -> float | None:
     """Thời điểm GẦN NHẤT (mới nhất, không phải sớm nhất) mà người này ở
-    trong bán kính radius_px quanh (px, py), trong window_seconds giây gần
-    đây — None nếu chưa từng. Trả cả timestamp (không chỉ True/False) để
+    trong bán kính radius_px quanh (px, py) — toạ độ pixel của CÙNG khung
+    hình mà (px, py) thuộc về (frame_w/frame_h phải khớp khung hình đó,
+    thường là khung /ai/frame đang xử lý) — trong window_seconds giây gần
+    đây. None nếu chưa từng. Trả cả timestamp (không chỉ True/False) để
     xếp hạng nhiều ứng viên: ai chạm gần đây hơn có khả năng cao hơn là
     người vừa đặt/vừa lấy sản phẩm, so với ai đi qua rồi từ lâu.
 
@@ -115,7 +144,7 @@ def trajectory_last_near_ts(
     lại người đứng yên cạnh đó không hề động vào gì."""
     import math
     last: float | None = None
-    for x, y, ts in get_person_trajectory(camera_key, mapped_id):
+    for x, y, ts in get_person_trajectory_px(camera_key, mapped_id, frame_w, frame_h):
         if now - ts > window_seconds:
             continue
         if math.hypot(x - px, y - py) <= radius_px:
@@ -430,7 +459,9 @@ def _build_overlay_jpeg_base64(
             zones=zones,
             detections=overlay_dets,
             is_checkout_zone=is_checkout_zone,
-            trajectories=get_all_trajectories_xy(camera_key),
+            trajectories=get_all_trajectories_xy(
+                camera_key, frame_bgr.shape[1], frame_bgr.shape[0]
+            ),
         )
         ok, buf = cv2.imencode(".jpg", overlay_frame, [cv2.IMWRITE_JPEG_QUALITY, 80])
         if not ok:
@@ -562,6 +593,7 @@ async def track_frame_detailed(
                 
                 import time
                 now_ts = time.time()
+                frame_h, frame_w = img.shape[:2]
                 latest_boxes = []
                 for obj in out:
                     if obj.class_name == "person":
@@ -570,7 +602,10 @@ async def track_frame_detailed(
                             "bbox": [obj.x1, obj.y1, obj.x2, obj.y2],
                             "timestamp": now_ts
                         })
-                        record_person_position(camera_key, obj.track_id, obj.cx, obj.cy, now_ts)
+                        record_person_position(
+                            camera_key, obj.track_id, obj.cx, obj.cy, now_ts,
+                            frame_w, frame_h,
+                        )
                 _LATEST_PERSON_BOXES[camera_key] = latest_boxes
 
         # 2. Run object detection tracking on products

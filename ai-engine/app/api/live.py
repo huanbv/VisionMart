@@ -418,7 +418,8 @@ async def _mjpeg_frames(
                     from app.services.person_tracker import get_all_trajectories_xy
                     m = _re.search(r"cam-([a-f0-9\-]{36})", stream_url)
                     _traj_camera_key = m.group(1) if m else "default"
-                    _draw_trajectories(frame, get_all_trajectories_xy(_traj_camera_key))
+                    _fh, _fw = frame.shape[:2]
+                    _draw_trajectories(frame, get_all_trajectories_xy(_traj_camera_key, _fw, _fh))
                 except Exception:  # noqa: BLE001
                     logger.exception("live stream: trajectory overlay failed")
                 _draw_detections(frame, visible)
