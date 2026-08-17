@@ -705,14 +705,16 @@ def _nearest_person_for_product(
 
     if best_id is None:
         return None
-    # Trả TrackedObject nếu người vẫn trong khung, hoặc tạo một stub chỉ có
-    # track_id (đủ để lấy session_key / chụp ảnh crop).
+    # Trả TrackedObject nếu người vẫn trong khung, hoặc stub chỉ có track_id
+    # (người đã rời khung). Stub có confidence=-1.0 để caller (hoặc debug log)
+    # phân biệt được "person hiện diện" vs "person đã rời nhưng khớp quỹ đạo".
+    # cx/cy của stub là 0 — không dùng cho bất kỳ tính toán vị trí nào.
     if best_person is not None:
         return best_person
     return TrackedObject(
         track_id=best_id,
         class_name="person",
-        confidence=0.0,
+        confidence=-1.0,
         x1=0.0, y1=0.0, x2=0.0, y2=0.0,
     )
 

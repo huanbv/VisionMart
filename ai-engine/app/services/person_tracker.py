@@ -72,6 +72,12 @@ _TRAJECTORY_MAXLEN = 60
 # Người không xuất hiện lại quá lâu thì dọn quỹ đạo của họ — tách biệt
 # với TTL của ReID (features_db) vì mục đích khác nhau.
 _TRAJECTORY_STALE_SECONDS = 300.0
+# Bảng màu chung cho overlay quỹ đạo — dùng ở cả live.py lẫn debug_overlay.py
+# để màu nhất quán khi xem cả hai nơi cùng lúc.
+TRAJECTORY_PALETTE: list[tuple[int, int, int]] = [
+    (255, 0, 0), (0, 165, 255), (255, 0, 255),
+    (0, 255, 255), (255, 255, 0), (128, 0, 255),
+]
 
 
 def record_person_position(
@@ -108,7 +114,7 @@ def get_person_trajectory_px(
     traj = per_cam.get(mapped_id)
     if not traj:
         return []
-    return [(fx * frame_w, fy * frame_h, ts) for fx, fy, ts in traj]
+    return [(fx * frame_w, fy * frame_h, ts) for fx, fy, ts in list(traj)]
 
 
 def get_all_trajectories_xy(
@@ -120,8 +126,8 @@ def get_all_trajectories_xy(
     if not per_cam:
         return {}
     return {
-        mid: [(fx * frame_w, fy * frame_h) for fx, fy, _ts in traj]
-        for mid, traj in per_cam.items()
+        mid: [(fx * frame_w, fy * frame_h) for fx, fy, _ts in list(traj)]
+        for mid, traj in list(per_cam.items())
     }
 
 
@@ -155,13 +161,20 @@ def trajectory_last_near_ts(
 
 def get_recent_trajectory_person_ids(camera_key: str, now: float, window_seconds: float) -> list[int]:
     """Trả danh sách mapped_id của những người có ít nhất một điểm quỹ đạo
-    trong window_seconds giây gần đây — kể cả người đã rời khung hình."""
+    trong window_seconds giây gần đây — kể cả người đã rời khung hình.
+
+    Xét điểm ĐẦU TIÊN (cũ nhất) của deque — nếu điểm CŨ NHẤT còn trong
+    cửa sổ thì chắc chắn có điểm nào đó trong cửa sổ. Ngược lại xét điểm
+    CUỐI (mới nhất) — nếu điểm mới nhất trong cửa sổ thì có điểm trong cửa
+    sổ. Đủ để không bỏ sót người có điểm hợp lệ ở bất kỳ vị trí nào."""
     per_cam = _PERSON_TRAJECTORIES.get(camera_key)
     if not per_cam:
         return []
     result = []
-    for mid, traj in per_cam.items():
-        if traj and now - traj[-1][2] <= window_seconds:
+    cutoff = now - window_seconds
+    for mid, traj in list(per_cam.items()):
+        snap = list(traj)
+        if snap and (snap[-1][2] >= cutoff or snap[0][2] >= cutoff):
             result.append(mid)
     return result
 
@@ -169,7 +182,7 @@ def get_recent_trajectory_person_ids(camera_key: str, now: float, window_seconds
 def prune_stale_trajectories(now: float) -> None:
     for camera_key, per_cam in list(_PERSON_TRAJECTORIES.items()):
         stale_ids = [
-            mid for mid, traj in per_cam.items()
+            mid for mid, traj in list(per_cam.items())
             if not traj or now - traj[-1][2] > _TRAJECTORY_STALE_SECONDS
         ]
         for mid in stale_ids:

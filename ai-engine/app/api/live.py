@@ -41,6 +41,7 @@ from fastapi import APIRouter, Depends, Query, Request
 from fastapi.responses import StreamingResponse
 
 from app.security import require_api_key
+from app.services.person_tracker import TRAJECTORY_PALETTE as _TRAJECTORY_PALETTE
 from app.services.yolo_detector import YoloDetector
 from app.vision.classify import get_classifier
 from app.vision.crop.cropper import crop_detection
@@ -228,18 +229,8 @@ def _draw_detections(frame, detections: list[dict]) -> None:
         )
 
 
-_TRAJECTORY_PALETTE = [
-    (255, 0, 0), (0, 165, 255), (255, 0, 255),
-    (0, 255, 255), (255, 255, 0), (128, 0, 255),
-]
-
-
 def _draw_trajectories(frame, trajectories: dict[int, list[tuple[float, float]]]) -> None:
-    """Vẽ đường đi gần đây của từng người (mapped_id) — cùng dữ liệu
-    person_tracker.py ghi khi xử lý /ai/frame (frame_pipeline chạy nền mỗi
-    ~3s), nên luồng live này KHÔNG tự tính lại, chỉ đọc và vẽ. Một màu
-    riêng theo mapped_id để phân biệt nhiều người cùng lúc — cùng bảng màu
-    với debug_overlay.py cho nhất quán khi xem cả hai nơi."""
+    """Vẽ đường đi gần đây của từng người (mapped_id)."""
     for mapped_id, points in trajectories.items():
         if len(points) < 2:
             continue
@@ -377,9 +368,9 @@ async def _mjpeg_frames(
                         # Match detected people with the latest persistent tracker boxes!
                         try:
                             import re
-                            match = re.search(r"cam-([a-f0-9\-]{36})", stream_url)
-                            camera_key = match.group(1) if match else "default"
-                            
+                            _cam_match = re.search(r"cam-([a-f0-9-]{36})", stream_url, re.IGNORECASE)
+                            camera_key = _cam_match.group(1) if _cam_match else "default"
+
                             from app.services.person_tracker import get_latest_person_boxes
                             tracker_boxes = get_latest_person_boxes(camera_key)
                             
@@ -414,12 +405,9 @@ async def _mjpeg_frames(
                 # tại), để panel chỉ hiện box trong vùng — khớp với giỏ.
                 visible = _filter_by_zones(frame, last_detections, zones or [])
                 try:
-                    import re as _re
                     from app.services.person_tracker import get_all_trajectories_xy
-                    m = _re.search(r"cam-([a-f0-9\-]{36})", stream_url)
-                    _traj_camera_key = m.group(1) if m else "default"
                     _fh, _fw = frame.shape[:2]
-                    _draw_trajectories(frame, get_all_trajectories_xy(_traj_camera_key, _fw, _fh))
+                    _draw_trajectories(frame, get_all_trajectories_xy(camera_key, _fw, _fh))
                 except Exception:  # noqa: BLE001
                     logger.exception("live stream: trajectory overlay failed")
                 _draw_detections(frame, visible)

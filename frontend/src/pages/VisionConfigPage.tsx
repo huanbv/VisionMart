@@ -123,7 +123,7 @@ const GROUPS: Group[] = [
         min: 1,
         max: 60,
         step: 1,
-        hint: "Chỉ tính người là chủ sở hữu nếu quỹ đạo của họ đi qua gần sản phẩm trong ngần này giây gần đây — không chỉ đứng gần lúc phát hiện. Mặc định 8.",
+        hint: "Chỉ tính người là chủ sở hữu nếu quỹ đạo của họ đi qua gần sản phẩm trong ngần này giây gần đây — không chỉ đứng gần lúc phát hiện. Mặc định 15.",
       },
       {
         key: "CHECKOUT_TRAJECTORY_REACH_DIST_PX",
@@ -131,7 +131,7 @@ const GROUPS: Group[] = [
         min: 20,
         max: 500,
         step: 10,
-        hint: "Khoảng cách tối đa để coi một điểm trong quỹ đạo là đã tới gần sản phẩm. Nhỏ hơn khoảng cách gán chủ sở hữu ở trên vì đây là ngưỡng \"đã chạm tới\", không phải \"đứng trong khu vực\". Mặc định 150.",
+        hint: "Khoảng cách tối đa để coi một điểm trong quỹ đạo là đã tới gần sản phẩm. Mặc định 300.",
       },
     ],
   },

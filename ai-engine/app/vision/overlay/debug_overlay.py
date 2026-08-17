@@ -71,10 +71,7 @@ def draw_debug_overlay(
     # riêng theo mapped_id (đổi theo track_id % bảng màu) để phân biệt nhiều
     # người cùng lúc.
     if trajectories:
-        palette = [
-            (255, 0, 0), (0, 165, 255), (255, 0, 255),
-            (0, 255, 255), (255, 255, 0), (128, 0, 255),
-        ]
+        from app.services.person_tracker import TRAJECTORY_PALETTE as palette
         for mapped_id, points in trajectories.items():
             if len(points) < 2:
                 continue
