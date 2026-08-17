@@ -140,11 +140,14 @@ def match_product(
     )
 
     # --- 1. Classifier, when confident enough ---
-    actual_min_conf = (
-        max(classifier_min_confidence, 0.68)
-        if str(class_name).lower() == "region"
-        else classifier_min_confidence
-    )
+    # Trước đây lớp "region" (đề xuất contour, không phải lớp YOLO thật —
+    # xem person_tracker.py::_merge_classical_proposals) bị siết cứng lên
+    # tối thiểu 0.68, cao hơn hẳn CLASSIFIER_MIN_CONFIDENCE (mặc định 0.55)
+    # và KHÔNG chỉnh được từ Admin > Cấu hình xử lý ảnh dù mọi ngưỡng khác
+    # trong hệ thống đều chỉnh được ở đó không cần sửa code/restart. Bỏ
+    # điểm siết riêng này — "region" dùng chung classifier_min_confidence
+    # như mọi lớp khác, admin chỉnh một chỗ duy nhất là áp dụng cho tất cả.
+    actual_min_conf = classifier_min_confidence
     if (
         cls_sku
         and cls_conf is not None
