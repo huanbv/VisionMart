@@ -60,6 +60,28 @@ const GROUPS: Group[] = [
     },
   },
   {
+    title: "Phân loại SKU (Classifier)",
+    note: "Ngưỡng tin cậy tối thiểu để chấp nhận kết quả phân loại SKU (tầng 2, sau YOLO). Áp dụng cho MỌI đối tượng, kể cả vùng đề xuất contour (lớp \"region\" — sản phẩm YOLO không có lớp riêng, ví dụ gói mì) vốn trước đây bị khoá cứng ngưỡng riêng 0.68 không chỉnh được ở đây.",
+    numbers: [
+      {
+        key: "CLASSIFIER_MIN_CONFIDENCE",
+        label: "Độ tin cậy tối thiểu",
+        min: 0,
+        max: 1,
+        step: 0.01,
+        hint: "Thấp hơn = nhận nhiều sản phẩm hơn nhưng dễ nhận nhầm. Mặc định 0.55.",
+      },
+      {
+        key: "CLASSIFIER_MIN_MARGIN",
+        label: "Khoảng cách hạng 1–2 tối thiểu",
+        min: 0,
+        max: 1,
+        step: 0.01,
+        hint: "Chênh lệch tối thiểu giữa SKU dự đoán hạng 1 và hạng 2 — 0 nghĩa là tắt kiểm tra này.",
+      },
+    ],
+  },
+  {
     title: "Auto gamma",
     note: "Tự tính hệ số gamma theo độ sáng từng khung — một cấu hình dùng được cả ngày lẫn đêm. Ưu tiên hơn Gamma cố định khi cùng bật.",
     toggle: { key: "ENABLE_AUTO_GAMMA", label: "Bật auto gamma" },
