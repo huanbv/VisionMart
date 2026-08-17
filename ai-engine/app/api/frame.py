@@ -174,11 +174,12 @@ def _reacquire_window_seconds() -> float:
     """Cửa sổ (giây) để coi một track_id mới là TIẾP DIỄN của một track vừa
     biến mất, thay vì một sản phẩm mới. Ngắn hơn nhiều so với
     CHECKOUT_ABSENT_SECONDS (120s, dùng để gỡ khỏi giỏ) — mục đích khác nhau:
-    cái này chỉ bắc cầu qua occlusion/che tay thoáng qua."""
-    try:
-        return float(os.getenv("PRODUCT_REACQUIRE_WINDOW_SECONDS", "5"))
-    except ValueError:
-        return 5.0
+    cái này chỉ bắc cầu qua occlusion/che tay thoáng qua.
+
+    Đọc từ VisionConfig (runtime override, admin UI > Cấu hình xử lý ảnh)
+    thay vì thẳng os.getenv — chỉnh có hiệu lực trong ~1s, không cần sửa
+    .env/restart container như trước."""
+    return float(get_vision_config().product_reacquire_window_seconds)
 
 
 def _reacquire_max_dist_px() -> float:
@@ -186,10 +187,7 @@ def _reacquire_max_dist_px() -> float:
     track cũ và track mới để coi là cùng vật lý. Hàng đặt trên quầy gần như
     đứng yên nên ngưỡng nhỏ là đủ; ngưỡng lớn dễ bắc cầu nhầm 2 vật khác nhau
     đặt gần nhau."""
-    try:
-        return float(os.getenv("PRODUCT_REACQUIRE_MAX_DIST_PX", "60"))
-    except ValueError:
-        return 60.0
+    return float(get_vision_config().product_reacquire_max_dist_px)
 
 
 def _unassigned_grace_seconds() -> float:
@@ -197,10 +195,7 @@ def _unassigned_grace_seconds() -> float:
     rơi về giỏ "không xác định người" (checkout-noperson). Tránh trường hợp
     người bị mất detection 1-2 khung khiến sản phẩm của họ bị gán nhầm session
     ngay lập tức."""
-    try:
-        return float(os.getenv("CHECKOUT_UNASSIGNED_GRACE_SECONDS", "5"))
-    except ValueError:
-        return 5.0
+    return float(get_vision_config().checkout_unassigned_grace_seconds)
 
 
 def _checkout_person_assoc_max_dist_px() -> float:
@@ -208,10 +203,7 @@ def _checkout_person_assoc_max_dist_px() -> float:
     hữu tại quầy. Lớn hơn ngưỡng centroid của grab-and-go (180px) vì ở quầy
     hàng thường ĐẶT xuống chứ không cầm sát tay — người có thể đứng lùi ra
     một chút so với sản phẩm trên mặt quầy."""
-    try:
-        return float(os.getenv("CHECKOUT_PERSON_ASSOC_MAX_DIST_PX", "220"))
-    except ValueError:
-        return 220.0
+    return float(get_vision_config().checkout_person_assoc_max_dist_px)
 
 
 def _checkout_person_session(

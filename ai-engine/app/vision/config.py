@@ -271,6 +271,32 @@ class VisionConfig:
     classifier_min_margin: float = field(
         default_factory=lambda: _float("CLASSIFIER_MIN_MARGIN", 0.0)
     )
+    # --- Multi-person checkout (frame.py) — trước đây chỉ đọc thẳng qua
+    # os.getenv() ở đầu process, phải sửa .env + restart container mới đổi
+    # được. Chuyển vào đây để admin chỉnh runtime giống mọi setting khác.
+    #
+    # Khoảng cách tối đa (px) giữa tâm người và tâm sản phẩm để ghép chủ sở
+    # hữu tại quầy. Camera góc rộng/người đứng lùi khỏi mặt quầy cần giá trị
+    # lớn hơn 220 mặc định.
+    checkout_person_assoc_max_dist_px: float = field(
+        default_factory=lambda: _float("CHECKOUT_PERSON_ASSOC_MAX_DIST_PX", 220.0)
+    )
+    # Sản phẩm chưa ghép được người thì đợi bao lâu (giây) trước khi rơi về
+    # giỏ "không xác định người" (checkout-noperson).
+    checkout_unassigned_grace_seconds: float = field(
+        default_factory=lambda: _float("CHECKOUT_UNASSIGNED_GRACE_SECONDS", 5.0)
+    )
+    # Cửa sổ (giây) để coi một track_id sản phẩm mới là TIẾP DIỄN của một
+    # track vừa mất (occlusion ngắn) thay vì một sản phẩm vật lý mới.
+    product_reacquire_window_seconds: float = field(
+        default_factory=lambda: _float("PRODUCT_REACQUIRE_WINDOW_SECONDS", 5.0)
+    )
+    # Khoảng cách tối đa (px) giữa vị trí cuối của track cũ và track mới để
+    # coi là cùng vật lý khi bắc cầu qua occlusion.
+    product_reacquire_max_dist_px: float = field(
+        default_factory=lambda: _float("PRODUCT_REACQUIRE_MAX_DIST_PX", 60.0)
+    )
+
     # Crop padding as a fraction of box size; label edges carry the brand.
     crop_padding: float = field(default_factory=lambda: _float("CROP_PADDING", 0.08))
     crop_min_size: int = field(default_factory=lambda: _int("CROP_MIN_SIZE", 24))
