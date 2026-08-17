@@ -129,6 +129,7 @@ class CartService:
         customer_id: uuid.UUID | None,
         session_id: str | None,
         source: CartSource,
+        customer_photo_key: str | None = None,
     ) -> ShoppingCart:
         branch = await self._branches.get_by_id(organization_id, branch_id)
         if branch is None:
@@ -153,6 +154,7 @@ class CartService:
             total_amount=Decimal("0"),
             currency="VND",
             expires_at=expires_at,
+            customer_photo_key=customer_photo_key,
         )
         cart = await self._carts.add(cart)
         await self._carts.commit()

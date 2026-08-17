@@ -36,6 +36,10 @@ export interface Cart {
   currency: string;
   lines: CartLine[];
   overall_confidence: number;
+  // true nếu ai-engine đã chụp được ảnh chủ giỏ hàng — gọi
+  // GET /carts/{id}/customer-photo để lấy ảnh khi cần (không có sẵn URL
+  // ngay trong response, tránh ký sẵn hàng loạt link không dùng tới).
+  has_customer_photo: boolean;
   expires_at: string | null;
   converted_at: string | null;
   created_at: string;
@@ -125,6 +129,21 @@ export interface CartCheckoutQrResponse {
   confirm_url: string;
   qr_svg: string;
   expires_at: string | null;
+}
+
+/**
+ * Ảnh chủ giỏ hàng dưới dạng blob URL — cùng khuôn với getProductImageUrl
+ * (catalog.ts): đi qua backend thay vì gắn thẳng vào `<img src>` vì endpoint
+ * có xác thực JWT, thẻ `<img>` không tự gửi kèm bearer token được.
+ *
+ * Người gọi phải `URL.revokeObjectURL` khi component unmount, nếu không
+ * mỗi lần danh sách giỏ hàng làm mới sẽ giữ thêm một blob trong bộ nhớ.
+ */
+export async function getCartCustomerPhotoUrl(cartId: string): Promise<string> {
+  const { data } = await apiClient.get(`/carts/${cartId}/customer-photo`, {
+    responseType: "blob",
+  });
+  return URL.createObjectURL(data as Blob);
 }
 
 export async function getCheckoutQr(cartId: string): Promise<CartCheckoutQrResponse> {

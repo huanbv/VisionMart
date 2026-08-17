@@ -45,6 +45,11 @@ class CartResponse(BaseModel):
     # double-check this before confirming?" signal. Not persisted; computed
     # fresh from `lines` each time (see cart_service.compute_overall_confidence).
     overall_confidence: float = 1.0
+    # True nếu ai-engine đã chụp được ảnh chủ giỏ hàng (xem
+    # frame.py::process_frame nhánh checkout) — không trả thẳng
+    # customer_photo_key (MinIO key nội bộ) ra ngoài, frontend gọi
+    # GET /carts/{id}/customer-photo khi cần hiển thị.
+    has_customer_photo: bool = False
     expires_at: datetime | None
     converted_at: datetime | None
     created_at: datetime

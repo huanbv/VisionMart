@@ -80,6 +80,11 @@ class ShoppingCart(Entity):
     # nên chuỗi mang tối đa hai UUID (mỗi cái 36 ký tự) cộng tiền tố, vượt
     # 80 và làm INSERT giỏ hàng vỡ. 150 đủ dư cho cả hai UUID.
     session_id: Mapped[str | None] = mapped_column(String(150), nullable=True, index=True)
+    # Key MinIO của ảnh crop người (chủ giỏ hàng) do ai-engine chụp lúc gán
+    # chủ sở hữu cho sản phẩm đầu tiên (xem frame.py — nhánh checkout, bước
+    # ghép chủ sở hữu). NULL nếu giỏ tạo trước khi có tính năng này, hoặc
+    # nếu không xác định được người (session checkout-noperson-*).
+    customer_photo_key: Mapped[str | None] = mapped_column(String(512), nullable=True)
     status: Mapped[CartStatus] = mapped_column(
         SAEnum(CartStatus, name="cart_status", values_callable=lambda x: [e.value for e in x]),
         nullable=False,

@@ -1135,6 +1135,27 @@ async def process_frame(
             bucket = scanned.setdefault(pp["sku"], {"logical_ids": set()})
             bucket["logical_ids"].add(logical_id)
             pp["counted"] = True
+
+            # Ảnh khách (chủ giỏ hàng): chỉ upload khi biết được chủ sở hữu
+            # (ASSOCIATED, không phải FALLBACK/noperson — không có ai để
+            # chụp). Key theo session_key nên các lần upload sau của CÙNG
+            # phiên ghi đè đúng 1 object thay vì tích rác trên MinIO. Không
+            # bao giờ để lỗi upload làm hỏng cả khung — đúng triết lý các
+            # tác vụ phụ khác trong file này (vd review_capture).
+            customer_photo_key = None
+            owner_id = pp.get("owner_person_id")
+            if pp["state"] == "ASSOCIATED" and owner_id is not None:
+                try:
+                    from app.services.person_tracker import get_person_crop_bytes
+                    crop = get_person_crop_bytes(camera_key, owner_id)
+                    if crop:
+                        from app.services import object_storage
+                        key = f"carts/customer-photos/{organization_id}/{pp['session_key']}.jpg"
+                        object_storage.put_bytes(key, crop, "image/jpeg")
+                        customer_photo_key = key
+                except Exception:  # noqa: BLE001
+                    logger.exception("upload customer_photo_key failed for session=%s", pp["session_key"])
+
             event = {
                 "event_id": uuid.uuid4().hex,
                 "event_type": "product_scanned",
@@ -1147,6 +1168,7 @@ async def process_frame(
                 "quantity": 1,
                 "confidence": 1.0,
                 "customer_id": str(customer_id) if customer_id else None,
+                "customer_photo_key": customer_photo_key,
                 "occurred_at": datetime.now(timezone.utc).isoformat(),
             }
             pending_events.append(event)

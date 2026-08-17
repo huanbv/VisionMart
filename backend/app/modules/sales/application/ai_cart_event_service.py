@@ -190,6 +190,7 @@ class AiCartEventService:
             customer_id=event.customer_id,
             session_id=session_id,
             source=CartSource.AI_VISION,
+            customer_photo_key=event.customer_photo_key,
         )
 
     async def _resolve_product(self, event: AICartEventRequest) -> Product | None:

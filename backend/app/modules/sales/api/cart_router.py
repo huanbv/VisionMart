@@ -92,6 +92,7 @@ def _cart_to_response(cart: ShoppingCart) -> CartResponse:
         currency=cart.currency,
         lines=lines,
         overall_confidence=compute_overall_confidence(raw_lines),
+        has_customer_photo=bool(cart.customer_photo_key),
         expires_at=cart.expires_at,
         converted_at=cart.converted_at,
         created_at=cart.created_at,
@@ -153,6 +154,35 @@ async def get_cart(
     except NotFoundError as e:
         raise HTTPException(status.HTTP_404_NOT_FOUND, str(e))
     return _cart_to_response(cart)
+
+
+@router.get("/{cart_id}/customer-photo")
+async def get_cart_customer_photo(
+    cart_id: uuid.UUID,
+    current: CurrentUser = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    """Ảnh crop người (chủ giỏ hàng) do ai-engine chụp lúc gán chủ sở hữu —
+    xem ai-engine/app/api/frame.py, nhánh checkout. Cùng cách chuyển hướng
+    sang link ký sẵn MinIO như GET /products/{id}/image."""
+    from fastapi.responses import RedirectResponse
+
+    from app.services.object_storage import MinioStorage, ObjectStorageError
+
+    try:
+        cart = await build_cart_service(session).get(current.organization_id, cart_id)
+    except NotFoundError as e:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, str(e))
+    if not cart.customer_photo_key:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Giỏ hàng chưa có ảnh khách")
+
+    try:
+        url = await MinioStorage().presigned_get(cart.customer_photo_key)
+    except ObjectStorageError as exc:
+        raise HTTPException(
+            status.HTTP_502_BAD_GATEWAY, detail=f"Lỗi lưu trữ: {exc}"
+        ) from exc
+    return RedirectResponse(url)
 
 
 @router.post("/{cart_id}/lines", response_model=CartResponse)

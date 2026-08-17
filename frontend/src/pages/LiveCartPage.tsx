@@ -43,6 +43,7 @@ import {
   cancelCheckout,
   checkoutCart,
   confirmCheckoutStaff,
+  getCartCustomerPhotoUrl,
   getCheckoutQr,
   listCarts,
   removeCartLine,
@@ -101,6 +102,80 @@ function getPersonInfoFromSessionId(sessionId?: string | null) {
     };
   }
   return null;
+}
+
+// session_id dạng "cam:<camera_uuid>:track:checkout-p<mapped_id>-<epoch>"
+// (xem ai-engine/app/api/frame.py::_checkout_person_session) — chỉ cần
+// mappedId để hiện nhãn "Khách hàng ID: N", ảnh thật lấy qua
+// cart.has_customer_photo + CartCustomerPhoto bên dưới, không qua session_id.
+function getCheckoutPersonId(sessionId?: string | null): number | null {
+  if (!sessionId) return null;
+  const match = sessionId.match(/track:checkout-p(\d+)-\d+/);
+  return match ? parseInt(match[1], 10) : null;
+}
+
+/**
+ * Ảnh chủ giỏ hàng, tự tải khi mount và tự dọn blob URL khi unmount —
+ * xem getCartCustomerPhotoUrl (api/carts.ts) cho lý do phải đi qua fetch
+ * blob thay vì gắn thẳng vào src (endpoint có xác thực JWT).
+ */
+function CartCustomerPhoto({ cartId, size = 36 }: { cartId: string; size?: number }) {
+  const [url, setUrl] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    let objectUrl: string | null = null;
+    getCartCustomerPhotoUrl(cartId)
+      .then((u) => {
+        if (cancelled) {
+          URL.revokeObjectURL(u);
+          return;
+        }
+        objectUrl = u;
+        setUrl(u);
+      })
+      .catch(() => {
+        if (!cancelled) setUrl(null);
+      });
+    return () => {
+      cancelled = true;
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    };
+  }, [cartId]);
+
+  if (!url) {
+    return (
+      <div
+        style={{
+          width: size,
+          height: size * 1.5,
+          borderRadius: 4,
+          background: "#f5f5f5",
+          border: "1.5px solid #2f54eb",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          fontSize: size * 0.5,
+        }}
+      >
+        👤
+      </div>
+    );
+  }
+  return (
+    <img
+      src={url}
+      alt="Ảnh khách hàng"
+      style={{
+        width: size,
+        height: size * 1.5,
+        objectFit: "cover",
+        borderRadius: 4,
+        border: "1.5px solid #2f54eb",
+        backgroundColor: "#f5f5f5",
+      }}
+    />
+  );
 }
 
 interface AiLogItem {
@@ -797,6 +872,22 @@ export default function LiveCartPage() {
                 {(() => {
                   const personInfo = getPersonInfoFromSessionId(cart.session_id);
                   const isCheckoutCart = cart.session_id?.includes(":track:checkout-");
+                  if (cart.has_customer_photo) {
+                    const checkoutPersonId = getCheckoutPersonId(cart.session_id);
+                    return (
+                      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12, padding: "8px 12px", background: "#f0f5ff", border: "1px solid #adc6ff", borderRadius: 6 }}>
+                        <CartCustomerPhoto cartId={cart.id} />
+                        <div>
+                          <div style={{ fontWeight: "bold", fontSize: 13, color: "#1d39c4" }}>
+                            👤 Khách hàng{checkoutPersonId !== null ? ` #${checkoutPersonId}` : ""}
+                          </div>
+                          <div style={{ fontSize: 11, color: "#595959" }}>
+                            Ảnh chụp lúc AI ghép sản phẩm đầu tiên vào giỏ
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  }
                   if (personInfo) {
                     return (
                       <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12, padding: "8px 12px", background: "#f0f5ff", border: "1px solid #adc6ff", borderRadius: 6 }}>
