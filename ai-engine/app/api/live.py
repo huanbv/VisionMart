@@ -36,6 +36,7 @@ import time
 from typing import Any
 
 import cv2  # type: ignore[import-not-found]
+import numpy as np
 from fastapi import APIRouter, Depends, Query, Request
 from fastapi.responses import StreamingResponse
 
@@ -227,6 +228,27 @@ def _draw_detections(frame, detections: list[dict]) -> None:
         )
 
 
+_TRAJECTORY_PALETTE = [
+    (255, 0, 0), (0, 165, 255), (255, 0, 255),
+    (0, 255, 255), (255, 255, 0), (128, 0, 255),
+]
+
+
+def _draw_trajectories(frame, trajectories: dict[int, list[tuple[float, float]]]) -> None:
+    """Vẽ đường đi gần đây của từng người (mapped_id) — cùng dữ liệu
+    person_tracker.py ghi khi xử lý /ai/frame (frame_pipeline chạy nền mỗi
+    ~3s), nên luồng live này KHÔNG tự tính lại, chỉ đọc và vẽ. Một màu
+    riêng theo mapped_id để phân biệt nhiều người cùng lúc — cùng bảng màu
+    với debug_overlay.py cho nhất quán khi xem cả hai nơi."""
+    for mapped_id, points in trajectories.items():
+        if len(points) < 2:
+            continue
+        color = _TRAJECTORY_PALETTE[mapped_id % len(_TRAJECTORY_PALETTE)]
+        pts = np.array([[int(x), int(y)] for x, y in points], dtype=np.int32)
+        cv2.polylines(frame, [pts], isClosed=False, color=color, thickness=2)
+        cv2.circle(frame, tuple(pts[-1]), 5, color, -1)
+
+
 def _draw_hud(
     frame,
     *,
@@ -391,6 +413,14 @@ async def _mjpeg_frames(
                 # Lọc theo vùng NGAY TRƯỚC khi vẽ (dùng kích thước khung hiện
                 # tại), để panel chỉ hiện box trong vùng — khớp với giỏ.
                 visible = _filter_by_zones(frame, last_detections, zones or [])
+                try:
+                    import re as _re
+                    from app.services.person_tracker import get_all_trajectories_xy
+                    m = _re.search(r"cam-([a-f0-9\-]{36})", stream_url)
+                    _traj_camera_key = m.group(1) if m else "default"
+                    _draw_trajectories(frame, get_all_trajectories_xy(_traj_camera_key))
+                except Exception:  # noqa: BLE001
+                    logger.exception("live stream: trajectory overlay failed")
                 _draw_detections(frame, visible)
                 _draw_hud(
                     frame,
