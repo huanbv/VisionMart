@@ -234,6 +234,25 @@ server {
         client_max_body_size 100m;
         proxy_read_timeout 300s;
     }
+    # AI Engine -- BỊ THIẾU trong bản gốc của file này (chỉ tồn tại trong
+    # docker/nginx/conf.d/default.conf, vốn không active khi zz-ssl.conf có
+    # mặt vì server_name khớp tên miền cụ thể được nginx ưu tiên hơn "_" của
+    # default.conf). Thiếu location này khiến MỌI request /ai/... rơi vào
+    # catch-all location / bên dưới -- bị forward sang frontend:3000 (Vite
+    # dev server) thay vì ai-engine, và Vite trả 500 rỗng cho POST lạ. Đây
+    # là nguyên nhân thật của lỗi "POST /ai/ai/frame 500" trên trang Phân
+    # tích Video -- không phải lỗi ở ai-engine hay ở default.conf.
+    location /ai/ {
+        rewrite ^/ai/(.*)\$ /\$1 break;
+        proxy_pass http://ai-engine:8100;
+        proxy_http_version 1.1;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-Proto https;
+        client_max_body_size 50m;
+        proxy_read_timeout 120s;
+        proxy_request_buffering off;
+    }
     location / {
         proxy_pass http://frontend:3000;
         proxy_http_version 1.1;
