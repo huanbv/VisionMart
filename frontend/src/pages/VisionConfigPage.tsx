@@ -117,6 +117,22 @@ const GROUPS: Group[] = [
         step: 10,
         hint: "Khoảng cách tối đa giữa vị trí cũ và mới để coi là cùng sản phẩm khi bắc cầu. Mặc định 60.",
       },
+      {
+        key: "CHECKOUT_TRAJECTORY_WINDOW_SECONDS",
+        label: "Cửa sổ xét quỹ đạo (giây)",
+        min: 1,
+        max: 60,
+        step: 1,
+        hint: "Chỉ tính người là chủ sở hữu nếu quỹ đạo của họ đi qua gần sản phẩm trong ngần này giây gần đây — không chỉ đứng gần lúc phát hiện. Mặc định 8.",
+      },
+      {
+        key: "CHECKOUT_TRAJECTORY_REACH_DIST_PX",
+        label: "Bán kính \"đã chạm tới\" (px)",
+        min: 20,
+        max: 500,
+        step: 10,
+        hint: "Khoảng cách tối đa để coi một điểm trong quỹ đạo là đã tới gần sản phẩm. Nhỏ hơn khoảng cách gán chủ sở hữu ở trên vì đây là ngưỡng \"đã chạm tới\", không phải \"đứng trong khu vực\". Mặc định 150.",
+      },
     ],
   },
   {

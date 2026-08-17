@@ -40,6 +40,7 @@ def draw_debug_overlay(
     zones: list[RoiZone],
     detections: list[OverlayDetection],
     is_checkout_zone: bool,
+    trajectories: dict[int, list[tuple[float, float]]] | None = None,
 ) -> np.ndarray:
     """Returns a NEW array (never mutates ``frame_bgr``) with overlay drawn
     on top — callers that also need the clean frame (e.g. to hand to YOLO)
@@ -64,6 +65,24 @@ def draw_debug_overlay(
         cv2.polylines(out, [polygon], isClosed=True, color=color, thickness=2)
         label_pos = tuple(polygon[0])
         cv2.putText(out, zone.name, label_pos, font, 0.5, color, 2, cv2.LINE_AA)
+
+    # Quỹ đạo di chuyển từng người (vài giây gần nhất) — giúp admin xác minh
+    # bằng mắt ai thực sự đi tới sản phẩm, thay vì chỉ đứng gần sẵn. Một màu
+    # riêng theo mapped_id (đổi theo track_id % bảng màu) để phân biệt nhiều
+    # người cùng lúc.
+    if trajectories:
+        palette = [
+            (255, 0, 0), (0, 165, 255), (255, 0, 255),
+            (0, 255, 255), (255, 255, 0), (128, 0, 255),
+        ]
+        for mapped_id, points in trajectories.items():
+            if len(points) < 2:
+                continue
+            color = palette[mapped_id % len(palette)]
+            pts = np.array([[int(x), int(y)] for x, y in points], dtype=np.int32)
+            cv2.polylines(out, [pts], isClosed=False, color=color, thickness=2)
+            last = pts[-1]
+            cv2.circle(out, tuple(last), 5, color, -1)
 
     # Detections / track ids.
     for det in detections:

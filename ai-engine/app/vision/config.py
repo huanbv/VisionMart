@@ -296,6 +296,16 @@ class VisionConfig:
     product_reacquire_max_dist_px: float = field(
         default_factory=lambda: _float("PRODUCT_REACQUIRE_MAX_DIST_PX", 60.0)
     )
+    # Ghép chủ sở hữu bằng QUỸ ĐẠO thay vì chỉ khoảng cách hiện tại — xem
+    # frame.py::_nearest_person_for_product. Một người chỉ được coi là chủ
+    # sở hữu hợp lệ nếu quỹ đạo của họ từng đi qua gần vị trí sản phẩm
+    # trong window_seconds giây gần đây, trong bán kính reach_dist_px.
+    checkout_trajectory_window_seconds: float = field(
+        default_factory=lambda: _float("CHECKOUT_TRAJECTORY_WINDOW_SECONDS", 8.0)
+    )
+    checkout_trajectory_reach_dist_px: float = field(
+        default_factory=lambda: _float("CHECKOUT_TRAJECTORY_REACH_DIST_PX", 150.0)
+    )
 
     # Crop padding as a fraction of box size; label edges carry the brand.
     crop_padding: float = field(default_factory=lambda: _float("CROP_PADDING", 0.08))

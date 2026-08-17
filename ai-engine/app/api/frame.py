@@ -50,7 +50,9 @@ from app.services.face_recognizer import get_face_recognizer
 from app.services.person_tracker import (
     TrackedObject,
     get_last_vision_result,
+    prune_stale_trajectories,
     track_frame_detailed,
+    trajectory_last_near_ts,
 )
 from app.services.product_mapper import map_class_to_sku
 from app.services import review_capture, sku_identifier, telemetry_client
@@ -206,6 +208,21 @@ def _checkout_person_assoc_max_dist_px() -> float:
     return float(get_vision_config().checkout_person_assoc_max_dist_px)
 
 
+def _trajectory_window_seconds() -> float:
+    """Quỹ đạo của một người trong ngần này giây gần đây được xét khi tìm
+    xem họ có từng đi qua gần sản phẩm không — xem
+    _nearest_person_for_product."""
+    return float(get_vision_config().checkout_trajectory_window_seconds)
+
+
+def _trajectory_reach_dist_px() -> float:
+    """Bán kính (px) để coi một điểm trong quỹ đạo là "đã tới gần" sản
+    phẩm. Cố tình nhỏ hơn hẳn _checkout_person_assoc_max_dist_px (bán kính
+    ghép chủ rộng hơn) — đây là ngưỡng "đã chạm tới", không phải "đứng
+    trong khu vực"."""
+    return float(get_vision_config().checkout_trajectory_reach_dist_px)
+
+
 def _checkout_person_session(
     camera_key: str, mapped_person_id: int, now: float
 ) -> tuple[str, str | None]:
@@ -341,6 +358,10 @@ def _cleanup_stale_state(now: float) -> None:
             alias_map.pop(tid, None)
         if not alias_map:
             _TRACK_ALIAS.pop(cam_key, None)
+
+    # Quỹ đạo người (person_tracker.py) — người rời hẳn store, không quay
+    # lại trong _TRAJECTORY_STALE_SECONDS thì dọn, tránh phình vô hạn.
+    prune_stale_trajectories(now)
 
 
 async def _fetch_camera(camera_id: uuid.UUID) -> dict[str, Any] | None:
@@ -636,18 +657,44 @@ def _pair_products_with_persons(
 
 
 def _nearest_person_for_product(
-    product_cx: float, product_cy: float, persons: list[TrackedObject]
+    camera_key: str,
+    product_cx: float,
+    product_cy: float,
+    persons: list[TrackedObject],
+    now: float,
 ) -> TrackedObject | None:
-    """Người gần nhất trong bán kính cho phép — dùng để gán chủ sở hữu ban
-    đầu cho một sản phẩm ở quầy. Không ưu tiên khoảng cách tay như
-    `_pair_products_with_persons`: hàng ở quầy thường được ĐẶT xuống, không
-    cầm liên tục, nên chỉ xét khoảng cách tâm bbox."""
+    """Chủ sở hữu ứng viên cho một sản phẩm ở quầy — xét theo QUỸ ĐẠO, không
+    phải khoảng cách hiện tại.
+
+    Một người đứng cạnh sản phẩm nhưng chưa từng động vào không được coi
+    là chủ sở hữu, dù họ đang là người GẦN NHẤT lúc sản phẩm được phát
+    hiện. Ngược lại, người thật sự đã đặt sản phẩm xuống thường đã BƯỚC RA
+    XA ngay sau đó (đứng chờ thanh toán) — nên KHÔNG lọc theo khoảng cách
+    hiện tại, chỉ xét: quỹ đạo của họ có từng đi qua gần vị trí sản phẩm
+    trong ít giây gần đây không (`trajectory_last_near_ts`).
+
+    Khi nhiều người đều từng đi qua khu vực này trong cửa sổ thời gian,
+    chọn người có lần CHẠM GẦN NHẤT (mới nhất) — hợp lý hơn "ai đang gần
+    nhất bây giờ", vì người chạm sau cùng nhiều khả năng là người vừa
+    thao tác với sản phẩm.
+
+    Giới hạn đã biết: nếu 2 người đi qua rất sát nhau, gần như cùng lúc,
+    không phân biệt được thêm khi không có Re-ID ngoại hình mạnh hơn.
+    Chấp nhận giới hạn này thay vì thêm heuristic phức tạp hơn."""
+    window = _trajectory_window_seconds()
+    reach_radius = _trajectory_reach_dist_px()
+
     best: TrackedObject | None = None
-    best_d = _checkout_person_assoc_max_dist_px()
+    best_ts = -1.0
     for person in persons:
-        d = math.hypot(person.cx - product_cx, person.cy - product_cy)
-        if d < best_d:
-            best_d = d
+        touched_at = trajectory_last_near_ts(
+            camera_key, person.track_id, product_cx, product_cy,
+            now=now, window_seconds=window, radius_px=reach_radius,
+        )
+        if touched_at is None:
+            continue
+        if touched_at > best_ts:
+            best_ts = touched_at
             best = person
     return best
 
@@ -1090,7 +1137,7 @@ async def process_frame(
             pp = phys[logical_id]
             if pp["session_key"] is not None:
                 continue
-            nearest = _nearest_person_for_product(pp["cx"], pp["cy"], persons)
+            nearest = _nearest_person_for_product(camera_key, pp["cx"], pp["cy"], persons, now)
             if nearest is not None:
                 session_key = person_sessions.get(nearest.track_id)
                 if session_key is None:

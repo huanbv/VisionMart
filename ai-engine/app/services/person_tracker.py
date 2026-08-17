@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import collections
 import logging
 import os
 from dataclasses import dataclass
@@ -55,12 +56,93 @@ def get_latest_person_boxes(camera_key: str) -> list[dict]:
     return valid_boxes
 
 
+# --- Quỹ đạo di chuyển từng người (vài giây gần nhất) ---
+#
+# Dùng cho 2 việc: (1) vẽ đường đi lên debug overlay để admin xác minh
+# bằng mắt, (2) làm tín hiệu ghép chủ sở hữu sản phẩm ở quầy — xem
+# frame.py::_person_reached_near. Đặt ở đây (không phải frame.py) vì đây
+# là thông tin thuộc về TRACKING của người, không phải nghiệp vụ giỏ hàng,
+# và overlay (cũng ở tầng tracking) cần đọc cùng dữ liệu này.
+#
+# camera_key -> { mapped_person_id: deque[(cx, cy, ts)] }. maxlen chặn một
+# người đứng yên rất lâu không làm phình bộ nhớ — 60 điểm ~ đủ vài chục
+# giây ở nhịp xử lý thường gặp.
+_PERSON_TRAJECTORIES: dict[str, dict[int, collections.deque]] = {}
+_TRAJECTORY_MAXLEN = 60
+# Người không xuất hiện lại quá lâu thì dọn quỹ đạo của họ — tách biệt
+# với TTL của ReID (features_db) vì mục đích khác nhau.
+_TRAJECTORY_STALE_SECONDS = 300.0
+
+
+def record_person_position(camera_key: str, mapped_id: int, cx: float, cy: float, ts: float) -> None:
+    per_cam = _PERSON_TRAJECTORIES.setdefault(camera_key, {})
+    traj = per_cam.get(mapped_id)
+    if traj is None:
+        traj = collections.deque(maxlen=_TRAJECTORY_MAXLEN)
+        per_cam[mapped_id] = traj
+    traj.append((cx, cy, ts))
+
+
+def get_person_trajectory(camera_key: str, mapped_id: int) -> list[tuple[float, float, float]]:
+    per_cam = _PERSON_TRAJECTORIES.get(camera_key)
+    if not per_cam:
+        return []
+    traj = per_cam.get(mapped_id)
+    return list(traj) if traj else []
+
+
+def get_all_trajectories_xy(camera_key: str) -> dict[int, list[tuple[float, float]]]:
+    """Chỉ (x, y) — dùng để vẽ overlay, không cần timestamp."""
+    per_cam = _PERSON_TRAJECTORIES.get(camera_key)
+    if not per_cam:
+        return {}
+    return {mid: [(x, y) for x, y, _ts in traj] for mid, traj in per_cam.items()}
+
+
+def trajectory_last_near_ts(
+    camera_key: str, mapped_id: int, px: float, py: float,
+    *, now: float, window_seconds: float, radius_px: float,
+) -> float | None:
+    """Thời điểm GẦN NHẤT (mới nhất, không phải sớm nhất) mà người này ở
+    trong bán kính radius_px quanh (px, py), trong window_seconds giây gần
+    đây — None nếu chưa từng. Trả cả timestamp (không chỉ True/False) để
+    xếp hạng nhiều ứng viên: ai chạm gần đây hơn có khả năng cao hơn là
+    người vừa đặt/vừa lấy sản phẩm, so với ai đi qua rồi từ lâu.
+
+    KHÔNG xét khoảng cách HIỆN TẠI của người đó — chủ sở hữu thật sự
+    thường đã bước ra xa NGAY SAU KHI đặt sản phẩm xuống (đứng chờ thanh
+    toán), nên yêu cầu "đang đứng gần" sẽ loại nhầm đúng người mua và giữ
+    lại người đứng yên cạnh đó không hề động vào gì."""
+    import math
+    last: float | None = None
+    for x, y, ts in get_person_trajectory(camera_key, mapped_id):
+        if now - ts > window_seconds:
+            continue
+        if math.hypot(x - px, y - py) <= radius_px:
+            if last is None or ts > last:
+                last = ts
+    return last
+
+
+def prune_stale_trajectories(now: float) -> None:
+    for camera_key, per_cam in list(_PERSON_TRAJECTORIES.items()):
+        stale_ids = [
+            mid for mid, traj in per_cam.items()
+            if not traj or now - traj[-1][2] > _TRAJECTORY_STALE_SECONDS
+        ]
+        for mid in stale_ids:
+            per_cam.pop(mid, None)
+        if not per_cam:
+            _PERSON_TRAJECTORIES.pop(camera_key, None)
+
+
 def reset_trackers() -> None:
     global _SHARED_POSE_MODEL, _SHARED_DET_MODEL
     _TRACKERS.clear()
     _POSE_TRACKER_STATE.clear()
     _DET_TRACKER_STATE.clear()
     _ACTIVE_CAMERA.clear()
+    _PERSON_TRAJECTORIES.clear()
     _SHARED_POSE_MODEL = None
     _SHARED_DET_MODEL = None
 
@@ -348,6 +430,7 @@ def _build_overlay_jpeg_base64(
             zones=zones,
             detections=overlay_dets,
             is_checkout_zone=is_checkout_zone,
+            trajectories=get_all_trajectories_xy(camera_key),
         )
         ok, buf = cv2.imencode(".jpg", overlay_frame, [cv2.IMWRITE_JPEG_QUALITY, 80])
         if not ok:
@@ -478,14 +561,16 @@ async def track_frame_detailed(
                     )
                 
                 import time
+                now_ts = time.time()
                 latest_boxes = []
                 for obj in out:
                     if obj.class_name == "person":
                         latest_boxes.append({
                             "mapped_id": obj.track_id,
                             "bbox": [obj.x1, obj.y1, obj.x2, obj.y2],
-                            "timestamp": time.time()
+                            "timestamp": now_ts
                         })
+                        record_person_position(camera_key, obj.track_id, obj.cx, obj.cy, now_ts)
                 _LATEST_PERSON_BOXES[camera_key] = latest_boxes
 
         # 2. Run object detection tracking on products
