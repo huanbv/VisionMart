@@ -1103,7 +1103,7 @@ async def process_frame(
                 alias[product.track_id] = bridged_id
                 claimed_this_frame.add(bridged_id)
                 seen_logical_ids.add(bridged_id)
-                logger.info(
+                logger.warning(
                     "CHECKOUT BRIDGE: track=%s reconnected to physical=%s (sku=%s) — KHÔNG tăng quantity",
                     product.track_id, bridged_id, sku,
                 )
@@ -1126,7 +1126,7 @@ async def process_frame(
             }
             claimed_this_frame.add(logical_id)
             seen_logical_ids.add(logical_id)
-            logger.info(
+            logger.warning(
                 "CHECKOUT NEW PHYSICAL PRODUCT: logical=%s sku=%s track=%s",
                 logical_id, sku, product.track_id,
             )
@@ -1159,7 +1159,7 @@ async def process_frame(
                 pp["session_key"] = session_key
                 pp["state"] = "ASSOCIATED"
                 pp["unassigned_since"] = None
-                logger.info(
+                logger.warning(
                     "CHECKOUT OWNER: logical=%s sku=%s -> person=%s session=%s",
                     logical_id, pp["sku"], nearest.track_id, session_key,
                 )
@@ -1176,7 +1176,7 @@ async def process_frame(
             # lần nữa, kẻo ra "checkout-noperson-checkout-3".
             pp["session_key"] = f"checkout-noperson-{fallback_track.removeprefix('checkout-')}"
             pp["state"] = "FALLBACK"
-            logger.info(
+            logger.warning(
                 "CHECKOUT FALLBACK: logical=%s sku=%s -> %s (không tìm được người sau %.0fs grace)",
                 logical_id, pp["sku"], pp["session_key"], grace,
             )
