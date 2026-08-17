@@ -153,6 +153,19 @@ def trajectory_last_near_ts(
     return last
 
 
+def get_recent_trajectory_person_ids(camera_key: str, now: float, window_seconds: float) -> list[int]:
+    """Trả danh sách mapped_id của những người có ít nhất một điểm quỹ đạo
+    trong window_seconds giây gần đây — kể cả người đã rời khung hình."""
+    per_cam = _PERSON_TRAJECTORIES.get(camera_key)
+    if not per_cam:
+        return []
+    result = []
+    for mid, traj in per_cam.items():
+        if traj and now - traj[-1][2] <= window_seconds:
+            result.append(mid)
+    return result
+
+
 def prune_stale_trajectories(now: float) -> None:
     for camera_key, per_cam in list(_PERSON_TRAJECTORIES.items()):
         stale_ids = [

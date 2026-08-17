@@ -668,29 +668,31 @@ def _nearest_person_for_product(
     """Chủ sở hữu ứng viên cho một sản phẩm ở quầy — xét theo QUỸ ĐẠO, không
     phải khoảng cách hiện tại.
 
-    Một người đứng cạnh sản phẩm nhưng chưa từng động vào không được coi
-    là chủ sở hữu, dù họ đang là người GẦN NHẤT lúc sản phẩm được phát
-    hiện. Ngược lại, người thật sự đã đặt sản phẩm xuống thường đã BƯỚC RA
-    XA ngay sau đó (đứng chờ thanh toán) — nên KHÔNG lọc theo khoảng cách
-    hiện tại, chỉ xét: quỹ đạo của họ có từng đi qua gần vị trí sản phẩm
-    trong ít giây gần đây không (`trajectory_last_near_ts`).
+    Xét CẢ người đang trong khung lẫn người ĐÃ BƯỚC RA ngoài khung — điều
+    này rất quan trọng ở quầy thanh toán: người đặt sản phẩm thường đã
+    BƯỚC SANG MỘT BÊN hoặc rời khỏi vùng nhìn của camera ngay sau đó.
+    Nếu chỉ xét người hiện diện, hầu hết sản phẩm sẽ thành "noperson".
 
     Khi nhiều người đều từng đi qua khu vực này trong cửa sổ thời gian,
     chọn người có lần CHẠM GẦN NHẤT (mới nhất) — hợp lý hơn "ai đang gần
     nhất bây giờ", vì người chạm sau cùng nhiều khả năng là người vừa
-    thao tác với sản phẩm.
+    thao tác với sản phẩm."""
+    from app.services.person_tracker import get_recent_trajectory_person_ids
 
-    Giới hạn đã biết: nếu 2 người đi qua rất sát nhau, gần như cùng lúc,
-    không phân biệt được thêm khi không có Re-ID ngoại hình mạnh hơn.
-    Chấp nhận giới hạn này thay vì thêm heuristic phức tạp hơn."""
     window = _trajectory_window_seconds()
     reach_radius = _trajectory_reach_dist_px()
 
-    best: TrackedObject | None = None
+    # Tập hợp person_ids cần xét: người hiện tại + người có quỹ đạo gần đây.
+    current_ids: dict[int, TrackedObject] = {p.track_id: p for p in persons}
+    recent_ids = get_recent_trajectory_person_ids(camera_key, now, window)
+    all_ids = set(current_ids) | set(recent_ids)
+
+    best_person: TrackedObject | None = None
     best_ts = -1.0
-    for person in persons:
+    best_id: int | None = None
+    for pid in all_ids:
         touched_at = trajectory_last_near_ts(
-            camera_key, person.track_id, product_cx, product_cy,
+            camera_key, pid, product_cx, product_cy,
             frame_w=frame_w, frame_h=frame_h,
             now=now, window_seconds=window, radius_px=reach_radius,
         )
@@ -698,8 +700,21 @@ def _nearest_person_for_product(
             continue
         if touched_at > best_ts:
             best_ts = touched_at
-            best = person
-    return best
+            best_person = current_ids.get(pid)
+            best_id = pid
+
+    if best_id is None:
+        return None
+    # Trả TrackedObject nếu người vẫn trong khung, hoặc tạo một stub chỉ có
+    # track_id (đủ để lấy session_key / chụp ảnh crop).
+    if best_person is not None:
+        return best_person
+    return TrackedObject(
+        track_id=best_id,
+        class_name="person",
+        confidence=0.0,
+        x1=0.0, y1=0.0, x2=0.0, y2=0.0,
+    )
 
 
 def _find_bridge_match(

@@ -301,10 +301,10 @@ class VisionConfig:
     # sở hữu hợp lệ nếu quỹ đạo của họ từng đi qua gần vị trí sản phẩm
     # trong window_seconds giây gần đây, trong bán kính reach_dist_px.
     checkout_trajectory_window_seconds: float = field(
-        default_factory=lambda: _float("CHECKOUT_TRAJECTORY_WINDOW_SECONDS", 8.0)
+        default_factory=lambda: _float("CHECKOUT_TRAJECTORY_WINDOW_SECONDS", 15.0)
     )
     checkout_trajectory_reach_dist_px: float = field(
-        default_factory=lambda: _float("CHECKOUT_TRAJECTORY_REACH_DIST_PX", 150.0)
+        default_factory=lambda: _float("CHECKOUT_TRAJECTORY_REACH_DIST_PX", 300.0)
     )
 
     # Crop padding as a fraction of box size; label edges carry the brand.
