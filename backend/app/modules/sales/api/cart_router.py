@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+import asyncio
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exceptions import ConflictError, NotFoundError, ValidationError
@@ -161,13 +162,17 @@ async def get_cart_customer_photo(
     cart_id: uuid.UUID,
     current: CurrentUser = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
-):
+) -> Response:
     """Ảnh crop người (chủ giỏ hàng) do ai-engine chụp lúc gán chủ sở hữu —
-    xem ai-engine/app/api/frame.py, nhánh checkout. Cùng cách chuyển hướng
-    sang link ký sẵn MinIO như GET /products/{id}/image."""
-    from fastapi.responses import RedirectResponse
+    xem ai-engine/app/api/frame.py, nhánh checkout.
 
-    from app.services.object_storage import MinioStorage, ObjectStorageError
+    Stream bytes thẳng qua backend (như GET /detections/{id}/image) thay vì
+    302 redirect sang link ký sẵn MinIO: trình duyệt theo redirect này vẫn
+    gắn kèm header Authorization (cùng origin qua location /visionmart/
+    của nginx), trong khi presigned URL đã tự có chữ ký AWS4 riêng trong
+    query string — MinIO từ chối thẳng request có CẢ HAI kiểu xác thực
+    ("multiple authentication types"). Stream tránh hẳn vấn đề này."""
+    from app.services.object_storage import MinioStorage
 
     try:
         cart = await build_cart_service(session).get(current.organization_id, cart_id)
@@ -176,13 +181,29 @@ async def get_cart_customer_photo(
     if not cart.customer_photo_key:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Giỏ hàng chưa có ảnh khách")
 
+    storage = MinioStorage()
+
+    def _fetch() -> bytes:
+        client = storage._get_client()
+        obj = client.get_object(storage._settings.MINIO_BUCKET, cart.customer_photo_key)
+        try:
+            return obj.read()
+        finally:
+            obj.close()
+            obj.release_conn()
+
     try:
-        url = await MinioStorage().presigned_get(cart.customer_photo_key)
-    except ObjectStorageError as exc:
+        data = await asyncio.to_thread(_fetch)
+    except Exception as exc:  # noqa: BLE001
         raise HTTPException(
             status.HTTP_502_BAD_GATEWAY, detail=f"Lỗi lưu trữ: {exc}"
         ) from exc
-    return RedirectResponse(url)
+
+    return Response(
+        content=data,
+        media_type="image/jpeg",
+        headers={"Cache-Control": "private, max-age=3600"},
+    )
 
 
 @router.post("/{cart_id}/lines", response_model=CartResponse)
