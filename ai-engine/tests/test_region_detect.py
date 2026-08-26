@@ -29,6 +29,13 @@ def test_overlaps_person_ignores_counter_product():
     assert overlaps_person(bottle, [person]) is False
 
 
+def test_overlaps_person_keeps_pack_in_hands_on_counter():
+    """Pose box covers the pay zone; a pack on the table is in the lower half."""
+    pack = Box("region", 1.0, 520, 480, 640, 620)
+    person = Box("person", 0.9, 480, 40, 780, 700)
+    assert overlaps_person(pack, [person]) is False
+
+
 def test_empty_frame_does_not_call_yolo():
     class Boom:
         def predict(self, **kwargs):
@@ -105,7 +112,17 @@ def test_one_blob_one_product():
     assert 60 < out[0].cy < 180
 
 
-def test_blob_on_person_is_skipped():
+def test_product_on_counter_in_front_of_person_is_kept():
+    img = np.full((240, 320, 3), 255, dtype=np.uint8)
+    img[160:220, 140:190] = (40, 40, 220)
+    person = Box("person", 0.99, 80, 20, 250, 230)
+    model = _StubModel()
+    out = detect_products_from_regions(model, img, [person])
+    assert len(out) == 1
+    assert out[0].class_name == "du_sti"
+
+
+def test_blob_on_person_torso_is_skipped():
     img = np.full((240, 320, 3), 255, dtype=np.uint8)
     img[70:170, 120:170] = (40, 40, 220)
     person = Box("person", 0.99, 80, 40, 220, 220)

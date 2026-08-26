@@ -13,7 +13,7 @@ const PALETTE = [
 ];
 
 const GIANT_BOX_FRAC = 0.35;
-const MIN_VISIBLE_CONF = 0.45;
+const MIN_VISIBLE_CONF = 0.35;
 
 export function detectionLabel(d: Detection): string {
   const name = d.name || d.class_name || "object";

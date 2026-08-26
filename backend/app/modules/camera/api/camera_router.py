@@ -407,7 +407,7 @@ async def analyze_camera_frame(
             # luôn tạo một đơn mới trong giỏ AI, không đụng luồng camera live.
             manual_scan=True,
             skip_roi=True,
-            min_confidence=0.40,
+            min_confidence=0.28,
         )
     except AIEngineError as exc:
         frame_error = str(exc)
@@ -703,7 +703,7 @@ async def trigger_camera_scan(
             # GIỮ ROI — chỉ sản phẩm trong Vùng Thanh Toán.
             manual_scan=True,
             skip_roi=False,
-            min_confidence=0.40,
+            min_confidence=0.28,
         )
     except Exception as exc:
         logger.exception("AI engine frame failed during manual trigger scan: %s", exc)

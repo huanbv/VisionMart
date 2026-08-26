@@ -874,7 +874,16 @@ async def track_frame_detailed(
             or (
                 point_in_zones(vision_result.zones, d.cx, d.cy, fw, fh)
                 and box_mostly_in_zones(
-                    vision_result.zones, d.x1, d.y1, d.x2, d.y2, fw, fh, min_frac=0.62
+                    vision_result.zones,
+                    d.x1,
+                    d.y1,
+                    d.x2,
+                    d.y2,
+                    fw,
+                    fh,
+                    # Scan boxes are tight on the product; 0.62 dropped bottles
+                    # sitting on the polygon edge while live overlay still showed them.
+                    min_frac=0.32 if dense_detect else 0.62,
                 )
             )
         ]

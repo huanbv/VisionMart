@@ -66,7 +66,7 @@ def archive_product_detections(
 
 
 _GIANT_BOX_FRAC = 0.35
-_ARCHIVE_MIN_CONF = 0.45
+_ARCHIVE_MIN_CONF = 0.35
 
 
 def _is_giant_scene_box(bbox: object, width: int, height: int) -> bool:
