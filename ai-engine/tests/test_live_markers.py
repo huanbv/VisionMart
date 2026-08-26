@@ -56,8 +56,10 @@ def test_collapse_same_sku_nearby():
     assert kept[0][2] == 0.9
 
 
-def test_collapse_keeps_different_skus():
+def test_collapse_nearby_different_skus_on_same_object():
+    """7Up + Sting on one bottle must not draw two HUD labels."""
     a = (100, 100, 0.9, _product(80, 80, 120, 120, sku="Sting đỏ", conf=0.9))
     b = (108, 104, 0.8, _product(90, 90, 130, 130, sku="7Up", cls="du_7u", conf=0.8))
     kept = collapse_nearby_products([a, b], min_dist=28)
-    assert len(kept) == 2
+    assert len(kept) == 1
+    assert kept[0][2] == 0.9

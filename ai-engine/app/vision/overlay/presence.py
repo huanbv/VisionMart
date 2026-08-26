@@ -88,6 +88,9 @@ def filter_overlay_ghosts(frame_bgr: Any, detections: list[dict]) -> list[dict]:
             max_area_frac=0.22,
             max_regions=8,
             bg_tolerance=48,
+            # Local-contrast fallback treats wood grain as objects, so
+            # YOLO hits on empty counter would survive this gate.
+            allow_local_fallback=False,
         )
     except Exception:  # noqa: BLE001 — overlay must never break the stream
         return persons + candidates
@@ -99,5 +102,24 @@ def filter_overlay_ghosts(frame_bgr: Any, detections: list[dict]) -> list[dict]:
         det
         for det in candidates
         if any(_hits_region(_bbox(det), r) for r in regions)  # type: ignore[arg-type]
+        and not _center_on_person_torso(_bbox(det), persons)  # type: ignore[arg-type]
     ]
     return persons + kept
+
+
+def _center_on_person_torso(
+    box: tuple[float, float, float, float],
+    persons: list[dict],
+) -> bool:
+    """Grab jackets / sleeves look like 7Up to full-image YOLO."""
+    x1, y1, x2, y2 = box
+    cx, cy = (x1 + x2) / 2.0, (y1 + y2) / 2.0
+    for person in persons:
+        pb = _bbox(person)
+        if pb is None:
+            continue
+        px1, py1, px2, py2 = pb
+        torso_bottom = py1 + 0.70 * max(1.0, py2 - py1)
+        if px1 <= cx <= px2 and py1 <= cy <= torso_bottom:
+            return True
+    return False

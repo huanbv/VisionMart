@@ -152,6 +152,12 @@ def _classify_region(
     """Try a tight crop, then one context crop; never rescan the whole grid."""
     h, w = work.shape[:2]
     bw, bh = max(1, region.x2 - region.x1), max(1, region.y2 - region.y1)
+    tight = work[
+        max(0, region.y1) : min(h, region.y2),
+        max(0, region.x1) : min(w, region.x2),
+    ]
+    if _crop_is_non_product(tight, work):
+        return None
     for pad_frac in (0.15, 0.65):
         pad_x, pad_y = int(bw * pad_frac), int(bh * pad_frac)
         cx1 = max(0, region.x1 - pad_x)
@@ -174,3 +180,28 @@ def _classify_region(
         if boxes:
             return max(boxes, key=lambda box: box.confidence)
     return None
+
+
+def _crop_is_non_product(crop, work) -> bool:
+    """Skip wood, white trays, and other counter background YOLO hallucinates on."""
+    import cv2
+    import numpy as np
+
+    if crop is None or getattr(crop, "size", 0) == 0:
+        return True
+    hsv = cv2.cvtColor(crop, cv2.COLOR_BGR2HSV)
+    sat = hsv[:, :, 1].astype(np.float32)
+    val = hsv[:, :, 2].astype(np.float32)
+    # Khay nhựa trắng / khăn / highlight bàn.
+    if float(sat.mean()) < 40.0 and float(val.mean()) > 150.0:
+        return True
+    pixels = work.reshape(-1, 3)
+    pixels = pixels[pixels.sum(axis=1) > 24]
+    if pixels.shape[0] < 50:
+        return False
+    bg = np.median(pixels, axis=0)
+    crop_mean = crop.reshape(-1, 3).mean(axis=0)
+    # Crop gần màu mặt bàn gỗ — model full-ảnh vẫn gán 7Up/Sting.
+    if float(np.abs(crop_mean - bg).sum()) < 42.0:
+        return True
+    return False

@@ -118,6 +118,31 @@ class _ContextOnlyModel(_StubModel):
         return [_Result(self.class_name, self.conf)]
 
 
+def test_wood_colored_crop_is_non_product():
+    from app.services.region_detect import _crop_is_non_product
+
+    work = np.full((240, 320, 3), (42, 88, 145), dtype=np.uint8)
+    crop = work[70:170, 120:200]
+    assert _crop_is_non_product(crop, work) is True
+
+
+def test_white_tray_crop_is_non_product():
+    from app.services.region_detect import _crop_is_non_product
+
+    work = np.full((240, 320, 3), 250, dtype=np.uint8)
+    crop = work[80:160, 100:220]
+    assert _crop_is_non_product(crop, work) is True
+
+
+def test_saturated_bottle_crop_is_kept():
+    from app.services.region_detect import _crop_is_non_product
+
+    work = np.full((240, 320, 3), (42, 88, 145), dtype=np.uint8)
+    work[70:170, 120:170] = (40, 40, 220)
+    crop = work[70:170, 120:170]
+    assert _crop_is_non_product(crop, work) is False
+
+
 def test_one_blob_one_product():
     img = np.full((240, 320, 3), 255, dtype=np.uint8)
     img[70:170, 120:170] = (40, 40, 220)

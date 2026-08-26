@@ -71,15 +71,16 @@ def collapse_nearby_products(
     items: list[tuple[int, int, float, dict]],
     min_dist: float,
 ) -> list[tuple[int, int, float, dict]]:
-    """Keep the strongest detection when the same SKU stacks on one object."""
+    """Keep the strongest detection when markers stack on one physical object.
+
+    7Up and Sting often fire on the same bottle; merging only same-SKU left
+    both labels on screen.
+    """
     ranked = sorted(items, key=lambda it: it[2], reverse=True)
     kept: list[tuple[int, int, float, dict]] = []
     for cx, cy, conf, det in ranked:
-        key = _color_key(det)
         too_close = False
-        for kx, ky, _, kdet in kept:
-            if _color_key(kdet) != key:
-                continue
+        for kx, ky, _, _kdet in kept:
             if math.hypot(cx - kx, cy - ky) < min_dist:
                 too_close = True
                 break
@@ -112,7 +113,7 @@ def draw_live_detections(frame: Any, detections: list[dict]) -> None:
         return
     h, w = frame.shape[:2]
     radius = max(7, min(12, min(h, w) // 90))
-    merge_dist = float(max(28, radius * 4))
+    merge_dist = float(max(48, radius * 7))
 
     products: list[tuple[int, int, float, dict]] = []
     for det in detections:

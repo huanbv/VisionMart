@@ -68,3 +68,19 @@ def test_person_kept_on_empty_counter():
     out = filter_overlay_ghosts(frame, [person, _det(10, 10, 80, 80, conf=0.9)])
     assert len(out) == 1
     assert out[0]["class_name"] == "person"
+
+
+def test_product_on_person_torso_is_dropped():
+    frame = _wood_with_bottle()
+    frame[30:90, 200:280] = (40, 180, 40)
+    person = {
+        "class_name": "person",
+        "confidence": 1.0,
+        "bbox": {"x1": 180, "y1": 10, "x2": 310, "y2": 220},
+    }
+    jacket = _det(200, 30, 280, 90, conf=0.96, cls="du_7u")
+    bottle = _det(118, 68, 172, 172, conf=0.94)
+    out = filter_overlay_ghosts(frame, [person, jacket, bottle])
+    boxes = [d["bbox"] for d in out]
+    assert any(b["x1"] == 118 for b in boxes)
+    assert not any(b["x1"] == 200 for b in boxes)

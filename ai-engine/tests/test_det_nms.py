@@ -53,6 +53,14 @@ def test_winner_take_all_keeps_one_class_on_same_object():
     assert [d.class_name for d in kept] == ["du_7u"]
 
 
+def test_winner_take_all_merges_close_centers_different_class():
+    """HUD dots a few dozen pixels apart on one bottle keep the stronger SKU."""
+    sevenup = Box("du_7u", 0.96, 200, 200, 250, 280)
+    sting = Box("du_sti", 0.66, 210, 210, 255, 275)
+    kept = cluster_winner_take_all([sevenup, sting])
+    assert [d.class_name for d in kept] == ["du_7u"]
+
+
 def test_winner_take_all_keeps_side_by_side_bottles():
     a = Box("du_7u", 0.9, 100, 200, 220, 400)
     b = Box("du_sti", 0.9, 240, 200, 360, 400)

@@ -116,6 +116,8 @@ def cluster_winner_take_all(dets: list[T], iou_thr: float = 0.22) -> list[T]:
     Tiles of a Sting bottle also fire ``du_7u``; class-aware merge kept both.
     Heavy overlap / containment → keep the higher-confidence class only.
     Side-by-side 7Up + Sting have low IoU and both survive.
+    Nearby dots on the same bottle (centers a few dozen pixels apart) also
+    collapse — live HUD otherwise paints 7Up + Sting on one object.
     """
     if not dets:
         return []
@@ -123,8 +125,19 @@ def cluster_winner_take_all(dets: list[T], iou_thr: float = 0.22) -> list[T]:
     kept: list[T] = []
     for d in ordered:
         clash = False
+        dcx, dcy = _center(d)
+        dmin = min(max(1.0, d.x2 - d.x1), max(1.0, d.y2 - d.y1))
         for s in kept:
-            if box_iou(d, s) >= iou_thr or _center_in_box(d, s) or _center_in_box(s, d):
+            scx, scy = _center(s)
+            smin = min(max(1.0, s.x2 - s.x1), max(1.0, s.y2 - s.y1))
+            dist = ((dcx - scx) ** 2 + (dcy - scy) ** 2) ** 0.5
+            close = dist < max(36.0, 0.55 * min(dmin, smin))
+            if (
+                box_iou(d, s) >= iou_thr
+                or _center_in_box(d, s)
+                or _center_in_box(s, d)
+                or close
+            ):
                 clash = True
                 break
         if not clash:

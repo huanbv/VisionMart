@@ -38,3 +38,21 @@ def test_heterogeneous_checkout_falls_back_to_local_contrast():
     assert not any((r.x2 - r.x1) >= 0.8 * w for r in regions)
     assert any(r.x1 <= 112 <= r.x2 and r.y1 <= 145 <= r.y2 for r in regions)
     assert any(r.x1 <= 165 <= r.x2 and r.y1 <= 150 <= r.y2 for r in regions)
+
+
+def test_empty_wood_without_local_fallback_has_no_regions():
+    """Ghost filter turns this off so YOLO hits on grain do not survive."""
+    h, w = 240, 320
+    yy, xx = np.indices((h, w))
+    frame = np.stack(
+        [35 + xx // 7, 55 + xx // 9, 105 + yy // 5], axis=2
+    ).clip(1, 240).astype(np.uint8)
+    regions = propose_regions(
+        frame,
+        min_area_frac=0.0012,
+        max_area_frac=0.22,
+        max_regions=12,
+        bg_tolerance=38,
+        allow_local_fallback=False,
+    )
+    assert regions == []

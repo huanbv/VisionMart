@@ -1021,6 +1021,26 @@ async def process_frame(
             [s for _, s in products],
         )
 
+    if is_checkout:
+        from app.services.person_tracker import _cache_latest_product_boxes
+
+        fh, fw = tracking.frame_bgr.shape[:2]
+        # Overlay previously showed raw blob/YOLO hits (wood, jacket, 7Up+Sting
+        # on one bottle). Publish the clustered cart SKUs instead.
+        overlay_dets = [
+            TrackedObject(
+                track_id=det.track_id,
+                class_name=sku,
+                confidence=det.confidence,
+                x1=det.x1,
+                y1=det.y1,
+                x2=det.x2,
+                y2=det.y2,
+            )
+            for det, sku in products
+        ]
+        _cache_latest_product_boxes(camera_key, overlay_dets, fw, fh)
+
     logger.warning(
         "FRAME PRODUCTS: n=%d skus=%s checkout_zone=%s scan_mode=%s manual=%s",
         len(products),

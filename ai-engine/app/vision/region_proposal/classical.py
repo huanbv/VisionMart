@@ -50,6 +50,7 @@ def propose_regions(
     max_area_frac: float = 0.25,
     max_regions: int = 8,
     bg_tolerance: int = 45,
+    allow_local_fallback: bool = True,
 ) -> list[ProposedRegion]:
     """Trả về danh sách bbox ứng viên trong frame (đã được che ROI ở ngoài).
 
@@ -139,7 +140,7 @@ def propose_regions(
     # each pixel with a heavily blurred local background instead. Bottles and
     # packs remain compact high-contrast islands while gradual lighting and
     # wood-colour changes disappear.
-    if not regions and contours:
+    if allow_local_fallback and not regions and contours:
         blur_size = max(15, min(51, (min(h, w) // 10) | 1))
         local_bg = cv2.GaussianBlur(frame_bgr, (blur_size, blur_size), 0)
         local_diff = np.abs(
