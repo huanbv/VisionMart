@@ -1,0 +1,221 @@
+"""HTTP router for multi-object bbox labeling."""
+
+from __future__ import annotations
+
+import uuid
+
+from fastapi import (
+    APIRouter,
+    Depends,
+    File,
+    HTTPException,
+    Query,
+    Response,
+    UploadFile,
+    status,
+)
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.database.session import get_session
+from app.dependencies.auth import require_roles
+from app.modules.ai_training.application.labeling_service import LabelingService
+from app.modules.ai_training.application.service import TrainingError
+from app.modules.ai_training.schemas.labeling import (
+    BulkUploadResponse,
+    LabelBoxOut,
+    LabelImageDetail,
+    LabelImageListResponse,
+    LabelImageSummary,
+    LabelingStatsResponse,
+    SaveLabelBoxesRequest,
+)
+from app.modules.ai_training.schemas.training import LabeledJobCreate, TrainingJobRead
+from app.services.ai_engine_client import AIEngineClient
+from app.services.object_storage import MinioStorage
+
+router = APIRouter(prefix="/ai/training/labels", tags=["ai-labeling"])
+
+_TRAINER_ROLES = ("super_admin", "org_admin", "ai_engineer")
+
+
+def _service(session: AsyncSession) -> LabelingService:
+    return LabelingService(session, MinioStorage(), AIEngineClient(timeout=120.0))
+
+
+def _summary(row, box_count: int) -> LabelImageSummary:
+    return LabelImageSummary(
+        id=row.id,
+        storage_key=row.storage_key,
+        original_filename=row.original_filename,
+        image_width=row.image_width,
+        image_height=row.image_height,
+        box_count=box_count,
+        labeled=box_count > 0,
+        created_at=row.created_at,
+    )
+
+
+@router.post("/images", response_model=BulkUploadResponse, status_code=status.HTTP_201_CREATED)
+async def upload_label_images(
+    images: list[UploadFile] = File(...),
+    current=Depends(require_roles(*_TRAINER_ROLES)),
+    session: AsyncSession = Depends(get_session),
+) -> BulkUploadResponse:
+    service = _service(session)
+    batch: list[tuple[str, bytes, str]] = []
+    for f in images:
+        content = await f.read()
+        batch.append(
+            (
+                f.filename or "image.jpg",
+                content,
+                f.content_type or "application/octet-stream",
+            )
+        )
+    try:
+        created, failed = await service.upload_images(
+            organization_id=current.organization_id,
+            files=batch,
+        )
+    except TrainingError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    items = [_summary(row, 0) for row in created]
+    return BulkUploadResponse(uploaded=len(created), failed=failed, items=items)
+
+
+@router.get("/images", response_model=LabelImageListResponse)
+async def list_label_images(
+    skip: int = Query(0, ge=0),
+    limit: int = Query(50, ge=1, le=200),
+    labeled: bool | None = Query(None),
+    current=Depends(require_roles(*_TRAINER_ROLES)),
+    session: AsyncSession = Depends(get_session),
+) -> LabelImageListResponse:
+    service = _service(session)
+    rows, total, labeled_count, pending_count = await service.list_images(
+        organization_id=current.organization_id,
+        skip=skip,
+        limit=limit,
+        labeled=labeled,
+    )
+    items = [_summary(row, int(box_count or 0)) for row, box_count in rows]
+    return LabelImageListResponse(
+        items=items,
+        total=total,
+        labeled_count=labeled_count,
+        pending_count=pending_count,
+    )
+
+
+@router.get("/images/{image_id}", response_model=LabelImageDetail)
+async def get_label_image(
+    image_id: uuid.UUID,
+    current=Depends(require_roles(*_TRAINER_ROLES)),
+    session: AsyncSession = Depends(get_session),
+) -> LabelImageDetail:
+    service = _service(session)
+    try:
+        image, box_rows = await service.get_image(
+            organization_id=current.organization_id,
+            image_id=image_id,
+        )
+    except TrainingError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    preview = await service.presign(image.storage_key)
+    boxes = [
+        LabelBoxOut(
+            id=box.id,
+            product_id=box.product_id,
+            product_name=product.name,
+            sku=product.sku,
+            cx=box.cx,
+            cy=box.cy,
+            w=box.w,
+            h=box.h,
+        )
+        for box, product in box_rows
+    ]
+    base = _summary(image, len(boxes))
+    return LabelImageDetail(**base.model_dump(), preview_url=preview or "", boxes=boxes)
+
+
+@router.put("/images/{image_id}/boxes", response_model=list[LabelBoxOut])
+async def save_label_boxes(
+    image_id: uuid.UUID,
+    body: SaveLabelBoxesRequest,
+    current=Depends(require_roles(*_TRAINER_ROLES)),
+    session: AsyncSession = Depends(get_session),
+) -> list[LabelBoxOut]:
+    service = _service(session)
+    try:
+        await service.save_boxes(
+            organization_id=current.organization_id,
+            image_id=image_id,
+            boxes=[b.model_dump() for b in body.boxes],
+        )
+        _, box_rows = await service.get_image(
+            organization_id=current.organization_id,
+            image_id=image_id,
+        )
+    except TrainingError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    return [
+        LabelBoxOut(
+            id=box.id,
+            product_id=box.product_id,
+            product_name=product.name,
+            sku=product.sku,
+            cx=box.cx,
+            cy=box.cy,
+            w=box.w,
+            h=box.h,
+        )
+        for box, product in box_rows
+    ]
+
+
+@router.delete("/images/{image_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_label_image(
+    image_id: uuid.UUID,
+    current=Depends(require_roles(*_TRAINER_ROLES)),
+    session: AsyncSession = Depends(get_session),
+) -> Response:
+    service = _service(session)
+    try:
+        await service.delete_image(
+            organization_id=current.organization_id,
+            image_id=image_id,
+        )
+    except TrainingError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.get("/stats", response_model=LabelingStatsResponse)
+async def labeling_stats(
+    current=Depends(require_roles(*_TRAINER_ROLES)),
+    session: AsyncSession = Depends(get_session),
+) -> LabelingStatsResponse:
+    service = _service(session)
+    data = await service.stats(organization_id=current.organization_id)
+    return LabelingStatsResponse(**data)
+
+
+@router.post("/jobs", response_model=TrainingJobRead, status_code=status.HTTP_201_CREATED)
+async def create_labeled_training_job(
+    body: LabeledJobCreate,
+    current=Depends(require_roles(*_TRAINER_ROLES)),
+    session: AsyncSession = Depends(get_session),
+) -> TrainingJobRead:
+    service = _service(session)
+    try:
+        job = await service.create_labeled_job(
+            organization_id=current.organization_id,
+            name=body.name,
+            branch_id=body.branch_id,
+            epochs=body.epochs,
+            image_size=body.image_size,
+        )
+    except TrainingError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    return TrainingJobRead.model_validate(job)

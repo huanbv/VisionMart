@@ -130,6 +130,11 @@ const MENU_ITEMS = [
     label: <Link to="/ai-training">Train AI</Link>,
   },
   {
+    key: "/ai-labeling",
+    icon: <TagsOutlined />,
+    label: <Link to="/ai-labeling">Gán nhãn bbox</Link>,
+  },
+  {
     key: "/pipeline-trace",
     icon: <PartitionOutlined />,
     label: <Link to="/pipeline-trace">Pipeline xử lý ảnh</Link>,

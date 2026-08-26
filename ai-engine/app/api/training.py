@@ -18,12 +18,26 @@ router = APIRouter(prefix="/ai", tags=["ai-training"], dependencies=[Depends(req
 logger = logging.getLogger("ai-engine.api.training")
 
 
+class LabeledBox(BaseModel):
+    class_name: str
+    cx: float
+    cy: float
+    w: float
+    h: float
+
+
+class LabeledImage(BaseModel):
+    storage_key: str
+    labels: list[LabeledBox]
+
+
 class TrainRequest(BaseModel):
     job_id: str
     organization_id: str
     branch_id: str | None = None
-    class_map: dict[str, list[str]] = Field(min_length=1)
+    class_map: dict[str, list[str]] = Field(default_factory=dict)
     class_to_sku: dict[str, str]
+    labeled_dataset: list[LabeledImage] | None = None
     epochs: int = 30
     image_size: int = 640
 
@@ -69,10 +83,26 @@ _DEPLOY_LOCK = threading.Lock()
 
 @router.post("/train", response_model=TrainStartResponse)
 async def start_training(body: TrainRequest) -> TrainStartResponse:
-    if len(body.class_map) < 2:
+    has_labeled = bool(body.labeled_dataset)
+    if has_labeled:
+        classes = {lb.class_name for item in body.labeled_dataset or [] for lb in item.labels}
+        if len(classes) < 2:
+            raise HTTPException(
+                status_code=400, detail="Need at least 2 classes in labeled dataset"
+            )
+    elif len(body.class_map) < 2:
         raise HTTPException(
             status_code=400, detail="Need at least 2 classes to train"
         )
+    labeled_payload = None
+    if body.labeled_dataset:
+        labeled_payload = [
+            {
+                "storage_key": item.storage_key,
+                "labels": [lb.model_dump() for lb in item.labels],
+            }
+            for item in body.labeled_dataset
+        ]
     state = trainer.start(
         job_id=body.job_id,
         organization_id=body.organization_id,
@@ -81,6 +111,7 @@ async def start_training(body: TrainRequest) -> TrainStartResponse:
         class_to_sku=body.class_to_sku,
         epochs=body.epochs,
         image_size=body.image_size,
+        labeled_dataset=labeled_payload,
     )
     return TrainStartResponse(job_id=state.job_id, status=state.status)
 

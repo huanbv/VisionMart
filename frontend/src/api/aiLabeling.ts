@@ -1,0 +1,166 @@
+import { apiClient, UPLOAD_TIMEOUT_MS } from "./client";
+import type { TrainingJob } from "./aiTraining";
+
+export interface LabelBox {
+  id?: string;
+  product_id: string;
+  product_name?: string;
+  sku?: string;
+  cx: number;
+  cy: number;
+  w: number;
+  h: number;
+}
+
+export interface LabelImageSummary {
+  id: string;
+  storage_key: string;
+  original_filename: string | null;
+  image_width: number | null;
+  image_height: number | null;
+  box_count: number;
+  labeled: boolean;
+  created_at: string;
+}
+
+export interface LabelImageDetail extends LabelImageSummary {
+  preview_url: string;
+  boxes: LabelBox[];
+}
+
+export interface LabelImageListResponse {
+  items: LabelImageSummary[];
+  total: number;
+  labeled_count: number;
+  pending_count: number;
+}
+
+export interface LabelingStats {
+  total_images: number;
+  labeled_images: number;
+  pending_images: number;
+  total_boxes: number;
+  distinct_skus: number;
+  ready_for_training: boolean;
+  training_message: string | null;
+}
+
+export interface BulkUploadResponse {
+  uploaded: number;
+  failed: number;
+  items: LabelImageSummary[];
+}
+
+export async function uploadLabelImages(files: File[]): Promise<BulkUploadResponse> {
+  const form = new FormData();
+  for (const f of files) {
+    form.append("images", f);
+  }
+  const { data } = await apiClient.post<BulkUploadResponse>(
+    "/ai/training/labels/images",
+    form,
+    {
+      headers: { "Content-Type": "multipart/form-data" },
+      timeout: UPLOAD_TIMEOUT_MS,
+    }
+  );
+  return data;
+}
+
+export async function listLabelImages(params?: {
+  skip?: number;
+  limit?: number;
+  labeled?: boolean;
+}): Promise<LabelImageListResponse> {
+  const { data } = await apiClient.get<LabelImageListResponse>(
+    "/ai/training/labels/images",
+    { params }
+  );
+  return data;
+}
+
+export async function getLabelImage(imageId: string): Promise<LabelImageDetail> {
+  const { data } = await apiClient.get<LabelImageDetail>(
+    `/ai/training/labels/images/${imageId}`
+  );
+  return data;
+}
+
+export async function saveLabelBoxes(
+  imageId: string,
+  boxes: Omit<LabelBox, "id" | "product_name" | "sku">[]
+): Promise<LabelBox[]> {
+  const { data } = await apiClient.put<LabelBox[]>(
+    `/ai/training/labels/images/${imageId}/boxes`,
+    { boxes }
+  );
+  return data;
+}
+
+export async function deleteLabelImage(imageId: string): Promise<void> {
+  await apiClient.delete(`/ai/training/labels/images/${imageId}`);
+}
+
+export async function getLabelingStats(): Promise<LabelingStats> {
+  const { data } = await apiClient.get<LabelingStats>("/ai/training/labels/stats");
+  return data;
+}
+
+export async function createLabeledTrainingJob(payload: {
+  name: string;
+  epochs?: number;
+  image_size?: number;
+}): Promise<TrainingJob> {
+  const { data } = await apiClient.post<TrainingJob>(
+    "/ai/training/labels/jobs",
+    payload
+  );
+  return data;
+}
+
+/** Draft box while drawing (pixel-normalized 0–1). */
+export interface DraftBox {
+  clientId: string;
+  product_id: string;
+  sku: string;
+  product_name: string;
+  x1: number;
+  y1: number;
+  x2: number;
+  y2: number;
+}
+
+export function draftToYolo(box: DraftBox): Omit<LabelBox, "id"> {
+  const x1 = Math.min(box.x1, box.x2);
+  const x2 = Math.max(box.x1, box.x2);
+  const y1 = Math.min(box.y1, box.y2);
+  const y2 = Math.max(box.y1, box.y2);
+  const w = x2 - x1;
+  const h = y2 - y1;
+  return {
+    product_id: box.product_id,
+    cx: x1 + w / 2,
+    cy: y1 + h / 2,
+    w,
+    h,
+  };
+}
+
+export function yoloToDraft(
+  box: LabelBox,
+  sku: string,
+  product_name: string
+): DraftBox {
+  const x1 = box.cx - box.w / 2;
+  const y1 = box.cy - box.h / 2;
+  return {
+    clientId: box.id ?? crypto.randomUUID(),
+    product_id: box.product_id,
+    sku,
+    product_name,
+    x1,
+    y1,
+    x2: x1 + box.w,
+    y2: y1 + box.h,
+  };
+}

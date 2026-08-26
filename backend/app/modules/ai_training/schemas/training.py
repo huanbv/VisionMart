@@ -33,6 +33,13 @@ class TrainingJobCreate(BaseModel):
     image_size: int = Field(default=640, ge=320, le=1280)
 
 
+class LabeledJobCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=120)
+    branch_id: uuid.UUID | None = None
+    epochs: int = Field(default=30, ge=5, le=300)
+    image_size: int = Field(default=640, ge=320, le=1280)
+
+
 class TrainingJobRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 

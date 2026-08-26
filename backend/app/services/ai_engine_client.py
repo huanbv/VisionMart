@@ -359,10 +359,12 @@ class AIEngineClient:
         class_to_sku: dict[str, str],
         epochs: int,
         image_size: int,
+        labeled_dataset: list[dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
         """Trigger a training run on the ai-engine.
 
         ``class_map`` maps YOLO class name -> list of MinIO storage keys.
+        When ``labeled_dataset`` is set, scene images with real bboxes are used.
         """
         url = f"{self._base_url}/ai/train"
         payload: dict[str, Any] = {
@@ -374,6 +376,8 @@ class AIEngineClient:
             "epochs": epochs,
             "image_size": image_size,
         }
+        if labeled_dataset is not None:
+            payload["labeled_dataset"] = labeled_dataset
         try:
             async with httpx.AsyncClient(timeout=self._timeout) as client:
                 resp = await client.post(url, json=payload, headers=self._headers)

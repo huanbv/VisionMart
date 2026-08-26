@@ -44,6 +44,7 @@ class JobState:
     branch_id: str | None = None
     class_map: dict[str, list[str]] = field(default_factory=dict)
     class_to_sku: dict[str, str] = field(default_factory=dict)
+    labeled_dataset: list[dict[str, Any]] = field(default_factory=list)
     epochs: int = 30
     image_size: int = 640
     started_at: float = 0.0
@@ -99,6 +100,7 @@ def start(
     class_to_sku: dict[str, str],
     epochs: int,
     image_size: int,
+    labeled_dataset: list[dict[str, Any]] | None = None,
 ) -> JobState:
     with _LOCK:
         if job_id in _JOBS and _JOBS[job_id].status in {"pending", "running"}:
@@ -109,6 +111,7 @@ def start(
             branch_id=branch_id,
             class_map=class_map,
             class_to_sku=class_to_sku,
+            labeled_dataset=labeled_dataset or [],
             epochs=epochs,
             image_size=image_size,
         )
@@ -125,7 +128,10 @@ def _run(state: JobState) -> None:
     state.started_at = time.time()
     workdir = os.path.join(_TRAIN_ROOT, state.job_id)
     try:
-        _prepare_dataset(state, workdir)
+        if state.labeled_dataset:
+            _prepare_labeled_dataset(state, workdir)
+        else:
+            _prepare_dataset(state, workdir)
         state.stage = "training"
         state.progress = "Đang huấn luyện mô hình"
         best_pt = _train_yolo(state, workdir)
@@ -216,6 +222,122 @@ def _prepare_dataset(state: JobState, workdir: str) -> None:
 
     state.progress = (
         f"dataset ready: {total_train} train / {total_val} val, "
+        f"{len(class_names)} classes"
+    )
+
+
+def _prepare_labeled_dataset(state: JobState, workdir: str) -> None:
+    """Build a YOLO dataset from scene images with real multi-bbox labels."""
+    state.stage = "preparing"
+    state.progress = "Đang chuẩn bị dữ liệu gán nhãn"
+    items = list(state.labeled_dataset)
+    if not items:
+        raise RuntimeError("labeled_dataset is empty")
+    state.images_total = len(items)
+    state.images_done = 0
+
+    if os.path.isdir(workdir):
+        shutil.rmtree(workdir, ignore_errors=True)
+    os.makedirs(workdir, exist_ok=True)
+
+    class_names = sorted(state.class_to_sku.keys())
+    if len(class_names) < 2:
+        raise RuntimeError("Need at least 2 classes in labeled dataset")
+    class_index = {name: i for i, name in enumerate(class_names)}
+
+    images_train = os.path.join(workdir, "images", "train")
+    images_val = os.path.join(workdir, "images", "val")
+    labels_train = os.path.join(workdir, "labels", "train")
+    labels_val = os.path.join(workdir, "labels", "val")
+    for d in (images_train, images_val, labels_train, labels_val):
+        os.makedirs(d, exist_ok=True)
+
+    rng = random.Random(42)
+    indices = list(range(len(items)))
+    rng.shuffle(indices)
+    split = max(1, int(len(indices) * 0.8))
+    train_set = set(indices[:split])
+
+    raw_dir = os.path.join(workdir, "raw")
+    os.makedirs(raw_dir, exist_ok=True)
+    keys = [item["storage_key"] for item in items]
+    state.progress = f"Đang tải {len(keys)} ảnh cảnh"
+    downloaded = storage.download_many(keys, raw_dir)
+    key_to_local: dict[str, str] = {}
+    for item in items:
+        key = item["storage_key"]
+        base = os.path.basename(key)
+        for path in downloaded:
+            if os.path.basename(path) == base or path.endswith(base):
+                key_to_local[key] = path
+                break
+    if len(key_to_local) < len(items):
+        # Fallback: download individually
+        for item in items:
+            key = item["storage_key"]
+            if key not in key_to_local:
+                dest = os.path.join(raw_dir, os.path.basename(key))
+                storage.download(key, dest)
+                key_to_local[key] = dest
+
+    total_train = 0
+    total_val = 0
+    class_counts: dict[str, int] = {c: 0 for c in class_names}
+
+    for idx, item in enumerate(items):
+        key = item["storage_key"]
+        src = key_to_local.get(key)
+        if not src or not os.path.isfile(src):
+            raise RuntimeError(f"Missing downloaded image for {key}")
+        labels = item.get("labels") or []
+        if not labels:
+            continue
+
+        stem = f"scene_{idx:05d}"
+        base = f"{stem}{os.path.splitext(src)[1] or '.jpg'}"
+        is_train = idx in train_set
+        img_dir = images_train if is_train else images_val
+        lbl_dir = labels_train if is_train else labels_val
+        dst_image = os.path.join(img_dir, base)
+        shutil.copyfile(src, dst_image)
+        label_path = os.path.join(lbl_dir, f"{stem}.txt")
+        lines: list[str] = []
+        for lb in labels:
+            cname = lb["class_name"]
+            if cname not in class_index:
+                continue
+            ci = class_index[cname]
+            lines.append(
+                f"{ci} {lb['cx']:.6f} {lb['cy']:.6f} {lb['w']:.6f} {lb['h']:.6f}"
+            )
+            class_counts[cname] = class_counts.get(cname, 0) + 1
+        with open(label_path, "w", encoding="utf-8") as f:
+            f.write("\n".join(lines) + ("\n" if lines else ""))
+        if is_train:
+            total_train += 1
+        else:
+            total_val += 1
+        state.images_done = idx + 1
+
+    state.class_counts = class_counts
+    state.train_count = total_train
+    state.val_count = total_val
+
+    yaml_path = os.path.join(workdir, "data.yaml")
+    with open(yaml_path, "w", encoding="utf-8") as f:
+        yaml.safe_dump(
+            {
+                "path": workdir,
+                "train": "images/train",
+                "val": "images/val",
+                "nc": len(class_names),
+                "names": class_names,
+            },
+            f,
+            sort_keys=False,
+        )
+    state.progress = (
+        f"labeled dataset ready: {total_train} train / {total_val} val, "
         f"{len(class_names)} classes"
     )
 

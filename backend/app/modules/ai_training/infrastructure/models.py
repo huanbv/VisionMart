@@ -121,6 +121,53 @@ class ReviewCandidate(Entity):
     )
 
 
+class LabelImage(Entity):
+    """Scene image for multi-object bbox labeling (several SKUs per frame)."""
+
+    __tablename__ = "ai_label_images"
+    __table_args__ = (
+        Index("ix_ai_label_images_org", "organization_id"),
+    )
+
+    organization_id: Mapped[uuid.UUID] = mapped_column(
+        UUIDType,
+        ForeignKey("organizations.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    storage_key: Mapped[str] = mapped_column(String(512), nullable=False)
+    image_size_bytes: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    image_format: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    original_filename: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    image_width: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    image_height: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+
+class LabelBox(Entity):
+    """YOLO-normalized bbox on a scene image, tied to a product SKU."""
+
+    __tablename__ = "ai_label_boxes"
+    __table_args__ = (
+        Index("ix_ai_label_boxes_image", "label_image_id"),
+    )
+
+    label_image_id: Mapped[uuid.UUID] = mapped_column(
+        UUIDType,
+        ForeignKey("ai_label_images.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    product_id: Mapped[uuid.UUID] = mapped_column(
+        UUIDType,
+        ForeignKey("products.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    cx: Mapped[float] = mapped_column(Float, nullable=False)
+    cy: Mapped[float] = mapped_column(Float, nullable=False)
+    w: Mapped[float] = mapped_column(Float, nullable=False)
+    h: Mapped[float] = mapped_column(Float, nullable=False)
+
+
 class TrainingJob(Entity):
     """A training run — turns uploaded images into a deployable YOLO weight."""
 

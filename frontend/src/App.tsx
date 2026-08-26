@@ -2,6 +2,7 @@ import { Navigate, Route, Routes } from "react-router-dom";
 
 import AppLayout from "@/components/AppLayout";
 import AIAnalyticsPage from "@/pages/AIAnalyticsPage";
+import AiLabelingPage from "@/pages/AiLabelingPage";
 import AiTrainingPage from "@/pages/AiTrainingPage";
 import PipelineTracePage from "@/pages/PipelineTracePage";
 import AiPipelineDashboardPage from "@/pages/AiPipelineDashboardPage";
@@ -61,6 +62,7 @@ export default function App() {
         <Route path="/detections" element={<DetectionsPage />} />
         <Route path="/ai-analytics" element={<AIAnalyticsPage />} />
         <Route path="/ai-training" element={<AiTrainingPage />} />
+        <Route path="/ai-labeling" element={<AiLabelingPage />} />
         <Route path="/pipeline-trace" element={<PipelineTracePage />} />
         <Route path="/ai-pipeline" element={<AiPipelineDashboardPage />} />
         <Route path="/vision-config" element={<VisionConfigPage />} />
