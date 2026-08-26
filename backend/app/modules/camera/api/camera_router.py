@@ -417,10 +417,14 @@ async def analyze_camera_frame(
         logger.exception("ai-engine frame pipeline crashed")
 
     sku_names = await _catalog_sku_names(session, current.organization_id)
+    image_meta = result.get("image") or {}
     archived = archive_product_detections(
         None if frame_error else (frame_pipeline or {}).get("detections"),
         result.get("detections"),
         sku_names,
+        image_width=int(image_meta.get("width") or 0),
+        image_height=int(image_meta.get("height") or 0),
+        roi_zones=None,
     )
     record_payload = {**result, "detections": archived}
 
@@ -696,7 +700,9 @@ async def trigger_camera_scan(
             camera_id=str(camera_id),
             # Nút "Chụp & Quét" = nhập đơn thủ công 1 khung: luôn emit
             # product_scanned ngay, không đi nhánh checkout (grace/người).
+            # GIỮ ROI — chỉ sản phẩm trong Vùng Thanh Toán.
             manual_scan=True,
+            skip_roi=False,
             min_confidence=0.15,
         )
     except Exception as exc:
@@ -722,6 +728,13 @@ async def trigger_camera_scan(
         frame_res.get("detections"),
         None,
         sku_names,
+        image_width=int((cap_res.get("image") or {}).get("width") or 0)
+        if isinstance(cap_res, dict)
+        else 0,
+        image_height=int((cap_res.get("image") or {}).get("height") or 0)
+        if isinstance(cap_res, dict)
+        else 0,
+        roi_zones=camera.roi_zones,
     )
     cap_image = cap_res.get("image") if isinstance(cap_res, dict) else {}
     detection_service = DetectionService(SqlAlchemyDetectionRepository(session))

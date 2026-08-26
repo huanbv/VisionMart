@@ -35,3 +35,40 @@ def test_archive_falls_back_when_pipeline_missing():
     out = archive_product_detections(None, fallback, {"DU-STI": "Sting đỏ"})
     assert len(out) == 1
     assert out[0]["name"] == "Sting đỏ"
+
+
+def test_archive_drops_full_frame_box():
+    fallback = [
+        {
+            "class_name": "du_sti",
+            "confidence": 0.53,
+            "bbox": {"x1": 0, "y1": 0, "x2": 1280, "y2": 724},
+        }
+    ]
+    out = archive_product_detections(None, fallback, {}, image_width=1280, image_height=724)
+    assert out == []
+
+
+def test_archive_drops_center_outside_pay_zone():
+    roi = [{"name": "pay", "type": "checkout", "points": [[0.4, 0.5], [0.9, 0.5], [0.9, 0.95], [0.4, 0.95]]}]
+    jacket = {
+        "class_name": "du_7u",
+        "sku": "DU-7U",
+        "confidence": 0.66,
+        "bbox": {"x1": 700, "y1": 80, "x2": 820, "y2": 200},
+    }
+    on_counter = {
+        "class_name": "du_sti",
+        "sku": "DU-STI",
+        "confidence": 0.95,
+        "bbox": {"x1": 700, "y1": 420, "x2": 780, "y2": 620},
+    }
+    out = archive_product_detections(
+        [jacket, on_counter],
+        None,
+        {"DU-7U": "7Up", "DU-STI": "Sting đỏ"},
+        image_width=1280,
+        image_height=724,
+        roi_zones=roi,
+    )
+    assert [d["sku"] for d in out] == ["DU-STI"]

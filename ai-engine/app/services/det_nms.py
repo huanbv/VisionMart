@@ -48,14 +48,13 @@ def _center_in_box(inner: HasBox, outer: HasBox) -> bool:
 def drop_giant_scene_boxes(dets: list[T], width: int, height: int, max_frac: float = 0.42) -> list[T]:
     """Full-image training labels produce one box covering the whole counter.
 
-    Keep it only when it is the *only* detection; otherwise the smaller
-    tile/local boxes are the actual products.
+    Always drop those — keeping the only giant box made empty shops look
+    like one SKU (dot in the middle of the aisle / on a jacket).
     """
     area = float(max(1, width) * max(1, height))
-    localized = [
+    return [
         d for d in dets if ((d.x2 - d.x1) * (d.y2 - d.y1) / area) < max_frac
     ]
-    return localized if localized else dets
 
 
 def nms_same_class(dets: list[T], iou_thr: float = 0.45) -> list[T]:

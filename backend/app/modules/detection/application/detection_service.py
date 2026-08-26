@@ -16,6 +16,10 @@ def archive_product_detections(
     pipeline_detections: object,
     fallback_detections: object,
     sku_names: dict[str, str],
+    *,
+    image_width: int = 0,
+    image_height: int = 0,
+    roi_zones: object = None,
 ) -> list[dict]:
     """JSON stored on DetectionEvent: SKU + catalog name, no person boxes.
 
@@ -40,7 +44,13 @@ def archive_product_detections(
         sku = str(sku_raw).strip() if sku_raw else None
         if sku == "":
             sku = None
+        if class_name.lower() == "region" and not sku:
+            continue
         bbox = item.get("bbox")
+        if _is_giant_scene_box(bbox, image_width, image_height):
+            continue
+        if not _bbox_center_in_roi(bbox, image_width, image_height, roi_zones):
+            continue
         out.append(
             {
                 "class_name": class_name,
@@ -51,6 +61,66 @@ def archive_product_detections(
             }
         )
     return out
+
+
+_GIANT_BOX_FRAC = 0.35
+
+
+def _is_giant_scene_box(bbox: object, width: int, height: int) -> bool:
+    if not isinstance(bbox, dict) or width <= 0 or height <= 0:
+        return False
+    try:
+        x1, y1 = float(bbox["x1"]), float(bbox["y1"])
+        x2, y2 = float(bbox["x2"]), float(bbox["y2"])
+    except (KeyError, TypeError, ValueError):
+        return False
+    area = max(0.0, x2 - x1) * max(0.0, y2 - y1)
+    return area / float(width * height) >= _GIANT_BOX_FRAC
+
+
+def _point_in_ring(x: float, y: float, points: list) -> bool:
+    n = len(points)
+    if n < 3:
+        return False
+    inside = False
+    j = n - 1
+    for i in range(n):
+        try:
+            xi, yi = float(points[i][0]), float(points[i][1])
+            xj, yj = float(points[j][0]), float(points[j][1])
+        except (IndexError, TypeError, ValueError):
+            return False
+        if ((yi > y) != (yj > y)) and (
+            x < (xj - xi) * (y - yi) / ((yj - yi) or 1e-12) + xi
+        ):
+            inside = not inside
+        j = i
+    return inside
+
+
+def _bbox_center_in_roi(
+    bbox: object, width: int, height: int, roi_zones: object
+) -> bool:
+    if not roi_zones:
+        return True
+    if not isinstance(bbox, dict) or width <= 0 or height <= 0:
+        return True
+    try:
+        x1, y1 = float(bbox["x1"]), float(bbox["y1"])
+        x2, y2 = float(bbox["x2"]), float(bbox["y2"])
+    except (KeyError, TypeError, ValueError):
+        return True
+    cx = ((x1 + x2) / 2.0) / float(width)
+    cy = ((y1 + y2) / 2.0) / float(height)
+    if not isinstance(roi_zones, list):
+        return True
+    for zone in roi_zones:
+        if not isinstance(zone, dict):
+            continue
+        points = zone.get("points")
+        if isinstance(points, list) and _point_in_ring(cx, cy, points):
+            return True
+    return False
 
 
 class DetectionService:

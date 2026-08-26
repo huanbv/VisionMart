@@ -25,7 +25,10 @@ from app.modules.camera.infrastructure.repositories import (
 from app.modules.detection.application.alert_dispatcher import (
     DetectionAlertDispatcher,
 )
-from app.modules.detection.application.detection_service import DetectionService
+from app.modules.detection.application.detection_service import (
+    DetectionService,
+    archive_product_detections,
+)
 from app.modules.detection.infrastructure.repositories import (
     SqlAlchemyDetectionRepository,
 )
@@ -68,6 +71,16 @@ async def _capture_one(
             await storage.put(image_key, frame_bytes, content_type="image/jpeg")
         except (ObjectStorageError, ValueError):
             image_key = None
+
+    image_meta = result.get("image") or {}
+    result["detections"] = archive_product_detections(
+        None,
+        result.get("detections"),
+        {},
+        image_width=int(image_meta.get("width") or 0),
+        image_height=int(image_meta.get("height") or 0),
+        roi_zones=getattr(camera, "roi_zones", None),
+    )
 
     detection_service = DetectionService(SqlAlchemyDetectionRepository(session))
     event = await detection_service.record(

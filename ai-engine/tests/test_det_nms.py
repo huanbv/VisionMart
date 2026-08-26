@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from app.services.det_nms import cluster_physical_objects, merge_tiled_detections
+from app.services.det_nms import cluster_physical_objects, drop_giant_scene_boxes, merge_tiled_detections
 
 
 @dataclass
@@ -38,3 +38,8 @@ def test_adjacent_different_skus_are_kept():
     b = Box("du_sti", 0.9, 240, 200, 360, 400)
     kept = cluster_physical_objects([a, b], 960, 540)
     assert {d.class_name for d in kept} == {"du_7u", "du_sti"}
+
+
+def test_sole_full_frame_box_is_dropped():
+    giant = Box("du_sti", 0.72, 0, 0, 1280, 724)
+    assert drop_giant_scene_boxes([giant], 1280, 724) == []

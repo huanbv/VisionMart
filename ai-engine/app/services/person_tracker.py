@@ -856,10 +856,18 @@ async def track_frame_detailed(
             or (
                 point_in_zones(vision_result.zones, d.cx, d.cy, fw, fh)
                 and box_mostly_in_zones(
-                    vision_result.zones, d.x1, d.y1, d.x2, d.y2, fw, fh, min_frac=0.55
+                    vision_result.zones, d.x1, d.y1, d.x2, d.y2, fw, fh, min_frac=0.62
                 )
             )
         ]
+
+    fh, fw = frame_bgr.shape[:2]
+    frame_area = float(max(1, fw) * max(1, fh))
+    detections = [
+        d for d in detections
+        if str(getattr(d, "class_name", "")).lower() == "person"
+        or ((d.x2 - d.x1) * (d.y2 - d.y1) / frame_area) < 0.35
+    ]
 
     record_pipeline_timing(
         camera_key,

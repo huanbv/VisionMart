@@ -27,6 +27,7 @@ import {
 } from "@/api/detections";
 import DetectionFrameOverlay, {
   detectionLabel,
+  visibleArchivedDetections,
 } from "@/components/DetectionFrameOverlay";
 
 const PAGE_SIZE = 50;
@@ -150,6 +151,16 @@ export default function DetectionsPage() {
       setExporting(false);
     }
   };
+
+  const detailCamera = cameras.find((c) => c.id === detail?.camera_id);
+  const visibleProducts = detail
+    ? visibleArchivedDetections(
+        detail.detections,
+        detail.image_width,
+        detail.image_height,
+        detailCamera,
+      )
+    : [];
 
   const columns: ColumnsType<DetectionEventSummary> = [
     {
@@ -324,21 +335,21 @@ export default function DetectionsPage() {
                   detections={detail.detections}
                   imageWidth={detail.image_width}
                   imageHeight={detail.image_height}
-                  camera={cameras.find((c) => c.id === detail.camera_id)}
+                  camera={detailCamera}
                 />
               </div>
             )}
             <Typography.Title level={5}>
-              Sản phẩm ({detail.detections.length})
+              Sản phẩm trong vùng thanh toán ({visibleProducts.length})
             </Typography.Title>
-            {detail.detections.length === 0 ? (
+            {visibleProducts.length === 0 ? (
               <Typography.Text type="secondary">
-                Không có sản phẩm trong bản ghi này. Sự kiện cũ có thể chưa lưu SKU
-                — Tải ảnh & Quét / Chụp & Quét mới sẽ kèm tên, mã SKU và chấm màu.
+                Không có sản phẩm trong Vùng Thanh Toán. Box cả khung / chấm ngoài
+                quầy đã được lọc — Chụp & Quét lại để lưu SKU đúng trên quầy.
               </Typography.Text>
             ) : (
               <Space wrap>
-                {detail.detections.map((d, i) => (
+                {visibleProducts.map((d, i) => (
                   <Tag key={i} color="blue">
                     {detectionLabel(d)}
                   </Tag>
