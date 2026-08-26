@@ -51,6 +51,9 @@ async def _process_one(ai_client: AIEngineClient, camera) -> tuple[str, str]:
         captured = await ai_client.capture(
             stream_url=camera.stream_url,
             open_timeout_ms=settings.FRAME_PIPELINE_OPEN_TIMEOUT_MS,
+            # JPEG is sent through /ai/frame next. Detection here doubled
+            # YOLO load and is not used for cart events.
+            detect=False,
         )
     except AIEngineError as exc:
         return str(camera.id), f"capture-failed: {exc}"
