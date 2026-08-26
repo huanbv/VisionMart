@@ -108,6 +108,7 @@ export default function AiLabelingPage() {
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(0);
   const [filter, setFilter] = useState<"all" | "pending" | "labeled" | "uncropped">("all");
+  const [listSkuFilter, setListSkuFilter] = useState<string | null>(null);
   const [currentId, setCurrentId] = useState<string | null>(null);
   const [isCropped, setIsCropped] = useState(false);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
@@ -179,6 +180,7 @@ export default function AiLabelingPage() {
         limit: PAGE_SIZE,
         labeled,
         cropped,
+        product_id: listSkuFilter ?? undefined,
       });
       setItems(res.items);
       setTotal(res.total);
@@ -192,7 +194,7 @@ export default function AiLabelingPage() {
     } finally {
       setLoading(false);
     }
-  }, [filter, message, page]);
+  }, [filter, listSkuFilter, message, page]);
 
   const loadImage = useCallback(
     async (id: string) => {
@@ -237,7 +239,7 @@ export default function AiLabelingPage() {
 
   useEffect(() => {
     setCurrentId(null);
-  }, [page, filter]);
+  }, [page, filter, listSkuFilter]);
 
   useEffect(() => {
     if (!currentId && items.length > 0) {
@@ -868,7 +870,24 @@ export default function AiLabelingPage() {
         size="small"
         style={{ marginTop: 16 }}
         extra={
-          <Space wrap size={4}>
+          <Space wrap size={8}>
+            <Select
+              allowClear
+              showSearch
+              placeholder="Lọc theo SKU"
+              style={{ minWidth: 220 }}
+              value={listSkuFilter ?? undefined}
+              optionFilterProp="label"
+              onChange={(v) => {
+                setListSkuFilter(v ?? null);
+                setPage(0);
+                if (v) setSelectedProductId(v);
+              }}
+              options={products.map((p) => ({
+                value: p.id,
+                label: `${p.sku} — ${p.name}`,
+              }))}
+            />
             <Tag
               color={filter === "all" ? "blue" : "default"}
               style={{ cursor: "pointer" }}
@@ -934,7 +953,8 @@ export default function AiLabelingPage() {
           </Button>
         </Space>
         <Text type="secondary" style={{ display: "block", marginTop: 8, fontSize: 12 }}>
-          ✂ cam = chưa cắt · số xanh = số bbox · bấm ô ảnh để mở cắt/gán nhãn
+          Lọc SKU → chỉ hiện ảnh có nhãn SKU đó · ✂ cam = chưa cắt · số xanh = số bbox · bấm ô ảnh
+          để mở cắt/gán nhãn
         </Text>
       </Card>
     </div>

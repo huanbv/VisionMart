@@ -131,6 +131,7 @@ async def list_label_images(
     limit: int = Query(50, ge=1, le=200),
     labeled: bool | None = Query(None),
     cropped: bool | None = Query(None),
+    product_id: uuid.UUID | None = Query(None),
     current=Depends(require_roles(*_TRAINER_ROLES)),
     session: AsyncSession = Depends(get_session),
 ) -> LabelImageListResponse:
@@ -142,6 +143,7 @@ async def list_label_images(
             limit=limit,
             labeled=labeled,
             cropped=cropped,
+            product_id=product_id,
         )
         items = []
         for record in rows:

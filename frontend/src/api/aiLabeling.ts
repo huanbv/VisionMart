@@ -81,6 +81,7 @@ export async function listLabelImages(params?: {
   limit?: number;
   labeled?: boolean;
   cropped?: boolean;
+  product_id?: string;
 }): Promise<LabelImageListResponse> {
   const { data } = await apiClient.get<LabelImageListResponse>(
     "/ai/training/labels/images",

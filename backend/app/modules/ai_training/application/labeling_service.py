@@ -199,18 +199,45 @@ class LabelingService:
         limit: int = 50,
         labeled: bool | None = None,
         cropped: bool | None = None,
+        product_id: uuid.UUID | None = None,
     ) -> tuple[list[tuple[LabelImage, int]], int, int, int, int]:
-        total = int(
-            (
-                await self._session.execute(
-                    select(func.count(LabelImage.id)).where(
-                        LabelImage.organization_id == organization_id,
-                        LabelImage.deleted_at.is_(None),
-                    )
-                )
-            ).scalar()
-            or 0
+        org_images = select(LabelImage.id).where(
+            LabelImage.organization_id == organization_id,
+            LabelImage.deleted_at.is_(None),
         )
+
+        has_box = (
+            select(LabelBox.id)
+            .where(
+                LabelBox.label_image_id == LabelImage.id,
+                LabelBox.deleted_at.is_(None),
+            )
+            .exists()
+        )
+        has_product_box = (
+            select(LabelBox.id)
+            .where(
+                LabelBox.label_image_id == LabelImage.id,
+                LabelBox.product_id == product_id,
+                LabelBox.deleted_at.is_(None),
+            )
+            .exists()
+        )
+
+        filters = [
+            LabelImage.organization_id == organization_id,
+            LabelImage.deleted_at.is_(None),
+        ]
+        if labeled is True:
+            filters.append(has_box)
+        elif labeled is False:
+            filters.append(~has_box)
+        if cropped is True:
+            filters.append(LabelImage.cropped_at.is_not(None))
+        elif cropped is False:
+            filters.append(LabelImage.cropped_at.is_(None))
+        if product_id is not None:
+            filters.append(has_product_box)
 
         box_count_sq = (
             select(func.count(LabelBox.id))
@@ -221,32 +248,25 @@ class LabelingService:
             .correlate(LabelImage)
             .scalar_subquery()
         )
-        stmt = select(LabelImage, box_count_sq.label("box_count")).where(
-            LabelImage.organization_id == organization_id,
-            LabelImage.deleted_at.is_(None),
-        )
-        if labeled is True:
-            stmt = stmt.where(box_count_sq > 0)
-        elif labeled is False:
-            stmt = stmt.where(box_count_sq == 0)
-        if cropped is True:
-            stmt = stmt.where(LabelImage.cropped_at.is_not(None))
-        elif cropped is False:
-            stmt = stmt.where(LabelImage.cropped_at.is_(None))
+        stmt = select(LabelImage, box_count_sq.label("box_count")).where(*filters)
         stmt = stmt.order_by(LabelImage.created_at.asc()).offset(skip).limit(limit)
         rows = list((await self._session.execute(stmt)).all())
+
+        total = int(
+            (
+                await self._session.execute(
+                    select(func.count(LabelImage.id)).where(*filters)
+                )
+            ).scalar()
+            or 0
+        )
 
         labeled_count = int(
             (
                 await self._session.execute(
                     select(func.count(func.distinct(LabelBox.label_image_id))).where(
                         LabelBox.deleted_at.is_(None),
-                        LabelBox.label_image_id.in_(
-                            select(LabelImage.id).where(
-                                LabelImage.organization_id == organization_id,
-                                LabelImage.deleted_at.is_(None),
-                            )
-                        ),
+                        LabelBox.label_image_id.in_(org_images),
                     )
                 )
             ).scalar()
