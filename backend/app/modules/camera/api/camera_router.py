@@ -559,16 +559,31 @@ async def trigger_camera_scan(
     except AIEngineError as exc:
         raise HTTPException(status.HTTP_502_BAD_GATEWAY, detail=f"AI engine error: {exc}") from exc
 
-    image_b64 = cap_res.get("frame_base64")
+    image_b64 = cap_res.get("frame_base64") if isinstance(cap_res, dict) else None
     if not image_b64:
         raise HTTPException(status.HTTP_502_BAD_GATEWAY, detail="Failed to capture frame from camera stream")
 
     import base64
-    image_bytes = base64.b64decode(image_b64)
+    import binascii
+
+    try:
+        image_bytes = base64.b64decode(image_b64)
+    except (binascii.Error, ValueError, TypeError) as exc:
+        # Guard the one unwrapped line in this handler: a malformed/empty
+        # frame from a stressed RTSP capture would otherwise surface as a
+        # bare 500 ("Không chụp/quét được") with no actionable message.
+        raise HTTPException(
+            status.HTTP_502_BAD_GATEWAY,
+            detail=f"Bad frame data from camera stream: {exc}",
+        ) from exc
 
     frame_res = {}
     try:
-        frame_res = await client.detect_frame(
+        # AIEngineClient exposes `frame`, not `detect_frame` — the old name
+        # never existed, so this call raised AttributeError every time (caught
+        # below), meaning the scan captured a frame but NEVER ran the cart
+        # pipeline: no product_scanned, nothing added to the cart.
+        frame_res = await client.frame(
             content=image_bytes,
             filename="manual_capture.jpg",
             content_type="image/jpeg",
@@ -578,7 +593,7 @@ async def trigger_camera_scan(
             manual_scan=False,
         )
     except Exception as exc:
-        logger.exception("AI engine detect_frame failed during manual trigger scan: %s", exc)
+        logger.exception("AI engine frame failed during manual trigger scan: %s", exc)
 
     return {
         "status": "ok",
