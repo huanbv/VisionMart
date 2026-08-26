@@ -29,6 +29,9 @@ _PALETTE: list[tuple[int, int, int]] = [
 ]
 
 _PERSON_COLOR = (80, 220, 60)
+_HAND_LEFT_COLOR = (0, 255, 255)   # cyan — left wrist
+_HAND_RIGHT_COLOR = (0, 200, 255)  # amber — right wrist
+_HAND_RADIUS = 6
 
 
 def marker_color(key: str) -> tuple[int, int, int]:
@@ -107,6 +110,30 @@ def _draw_product_dot(
     cv2.circle(frame, (cx, cy), radius, (20, 20, 20), 1, cv2.LINE_AA)
 
 
+def _draw_hand_dot(
+    frame: np.ndarray,
+    cx: int,
+    cy: int,
+    color: tuple[int, int, int],
+) -> None:
+    cv2.circle(frame, (cx, cy), _HAND_RADIUS + 2, (255, 255, 255), -1, cv2.LINE_AA)
+    cv2.circle(frame, (cx, cy), _HAND_RADIUS, color, -1, cv2.LINE_AA)
+    cv2.circle(frame, (cx, cy), _HAND_RADIUS, (20, 20, 20), 1, cv2.LINE_AA)
+
+
+def _hand_points(det: dict) -> list[tuple[int, int, tuple[int, int, int]]]:
+    out: list[tuple[int, int, tuple[int, int, int]]] = []
+    for key, color in (("left_hand", _HAND_LEFT_COLOR), ("right_hand", _HAND_RIGHT_COLOR)):
+        pt = det.get(key)
+        if pt is None:
+            continue
+        try:
+            out.append((int(pt[0]), int(pt[1]), color))
+        except (TypeError, ValueError):
+            continue
+    return out
+
+
 def draw_live_detections(frame: Any, detections: list[dict]) -> None:
     """Mutates ``frame``: product dots + compact labels; thin person boxes."""
     if frame is None or not detections:
@@ -124,6 +151,9 @@ def draw_live_detections(frame: Any, detections: list[dict]) -> None:
         class_name = str(det.get("class_name") or "object")
         if class_name.lower() == "person":
             cv2.rectangle(frame, (x1, y1), (x2, y2), _PERSON_COLOR, 1, cv2.LINE_AA)
+            for hx, hy, hcolor in _hand_points(det):
+                if 0 <= hx < w and 0 <= hy < h:
+                    _draw_hand_dot(frame, hx, hy, hcolor)
             label = _det_label(det)
             _tw, th = measure_text(label, 13)
             draw_label(
@@ -174,3 +204,26 @@ def draw_live_detections(frame: Any, detections: list[dict]) -> None:
             bg_bgr=color,
             size=label_size,
         )
+
+    # Visual hint: line from wrist to product when hand is placing (debug for staff).
+    hand_reach = 100.0
+    for det in detections:
+        if str(det.get("class_name") or "").lower() != "person":
+            continue
+        for hx, hy, _ in _hand_points(det):
+            best_d = hand_reach
+            best_prod: tuple[int, int] | None = None
+            for pcx, pcy, _, _pdet in products:
+                d = math.hypot(hx - pcx, hy - pcy)
+                if d < best_d:
+                    best_d = d
+                    best_prod = (pcx, pcy)
+            if best_prod is not None:
+                cv2.line(
+                    frame,
+                    (hx, hy),
+                    best_prod,
+                    (180, 180, 180),
+                    1,
+                    cv2.LINE_AA,
+                )

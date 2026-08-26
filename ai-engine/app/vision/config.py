@@ -304,7 +304,12 @@ class VisionConfig:
         default_factory=lambda: _float("CHECKOUT_TRAJECTORY_WINDOW_SECONDS", 15.0)
     )
     checkout_trajectory_reach_dist_px: float = field(
-        default_factory=lambda: _float("CHECKOUT_TRAJECTORY_REACH_DIST_PX", 300.0)
+        default_factory=lambda: _float("CHECKOUT_TRAJECTORY_REACH_DIST_PX", 120.0)
+    )
+    # Cổ tay phải nằm trong bán kính này (px) so với sản phẩm mới coi là
+    # "người vừa đặt hàng". Ưu tiên hơn quỹ đạo bbox khi có >= 2 người.
+    checkout_hand_reach_px: float = field(
+        default_factory=lambda: _float("CHECKOUT_HAND_REACH_PX", 100.0)
     )
 
     # Crop padding as a fraction of box size; label edges carry the brand.

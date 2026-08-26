@@ -68,18 +68,17 @@ def get_latest_person_boxes(
     for item in valid_boxes:
         source_w = max(1, int(item.get("frame_w") or frame_w))
         source_h = max(1, int(item.get("frame_h") or frame_h))
+        sx, sy = frame_w / source_w, frame_h / source_h
         x1, y1, x2, y2 = item["bbox"]
-        scaled.append(
-            {
-                **item,
-                "bbox": [
-                    x1 * frame_w / source_w,
-                    y1 * frame_h / source_h,
-                    x2 * frame_w / source_w,
-                    y2 * frame_h / source_h,
-                ],
-            }
-        )
+        scaled_item: dict = {
+            **item,
+            "bbox": [x1 * sx, y1 * sy, x2 * sx, y2 * sy],
+        }
+        for key in ("left_hand", "right_hand"):
+            pt = item.get(key)
+            if pt and len(pt) >= 2:
+                scaled_item[key] = (float(pt[0]) * sx, float(pt[1]) * sy)
+        scaled.append(scaled_item)
     return scaled
 
 
@@ -964,6 +963,8 @@ async def track_frame_detailed(
                             latest_boxes.append({
                                 "mapped_id": obj.track_id,
                                 "bbox": [obj.x1, obj.y1, obj.x2, obj.y2],
+                                "left_hand": list(obj.left_hand) if obj.left_hand else None,
+                                "right_hand": list(obj.right_hand) if obj.right_hand else None,
                                 "timestamp": now_ts,
                                 "frame_w": frame_w,
                                 "frame_h": frame_h,

@@ -283,6 +283,11 @@ def _append_latest_people(
 
     for tracked in get_latest_person_boxes(camera_key, frame_w, frame_h):
         bbox = tracked.get("bbox") or [0, 0, 0, 0]
+        hand_payload: dict[str, tuple[int, int]] = {}
+        for key in ("left_hand", "right_hand"):
+            pt = tracked.get(key)
+            if pt and len(pt) >= 2:
+                hand_payload[key] = (int(pt[0]), int(pt[1]))
         detections.append(
             {
                 "class_name": "person",
@@ -295,6 +300,7 @@ def _append_latest_people(
                     "x2": int(bbox[2]),
                     "y2": int(bbox[3]),
                 },
+                **hand_payload,
             }
         )
 

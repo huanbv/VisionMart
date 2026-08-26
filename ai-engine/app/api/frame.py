@@ -225,6 +225,11 @@ def _trajectory_reach_dist_px() -> float:
     return float(get_vision_config().checkout_trajectory_reach_dist_px)
 
 
+def _checkout_hand_reach_px() -> float:
+    """Wrist must be within this radius of a product to count as the placer."""
+    return float(get_vision_config().checkout_hand_reach_px)
+
+
 def _checkout_person_session(
     camera_key: str, mapped_person_id: int, now: float
 ) -> tuple[str, str | None]:
@@ -624,6 +629,42 @@ async def _report_telemetry(
     )
 
 
+def _hand_dist_to_product(
+    person: Any, product_cx: float, product_cy: float
+) -> float | None:
+    left = getattr(person, "left_hand", None)
+    right = getattr(person, "right_hand", None)
+    if left is None and right is None:
+        return None
+    dl = (
+        math.hypot(left[0] - product_cx, left[1] - product_cy)
+        if left is not None
+        else float("inf")
+    )
+    dr = (
+        math.hypot(right[0] - product_cx, right[1] - product_cy)
+        if right is not None
+        else float("inf")
+    )
+    return min(dl, dr)
+
+
+def _person_by_hand_near_product(
+    persons: list[Any], product_cx: float, product_cy: float
+) -> Any | None:
+    """Who actually placed the item — wrist closest to the product center."""
+    reach = _checkout_hand_reach_px()
+    best_person = None
+    best_dist = float("inf")
+    for person in persons:
+        hand_dist = _hand_dist_to_product(person, product_cx, product_cy)
+        if hand_dist is None or hand_dist >= reach or hand_dist >= best_dist:
+            continue
+        best_dist = hand_dist
+        best_person = person
+    return best_person
+
+
 def _pair_products_with_persons(
     persons: list[TrackedObject],
     products: list[tuple[TrackedObject, str]],
@@ -635,19 +676,13 @@ def _pair_products_with_persons(
     for product, sku in products:
         best_hand: tuple[float, TrackedObject] | None = None
         best_centroid: tuple[float, TrackedObject] | None = None
-        
+
         for person in persons:
-            # Check hand wrist proximity if available
-            has_hands = (getattr(person, "left_hand", None) is not None) or (getattr(person, "right_hand", None) is not None)
-            if has_hands:
-                dl = math.hypot(person.left_hand[0] - product.cx, person.left_hand[1] - product.cy) if person.left_hand else float('inf')
-                dr = math.hypot(person.right_hand[0] - product.cx, person.right_hand[1] - product.cy) if person.right_hand else float('inf')
-                min_hand_dist = min(dl, dr)
-                if min_hand_dist < 80.0:  # Proximity threshold of 80px
-                    if best_hand is None or min_hand_dist < best_hand[0]:
-                        best_hand = (min_hand_dist, person)
-            
-            # Centroid fallback
+            hand_dist = _hand_dist_to_product(person, product.cx, product.cy)
+            if hand_dist is not None and hand_dist < _checkout_hand_reach_px():
+                if best_hand is None or hand_dist < best_hand[0]:
+                    best_hand = (hand_dist, person)
+
             dc = math.hypot(person.cx - product.cx, person.cy - product.cy)
             if best_centroid is None or dc < best_centroid[0]:
                 best_centroid = (dc, person)
@@ -673,24 +708,25 @@ def _nearest_person_for_product(
     frame_w: float,
     frame_h: float,
 ) -> TrackedObject | None:
-    """Chủ sở hữu ứng viên cho một sản phẩm ở quầy — xét theo QUỸ ĐẠO, không
-    phải khoảng cách hiện tại.
+    """Chủ sở hữu sản phẩm ở quầy — ưu tiên cổ tay, không đoán khi >= 2 người.
 
-    Xét CẢ người đang trong khung lẫn người ĐÃ BƯỚC RA ngoài khung — điều
-    này rất quan trọng ở quầy thanh toán: người đặt sản phẩm thường đã
-    BƯỚC SANG MỘT BÊN hoặc rời khỏi vùng nhìn của camera ngay sau đó.
-    Nếu chỉ xét người hiện diện, hầu hết sản phẩm sẽ thành "noperson".
-
-    Khi nhiều người đều từng đi qua khu vực này trong cửa sổ thời gian,
-    chọn người có lần CHẠM GẦN NHẤT (mới nhất) — hợp lý hơn "ai đang gần
-    nhất bây giờ", vì người chạm sau cùng nhiều khả năng là người vừa
-    thao tác với sản phẩm."""
+    Quỹ đạo bbox (300px cũ) khiến khách đứng cạnh bị gán nhầm là người đặt
+    hàng. Khi nhiều người trong khung, chỉ ghép khi cổ tay chạm gần sản phẩm;
+    nếu chưa thấy tay thì trả None để grace chờ thêm khung. Một mình trong
+    khung vẫn dùng quỹ đạo / centroid để bắt người vừa đặt xong rồi bước sang.
+    """
     from app.services.person_tracker import get_recent_trajectory_person_ids
+
+    by_hand = _person_by_hand_near_product(persons, product_cx, product_cy)
+    if by_hand is not None:
+        return by_hand
+
+    # >= 2 người: không suy từ quỹ đạo bbox — người đứng cạnh hay bị nhầm.
+    if len(persons) >= 2:
+        return None
 
     window = _trajectory_window_seconds()
     reach_radius = _trajectory_reach_dist_px()
-
-    # Tập hợp person_ids cần xét: người hiện tại + người có quỹ đạo gần đây.
     current_ids: dict[int, TrackedObject] = {p.track_id: p for p in persons}
     recent_ids = get_recent_trajectory_person_ids(camera_key, now, window)
     all_ids = set(current_ids) | set(recent_ids)
@@ -700,9 +736,15 @@ def _nearest_person_for_product(
     best_id: int | None = None
     for pid in all_ids:
         touched_at = trajectory_last_near_ts(
-            camera_key, pid, product_cx, product_cy,
-            frame_w=frame_w, frame_h=frame_h,
-            now=now, window_seconds=window, radius_px=reach_radius,
+            camera_key,
+            pid,
+            product_cx,
+            product_cy,
+            frame_w=frame_w,
+            frame_h=frame_h,
+            now=now,
+            window_seconds=window,
+            radius_px=reach_radius,
         )
         if touched_at is None:
             continue
@@ -711,20 +753,26 @@ def _nearest_person_for_product(
             best_person = current_ids.get(pid)
             best_id = pid
 
-    if best_id is None:
-        return None
-    # Trả TrackedObject nếu người vẫn trong khung, hoặc stub chỉ có track_id
-    # (người đã rời khung). Stub có confidence=-1.0 để caller (hoặc debug log)
-    # phân biệt được "person hiện diện" vs "person đã rời nhưng khớp quỹ đạo".
-    # cx/cy của stub là 0 — không dùng cho bất kỳ tính toán vị trí nào.
-    if best_person is not None:
-        return best_person
-    return TrackedObject(
-        track_id=best_id,
-        class_name="person",
-        confidence=-1.0,
-        x1=0.0, y1=0.0, x2=0.0, y2=0.0,
-    )
+    if best_id is not None:
+        if best_person is not None:
+            return best_person
+        return TrackedObject(
+            track_id=best_id,
+            class_name="person",
+            confidence=-1.0,
+            x1=0.0,
+            y1=0.0,
+            x2=0.0,
+            y2=0.0,
+        )
+
+    if len(persons) == 1:
+        person = persons[0]
+        dc = math.hypot(person.cx - product_cx, person.cy - product_cy)
+        if dc <= _checkout_person_assoc_max_dist_px():
+            return person
+
+    return None
 
 
 def _find_bridge_match(

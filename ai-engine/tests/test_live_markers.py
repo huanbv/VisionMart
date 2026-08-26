@@ -48,6 +48,25 @@ def test_person_keeps_thin_box():
     assert int(frame[30, 80].sum()) > 40
 
 
+def test_person_wrist_dots_drawn():
+    frame = np.zeros((200, 400, 3), dtype=np.uint8)
+    draw_live_detections(
+        frame,
+        [
+            {
+                "class_name": "person",
+                "confidence": 1.0,
+                "sku_label": "Khach hang #1",
+                "bbox": {"x1": 40, "y1": 30, "x2": 180, "y2": 170},
+                "left_hand": (100, 120),
+                "right_hand": (140, 125),
+            }
+        ],
+    )
+    assert int(frame[120, 100].sum()) > 80
+    assert int(frame[125, 140].sum()) > 80
+
+
 def test_collapse_same_sku_nearby():
     a = (100, 100, 0.9, _product(80, 80, 120, 120, conf=0.9))
     b = (108, 104, 0.4, _product(90, 90, 130, 130, conf=0.4))
