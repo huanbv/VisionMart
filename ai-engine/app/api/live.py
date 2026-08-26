@@ -47,6 +47,7 @@ from app.services.yolo_detector import YoloDetector
 from app.vision.classify import get_classifier
 from app.vision.crop.cropper import crop_detection
 from app.vision.overlay.live_markers import draw_live_detections
+from app.vision.overlay.presence import filter_overlay_ghosts
 from app.vision.roi import (
     RoiZone,
     apply_roi,
@@ -357,6 +358,7 @@ async def _mjpeg_frames(
                     last_detections = await asyncio.to_thread(
                         detector.detect_dense_bgr, infer_src, "overlay", roi_rect
                     )
+                    last_detections = filter_overlay_ghosts(infer_src, last_detections)
                     _label_from_training(
                         last_detections,
                         organization_id=organization_id,
@@ -395,6 +397,10 @@ async def _mjpeg_frames(
                 # Lọc theo vùng NGAY TRƯỚC khi vẽ (dùng kích thước khung hiện
                 # tại), để panel chỉ hiện box trong vùng — khớp với giỏ.
                 visible = _filter_by_zones(frame, last_detections, zones or [])
+                # YOLO overlay ~1s/lần: bàn vừa trống vẫn giữ box cũ. Lọc
+                # lại trên khung này (rẻ) để chấm ma biến ngay khi hết vật.
+                gate_src = apply_roi(frame, zones) if zones else frame
+                visible = filter_overlay_ghosts(gate_src, visible)
                 try:
                     from app.services.person_tracker import get_all_trajectories_xy
                     _fh, _fw = frame.shape[:2]

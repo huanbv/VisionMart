@@ -404,7 +404,12 @@ def dense_detect_on_model(
 
     h, w = img.shape[:2]
     conf = float(os.getenv("YOLO_CONF_THRESHOLD", "0.25"))
-    conf = min(conf, 0.20)
+    # Overlay HUD: tile ghosts on bare wood often sit at 0.22–0.40. Scan
+    # still uses a low floor so small noodle packs are not dropped early.
+    if layout == "overlay":
+        conf = max(conf, 0.40)
+    else:
+        conf = min(conf, 0.20)
     next_id = _DENSE_ID_BASE
     collected: list[TrackedObject] = []
 
@@ -446,26 +451,27 @@ def dense_detect_on_model(
                 continue
             _run_predict(tile, float(ox), float(oy))
 
-    try:
-        from app.vision.region_proposal import propose_regions
+    if layout != "overlay":
+        try:
+            from app.vision.region_proposal import propose_regions
 
-        for r in propose_regions(img, max_regions=6):
-            if any(
-                not (
-                    r.x2 <= d.x1 or r.x1 >= d.x2 or r.y2 <= d.y1 or r.y1 >= d.y2
-                )
-                and ((min(d.x2, r.x2) - max(d.x1, r.x1)) * (min(d.y2, r.y2) - max(d.y1, r.y1)))
-                / max(1.0, (r.x2 - r.x1) * (r.y2 - r.y1))
-                > 0.45
-                for d in collected
-            ):
-                continue
-            crop = img[r.y1 : r.y2, r.x1 : r.x2]
-            if crop.size == 0:
-                continue
-            _run_predict(crop, float(r.x1), float(r.y1))
-    except Exception:  # noqa: BLE001
-        logger.debug("dense region proposals skipped", exc_info=True)
+            for r in propose_regions(img, max_regions=6):
+                if any(
+                    not (
+                        r.x2 <= d.x1 or r.x1 >= d.x2 or r.y2 <= d.y1 or r.y1 >= d.y2
+                    )
+                    and ((min(d.x2, r.x2) - max(d.x1, r.x1)) * (min(d.y2, r.y2) - max(d.y1, r.y1)))
+                    / max(1.0, (r.x2 - r.x1) * (r.y2 - r.y1))
+                    > 0.45
+                    for d in collected
+                ):
+                    continue
+                crop = img[r.y1 : r.y2, r.x1 : r.x2]
+                if crop.size == 0:
+                    continue
+                _run_predict(crop, float(r.x1), float(r.y1))
+        except Exception:  # noqa: BLE001
+            logger.debug("dense region proposals skipped", exc_info=True)
 
     merged = merge_tiled_detections(collected, w, h)
     if roi_rect is not None:
