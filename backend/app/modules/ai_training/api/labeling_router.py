@@ -15,7 +15,7 @@ from fastapi import (
     UploadFile,
     status,
 )
-from sqlalchemy.exc import DBAPIError
+from sqlalchemy.exc import DBAPIError, SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database.session import get_session
@@ -46,8 +46,8 @@ _MIGRATION_HINT = (
 )
 
 
-def _raise_db_error(exc: DBAPIError) -> None:
-    raw = str(exc.orig) if getattr(exc, "orig", None) else str(exc)
+def _raise_db_error(exc: BaseException) -> None:
+    raw = str(getattr(exc, "orig", exc))
     logger.exception("labeling database error: %s", raw)
     if "cropped_at" in raw or "does not exist" in raw or "UndefinedColumn" in raw:
         raise HTTPException(
@@ -124,21 +124,37 @@ async def list_label_images(
             labeled=labeled,
             cropped=cropped,
         )
-    except DBAPIError as exc:
-        _raise_db_error(exc)
-    items = []
-    for row, box_count in rows:
-        base = _summary(row, int(box_count or 0))
-        preview = await service.presign(row.storage_key)
-        items.append(
-            LabelImageSummary(**base.model_dump(), preview_url=preview or None)
+        items = []
+        for record in rows:
+            try:
+                image = record[0]
+                box_count = int(record[1] or 0)
+                base = _summary(image, box_count)
+                preview = await service.presign(image.storage_key)
+                items.append(
+                    LabelImageSummary(**base.model_dump(), preview_url=preview or None)
+                )
+            except Exception:  # noqa: BLE001
+                logger.exception(
+                    "skip broken label image row id=%s",
+                    getattr(record[0], "id", record),
+                )
+        return LabelImageListResponse(
+            items=items,
+            total=total,
+            labeled_count=labeled_count,
+            pending_count=pending_count,
         )
-    return LabelImageListResponse(
-        items=items,
-        total=total,
-        labeled_count=labeled_count,
-        pending_count=pending_count,
-    )
+    except HTTPException:
+        raise
+    except (DBAPIError, SQLAlchemyError) as exc:
+        _raise_db_error(exc)
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("list_label_images failed")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Không tải được danh sách ảnh: {exc}",
+        ) from exc
 
 
 @router.get("/images/{image_id}", response_model=LabelImageDetail)
@@ -291,9 +307,17 @@ async def labeling_stats(
     service = _service(session)
     try:
         data = await service.stats(organization_id=current.organization_id)
-    except DBAPIError as exc:
+        return LabelingStatsResponse(**data)
+    except HTTPException:
+        raise
+    except (DBAPIError, SQLAlchemyError) as exc:
         _raise_db_error(exc)
-    return LabelingStatsResponse(**data)
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("labeling_stats failed")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Không tải thống kê gán nhãn: {exc}",
+        ) from exc
 
 
 @router.post("/jobs", response_model=TrainingJobRead, status_code=status.HTTP_201_CREATED)

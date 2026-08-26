@@ -8,7 +8,6 @@ import uuid
 from datetime import datetime, timezone
 from typing import Iterable
 
-from PIL import Image
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -289,7 +288,13 @@ class LabelingService:
             raise TrainingError("Không đọc được ảnh gốc") from exc
 
         try:
+            from PIL import Image
+
             img = Image.open(io.BytesIO(raw))
+        except ImportError as exc:
+            raise TrainingError(
+                "Thiếu Pillow trên backend — chạy: pip install Pillow==10.4.0"
+            ) from exc
         except Exception as exc:  # noqa: BLE001
             raise TrainingError("Ảnh không hợp lệ") from exc
 
