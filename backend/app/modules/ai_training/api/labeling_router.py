@@ -131,9 +131,9 @@ async def list_label_images(
                 box_count = int(record[1] or 0)
                 base = _summary(image, box_count)
                 preview = await service.presign(image.storage_key)
-                items.append(
-                    LabelImageSummary(**base.model_dump(), preview_url=preview or None)
-                )
+                payload = base.model_dump()
+                payload["preview_url"] = preview or None
+                items.append(LabelImageSummary(**payload))
             except Exception:  # noqa: BLE001
                 logger.exception(
                     "skip broken label image row id=%s",
@@ -186,7 +186,9 @@ async def get_label_image(
         for box, product in box_rows
     ]
     base = _summary(image, len(boxes))
-    return LabelImageDetail(**base.model_dump(), preview_url=preview or "", boxes=boxes)
+    payload = base.model_dump()
+    payload["preview_url"] = preview or ""
+    return LabelImageDetail(**payload, boxes=boxes)
 
 
 @router.post("/images/{image_id}/crop", response_model=LabelImageDetail)
@@ -223,7 +225,9 @@ async def crop_label_image(
         for box, product in box_rows
     ]
     base = _summary(image, len(boxes))
-    return LabelImageDetail(**base.model_dump(), preview_url=preview or "", boxes=boxes)
+    payload = base.model_dump()
+    payload["preview_url"] = preview or ""
+    return LabelImageDetail(**payload, boxes=boxes)
 
 
 @router.post("/images/{image_id}/mark-cropped", response_model=LabelImageSummary)

@@ -125,7 +125,6 @@ export default function BboxLabelEditor({
       return;
     }
     const img = new Image();
-    img.crossOrigin = "anonymous";
     img.onload = () => {
       imgRef.current = img;
       const canvas = canvasRef.current;
