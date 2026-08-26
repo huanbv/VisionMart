@@ -52,7 +52,7 @@ import {
   type CartStatus,
 } from "@/api/carts";
 import { type Branch, listBranches } from "@/api/tenancy";
-import { type Camera, listCameras, triggerCameraScan } from "@/api/cameras";
+import { type Camera, getAiAutoScan, listCameras, setAiAutoScan, triggerCameraScan } from "@/api/cameras";
 import { tokenStore } from "@/api/client";
 import LiveCameraView, { type LiveStreamStatus } from "@/components/LiveCameraView";
 
@@ -273,6 +273,7 @@ export default function LiveCartPage() {
   const [showLive, setShowLive] = useState(true);
   const [liveDetect, setLiveDetect] = useState(true);
   const [aiPaused, setAiPaused] = useState(false);
+  const [aiPauseSaving, setAiPauseSaving] = useState(false);
   const [streamStatus, setStreamStatus] = useState<LiveStreamStatus>("connecting");
   const [aiLogs, setAiLogs] = useState<AiLogItem[]>([]);
 
@@ -304,10 +305,57 @@ export default function LiveCartPage() {
     })();
   }, [branchId]);
 
+  useEffect(() => {
+    if (!branchId) {
+      setAiPaused(false);
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await getAiAutoScan(branchId);
+        if (!cancelled) setAiPaused(res.paused);
+      } catch {
+        if (!cancelled) setAiPaused(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [branchId]);
+
   const liveCamera = useMemo(
     () => cameras.find((c) => c.id === liveCameraId),
     [cameras, liveCameraId],
   );
+
+  const onToggleAiAutoScan = async (enabled: boolean) => {
+    if (!branchId) return;
+    setAiPauseSaving(true);
+    const nextPaused = !enabled;
+    const previous = aiPaused;
+    setAiPaused(nextPaused);
+    try {
+      const res = await setAiAutoScan(branchId, nextPaused);
+      setAiPaused(res.paused);
+      if (res.paused) {
+        message.info("Đã tắt nhận diện tự động — Chụp & Quét / upload vẫn dùng để test");
+        addLog("info", "⏸️ Tắt AI tự động", "Celery không còn thêm giỏ; quét thủ công vẫn chạy");
+      } else {
+        message.success("Đã bật lại nhận diện AI tự động");
+        addLog("info", "▶️ Bật AI tự động", "Luồng live lại thêm SKU vào giỏ");
+      }
+    } catch (err) {
+      setAiPaused(previous);
+      const detail =
+        isAxiosError(err) && err.response?.data?.detail
+          ? String(err.response.data.detail)
+          : "Không đổi được trạng thái AI tự động";
+      message.error(detail);
+    } finally {
+      setAiPauseSaving(false);
+    }
+  };
 
   useEffect(() => {
     (async () => {
@@ -638,8 +686,17 @@ export default function LiveCartPage() {
               📸 Chụp & Quét AI Khung Hình Này
             </Button>
             <Space>
+              <Typography.Text type="secondary">AI tự động</Typography.Text>
+              <Switch
+                checked={!aiPaused}
+                loading={aiPauseSaving}
+                disabled={!branchId}
+                onChange={onToggleAiAutoScan}
+              />
+            </Space>
+            <Space>
               <Typography.Text type="secondary">Khung nhận diện</Typography.Text>
-              <Switch checked={liveDetect} onChange={setLiveDetect} size="small" />
+              <Switch checked={liveDetect} onChange={setLiveDetect} size="small" disabled={aiPaused} />
             </Space>
             <Space>
               <Typography.Text type="secondary">Hiện camera</Typography.Text>
@@ -650,6 +707,16 @@ export default function LiveCartPage() {
       >
         {showLive ? (
           <Row gutter={[16, 16]}>
+            {aiPaused && (
+              <Col span={24}>
+                <Alert
+                  type="warning"
+                  showIcon
+                  message="AI tự động đang tắt"
+                  description="Luồng live không thêm sản phẩm vào giỏ. Dùng Chụp & Quét khung hình này hoặc Phân tích khung hình (trang Camera) để test. Bật lại công tắc AI tự động khi xong."
+                />
+              </Col>
+            )}
             <Col xs={24} md={10} lg={9}>
               <Space direction="vertical" style={{ width: "100%" }} size="small">
                 <div>
@@ -681,17 +748,22 @@ export default function LiveCartPage() {
                     <Typography.Text strong style={{ fontSize: 13 }}>
                       ⚡ Tiến độ nhận diện AI
                     </Typography.Text>
-                    <Button
-                      size="small"
-                      type={aiPaused ? "primary" : "default"}
-                      onClick={() => setAiPaused((v) => !v)}
-                    >
-                      {aiPaused ? "▶️ Tiếp tục" : "⏸️ Tạm dừng"}
-                    </Button>
+                    <Switch
+                      checked={!aiPaused}
+                      loading={aiPauseSaving}
+                      disabled={!branchId}
+                      checkedChildren="Bật"
+                      unCheckedChildren="Tắt"
+                      onChange={onToggleAiAutoScan}
+                    />
                   </Space>
                   {aiPaused ? (
                     <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                      Nhận diện AI đang tạm dừng — bấm "Tiếp tục" để bật lại.
+                      AI tự động đang tắt. Camera vẫn xem được; dùng{" "}
+                      <Typography.Text strong style={{ fontSize: 12 }}>
+                        Chụp & Quét
+                      </Typography.Text>{" "}
+                      hoặc upload ảnh để test từng khung. Bật lại công tắc khi xong.
                     </Typography.Text>
                   ) : streamStatus === "error" ? (
                     <Typography.Text type="warning" style={{ fontSize: 12 }}>
@@ -767,8 +839,8 @@ export default function LiveCartPage() {
                   <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
                     <LiveCameraView
                       camera={liveCamera}
-                      detect={liveDetect}
-                      paused={aiPaused}
+                      detect={liveDetect && !aiPaused}
+                      paused={false}
                       onStatusChange={setStreamStatus}
                     />
                     <ActivePersonsPanel camera={liveCamera} paused={aiPaused} />

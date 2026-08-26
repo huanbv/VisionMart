@@ -367,3 +367,24 @@ export async function triggerCameraScan(cameraId: string): Promise<TriggerScanRe
   const { data } = await apiClient.post<TriggerScanResponse>(`/cameras/${cameraId}/trigger-scan`);
   return data;
 }
+
+export async function getAiAutoScan(
+  branchId: string,
+): Promise<{ branch_id: string; paused: boolean }> {
+  const { data } = await apiClient.get<{ branch_id: string; paused: boolean }>(
+    "/cameras/ai-auto-scan",
+    { params: { branch_id: branchId } },
+  );
+  return data;
+}
+
+export async function setAiAutoScan(
+  branchId: string,
+  paused: boolean,
+): Promise<{ branch_id: string; paused: boolean }> {
+  const { data } = await apiClient.put<{ branch_id: string; paused: boolean }>(
+    "/cameras/ai-auto-scan",
+    { branch_id: branchId, paused },
+  );
+  return data;
+}

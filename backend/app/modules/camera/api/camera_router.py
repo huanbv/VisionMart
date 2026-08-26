@@ -10,11 +10,16 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, UploadFile, File, status
 from fastapi.responses import StreamingResponse
+from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exceptions import ConflictError, NotFoundError, ValidationError
 from app.database.session import get_session
 from app.dependencies.auth import CurrentUser, get_current_user, require_roles
+from app.modules.camera.application.ai_auto_scan import (
+    is_branch_auto_scan_paused,
+    set_branch_auto_scan_paused,
+)
 from app.modules.camera.application.camera_sim import CameraSimError, CameraSimStorage
 from app.modules.camera.application.services import CameraService
 from app.modules.camera.infrastructure.models import Camera
@@ -140,6 +145,55 @@ async def camera_stats(
 ) -> CameraStats:
     total, online, active = await _service(session).stats(current.organization_id)
     return CameraStats(total=total, online=online, active=active)
+
+
+class AiAutoScanState(BaseModel):
+    branch_id: uuid.UUID
+    paused: bool
+
+
+class AiAutoScanUpdate(BaseModel):
+    branch_id: uuid.UUID
+    paused: bool
+
+
+async def _require_branch_in_org(
+    session: AsyncSession, organization_id: uuid.UUID, branch_id: uuid.UUID
+) -> None:
+    repo = SqlAlchemyCameraRepository(session)
+    branch = await repo.get_branch_in_org(organization_id, branch_id)
+    if branch is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Branch not found")
+
+
+@router.get("/ai-auto-scan", response_model=AiAutoScanState)
+async def get_ai_auto_scan(
+    branch_id: uuid.UUID = Query(...),
+    current: CurrentUser = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> AiAutoScanState:
+    """Whether Celery auto-scan is paused for this branch (Live Cart toggle)."""
+    await _require_branch_in_org(session, current.organization_id, branch_id)
+    paused = await is_branch_auto_scan_paused(branch_id)
+    return AiAutoScanState(branch_id=branch_id, paused=paused)
+
+
+@router.put("/ai-auto-scan", response_model=AiAutoScanState)
+async def update_ai_auto_scan(
+    payload: AiAutoScanUpdate,
+    current: CurrentUser = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> AiAutoScanState:
+    """Pause/resume automatic cart-scan. Manual Chụp & Quét / analyze still run."""
+    await _require_branch_in_org(session, current.organization_id, payload.branch_id)
+    paused = await set_branch_auto_scan_paused(payload.branch_id, payload.paused)
+    logger.info(
+        "AI auto-scan %s for branch=%s by user=%s",
+        "paused" if paused else "resumed",
+        payload.branch_id,
+        current.user_id,
+    )
+    return AiAutoScanState(branch_id=payload.branch_id, paused=paused)
 
 
 @router.post("", response_model=CameraResponse, status_code=status.HTTP_201_CREATED)

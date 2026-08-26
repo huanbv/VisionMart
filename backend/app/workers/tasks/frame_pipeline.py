@@ -29,6 +29,7 @@ import redis.asyncio as aioredis
 
 from app.config.settings import get_settings
 from app.database.session import SessionLocal
+from app.modules.camera.application.ai_auto_scan import is_paused_on
 from app.modules.camera.infrastructure.repositories import (
     SqlAlchemyCameraRepository,
 )
@@ -112,6 +113,7 @@ async def _run_scan() -> dict:
 
             ai_client = AIEngineClient()
             results: dict[str, str] = {}
+            paused_cache: dict[str, bool] = {}
             # Sequential on purpose: each call already triggers a YOLO
             # inference (+ tracking) in ai-engine; running
             # FRAME_PIPELINE_MAX_CAMERAS of those concurrently would spike
@@ -121,6 +123,14 @@ async def _run_scan() -> dict:
             # worker, not more concurrency here.
             for camera in cameras:
                 try:
+                    branch_key = str(camera.branch_id)
+                    if branch_key not in paused_cache:
+                        paused_cache[branch_key] = await is_paused_on(
+                            redis_client, camera.branch_id
+                        )
+                    if paused_cache[branch_key]:
+                        results[str(camera.id)] = "skipped:auto-scan-paused"
+                        continue
                     cam_id, outcome = await _process_one(ai_client, camera)
                     results[cam_id] = outcome
                 except Exception as exc:  # noqa: BLE001
