@@ -40,6 +40,7 @@ import {
   getLabelImage,
   getLabelingStats,
   listLabelImages,
+  markLabelImageCropped,
   saveLabelBoxes,
   uploadLabelImages,
   yoloToDraft,
@@ -102,8 +103,9 @@ export default function AiLabelingPage() {
   const [items, setItems] = useState<LabelImageSummary[]>([]);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(0);
-  const [filter, setFilter] = useState<"all" | "pending" | "labeled">("all");
+  const [filter, setFilter] = useState<"all" | "pending" | "labeled" | "uncropped">("all");
   const [currentId, setCurrentId] = useState<string | null>(null);
+  const [isCropped, setIsCropped] = useState(false);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [boxes, setBoxes] = useState<DraftBox[]>([]);
   const [selectedProductId, setSelectedProductId] = useState<string | null>(null);
@@ -164,10 +166,12 @@ export default function AiLabelingPage() {
     try {
       const labeled =
         filter === "labeled" ? true : filter === "pending" ? false : undefined;
+      const cropped = filter === "uncropped" ? false : undefined;
       const res = await listLabelImages({
         skip: page * PAGE_SIZE,
         limit: PAGE_SIZE,
         labeled,
+        cropped,
       });
       setItems(res.items);
       setTotal(res.total);
@@ -193,6 +197,8 @@ export default function AiLabelingPage() {
         const detail = await getLabelImage(id);
         setCurrentId(id);
         setPreviewUrl(detail.preview_url);
+        setIsCropped(detail.is_cropped);
+        setEditorMode(detail.is_cropped ? "label" : "crop");
         setBoxes(
           detail.boxes.map((b) =>
             yoloToDraft(
@@ -315,6 +321,7 @@ export default function AiLabelingPage() {
       );
       setCropRect(null);
       setEditorMode("label");
+      setIsCropped(true);
       setDirty(false);
       message.success("Đã cắt và lưu đè ảnh gốc");
       await refreshStats();
@@ -327,6 +334,24 @@ export default function AiLabelingPage() {
       message.error(typeof detail === "string" ? detail : "Cắt ảnh thất bại");
     } finally {
       setCropping(false);
+    }
+  };
+
+  const skipCrop = async () => {
+    if (!currentId || isCropped) return;
+    try {
+      await markLabelImageCropped(currentId);
+      setIsCropped(true);
+      setEditorMode("label");
+      message.success("Đã đánh dấu ảnh không cần cắt — có thể gán nhãn");
+      await refreshStats();
+      await loadList();
+    } catch (e: unknown) {
+      const detail =
+        e && typeof e === "object" && "response" in e
+          ? (e as { response?: { data?: { detail?: string } } }).response?.data?.detail
+          : undefined;
+      message.error(typeof detail === "string" ? detail : "Thao tác thất bại");
     }
   };
 
@@ -484,9 +509,9 @@ export default function AiLabelingPage() {
     <div>
       <Title level={3}>Gán nhãn bbox theo SKU</Title>
       <Paragraph type="secondary">
-        Upload ảnh cảnh (nhiều sản phẩm/khung), kéo chuột vẽ khung và gán SKU. Dùng{" "}
-        <strong>Cắt ảnh</strong> để bỏ vùng thừa quanh cạnh và lưu đè ảnh gốc. Phím tắt: ← →
-        chuyển ảnh, Delete xóa khung, Ctrl+S lưu.
+        Upload ảnh cảnh (nhiều sản phẩm/khung). <strong>Cắt ảnh</strong> bỏ vùng thừa trước,
+        sau đó gán nhãn bbox theo SKU. Phím tắt: ← → chuyển ảnh, Delete xóa khung, Ctrl+S
+        lưu.
       </Paragraph>
 
       <Row gutter={[16, 16]}>
@@ -496,6 +521,7 @@ export default function AiLabelingPage() {
               <>
                 <Statistic title="Tổng ảnh" value={stats.total_images} />
                 <Statistic title="Đã gán nhãn" value={stats.labeled_images} />
+                <Statistic title="Chưa cắt" value={stats.pending_crop} />
                 <Statistic title="Bbox" value={stats.total_boxes} />
                 <Statistic title="SKU khác nhau" value={stats.distinct_skus} />
                 {!stats.ready_for_training && stats.training_message && (
@@ -558,6 +584,16 @@ export default function AiLabelingPage() {
                 >
                   Đã gán
                 </Tag>
+                <Tag
+                  color={filter === "uncropped" ? "orange" : "default"}
+                  style={{ cursor: "pointer" }}
+                  onClick={() => {
+                    setFilter("uncropped");
+                    setPage(0);
+                  }}
+                >
+                  Chưa cắt
+                </Tag>
               </Space>
             }
           >
@@ -575,6 +611,11 @@ export default function AiLabelingPage() {
                   onClick={() => void loadImage(item.id)}
                 >
                   <Space>
+                    {!item.is_cropped && (
+                      <Tag color="orange" title="Chưa cắt">
+                        ✂
+                      </Tag>
+                    )}
                     {item.labeled ? (
                       <Tag color="green">{item.box_count}</Tag>
                     ) : (
@@ -621,9 +662,14 @@ export default function AiLabelingPage() {
                 <Button
                   type={editorMode === "crop" ? "primary" : "default"}
                   icon={<ScissorOutlined />}
-                  disabled={!currentId}
+                  disabled={!currentId || (editorMode === "crop" && !isCropped)}
                   onClick={() => {
-                    setEditorMode((m) => (m === "crop" ? "label" : "crop"));
+                    if (editorMode === "crop") {
+                      if (!isCropped) return;
+                      setEditorMode("label");
+                    } else {
+                      setEditorMode("crop");
+                    }
                     setCropRect(null);
                     setSelectedBoxId(null);
                   }}
@@ -631,22 +677,27 @@ export default function AiLabelingPage() {
                   {editorMode === "crop" ? "Gán nhãn" : "Cắt ảnh"}
                 </Button>
                 {editorMode === "crop" && (
-                  <Button
-                    type="primary"
-                    icon={<ScissorOutlined />}
-                    loading={cropping}
-                    disabled={!cropRect}
-                    onClick={() => void applyCrop()}
-                  >
-                    Áp dụng cắt
-                  </Button>
+                  <>
+                    <Button
+                      type="primary"
+                      icon={<ScissorOutlined />}
+                      loading={cropping}
+                      disabled={!cropRect}
+                      onClick={() => void applyCrop()}
+                    >
+                      Áp dụng cắt
+                    </Button>
+                    {!isCropped && (
+                      <Button onClick={() => void skipCrop()}>Bỏ qua cắt</Button>
+                    )}
+                  </>
                 )}
                 <Button icon={<LeftOutlined />} onClick={() => void goPrev()} />
                 <Button
                   type="primary"
                   icon={<SaveOutlined />}
                   loading={saving}
-                  disabled={editorMode === "crop"}
+                  disabled={editorMode === "crop" || !isCropped}
                   onClick={() => void saveCurrent()}
                 >
                   Lưu
@@ -655,7 +706,7 @@ export default function AiLabelingPage() {
                 <Button
                   danger
                   icon={<DeleteOutlined />}
-                  disabled={!selectedBoxId || editorMode === "crop"}
+                  disabled={!selectedBoxId || editorMode === "crop" || !isCropped}
                   onClick={deleteSelectedBox}
                 />
               </Space>
@@ -676,7 +727,16 @@ export default function AiLabelingPage() {
               mode={editorMode}
               cropRect={cropRect}
               onCropRectChange={setCropRect}
+              labelingEnabled={isCropped}
             />
+            {!isCropped && (
+              <Alert
+                type="warning"
+                showIcon
+                message="Ảnh chưa cắt — cắt vùng thừa hoặc bấm Bỏ qua cắt trước khi gán nhãn bbox."
+                style={{ marginTop: 8 }}
+              />
+            )}
             {editorMode === "crop" && cropRect && (
               <Alert
                 type="warning"

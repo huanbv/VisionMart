@@ -5,6 +5,7 @@ from __future__ import annotations
 import io
 import logging
 import uuid
+from datetime import datetime, timezone
 from typing import Iterable
 
 from PIL import Image
@@ -135,7 +136,8 @@ class LabelingService:
         skip: int = 0,
         limit: int = 50,
         labeled: bool | None = None,
-    ) -> tuple[list[tuple[LabelImage, int]], int, int, int]:
+        cropped: bool | None = None,
+    ) -> tuple[list[tuple[LabelImage, int]], int, int, int, int]:
         total = int(
             (
                 await self._session.execute(
@@ -165,6 +167,10 @@ class LabelingService:
             stmt = stmt.where(box_count_sq > 0)
         elif labeled is False:
             stmt = stmt.where(box_count_sq == 0)
+        if cropped is True:
+            stmt = stmt.where(LabelImage.cropped_at.is_not(None))
+        elif cropped is False:
+            stmt = stmt.where(LabelImage.cropped_at.is_(None))
         stmt = stmt.order_by(LabelImage.created_at.asc()).offset(skip).limit(limit)
         rows = list((await self._session.execute(stmt)).all())
 
@@ -185,7 +191,19 @@ class LabelingService:
             or 0
         )
         pending_count = max(0, total - labeled_count)
-        return rows, total, labeled_count, pending_count
+        pending_crop = int(
+            (
+                await self._session.execute(
+                    select(func.count(LabelImage.id)).where(
+                        LabelImage.organization_id == organization_id,
+                        LabelImage.deleted_at.is_(None),
+                        LabelImage.cropped_at.is_(None),
+                    )
+                )
+            ).scalar()
+            or 0
+        )
+        return rows, total, labeled_count, pending_count, pending_crop
 
     async def get_image(
         self, *, organization_id: uuid.UUID, image_id: uuid.UUID
@@ -214,6 +232,8 @@ class LabelingService:
         image = await self._session.get(LabelImage, image_id)
         if image is None or image.organization_id != organization_id:
             raise TrainingError("Image not found")
+        if image.cropped_at is None:
+            raise TrainingError("Cần cắt ảnh (hoặc bỏ qua cắt) trước khi gán nhãn bbox")
 
         product_ids = {b["product_id"] for b in boxes}
         if product_ids:
@@ -314,6 +334,7 @@ class LabelingService:
         image.image_width = crop_w
         image.image_height = crop_h
         image.image_size_bytes = len(content)
+        image.cropped_at = datetime.now(timezone.utc)
 
         kept: list[tuple[LabelBox, Product]] = []
         for box, product in box_rows:
@@ -335,6 +356,19 @@ class LabelingService:
         await self._session.commit()
         await self._session.refresh(image)
         return image, kept
+
+    async def mark_cropped(
+        self, *, organization_id: uuid.UUID, image_id: uuid.UUID
+    ) -> LabelImage:
+        """Mark image as cropped without changing pixels (already tight frame)."""
+        image = await self._session.get(LabelImage, image_id)
+        if image is None or image.organization_id != organization_id:
+            raise TrainingError("Image not found")
+        if image.cropped_at is None:
+            image.cropped_at = datetime.now(timezone.utc)
+            await self._session.commit()
+            await self._session.refresh(image)
+        return image
 
     async def delete_image(
         self, *, organization_id: uuid.UUID, image_id: uuid.UUID
@@ -402,15 +436,29 @@ class LabelingService:
             ).scalar()
             or 0
         )
+        pending_crop = int(
+            (
+                await self._session.execute(
+                    select(func.count(LabelImage.id)).where(
+                        LabelImage.organization_id == organization_id,
+                        LabelImage.deleted_at.is_(None),
+                        LabelImage.cropped_at.is_(None),
+                    )
+                )
+            ).scalar()
+            or 0
+        )
         ready, msg = await self._training_readiness(
             labeled_images=labeled_images,
             distinct_skus=distinct_skus,
+            pending_crop=pending_crop,
             organization_id=organization_id,
         )
         return {
             "total_images": total_images,
             "labeled_images": labeled_images,
             "pending_images": max(0, total_images - labeled_images),
+            "pending_crop": pending_crop,
             "total_boxes": total_boxes,
             "distinct_skus": distinct_skus,
             "ready_for_training": ready,
@@ -422,8 +470,11 @@ class LabelingService:
         *,
         labeled_images: int,
         distinct_skus: int,
+        pending_crop: int,
         organization_id: uuid.UUID,
     ) -> tuple[bool, str | None]:
+        if pending_crop > 0:
+            return False, f"Còn {pending_crop} ảnh chưa cắt — cắt hoặc bỏ qua cắt trước khi train"
         if distinct_skus < 2:
             return False, "Cần gán nhãn ít nhất 2 SKU khác nhau"
         if labeled_images < _MIN_LABELED_IMAGES:
@@ -465,6 +516,7 @@ class LabelingService:
             .where(
                 LabelImage.organization_id == organization_id,
                 LabelImage.deleted_at.is_(None),
+                LabelImage.cropped_at.is_not(None),
                 LabelBox.deleted_at.is_(None),
             )
             .distinct()

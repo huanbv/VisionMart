@@ -20,6 +20,7 @@ export interface LabelImageSummary {
   image_height: number | null;
   box_count: number;
   labeled: boolean;
+  is_cropped: boolean;
   created_at: string;
 }
 
@@ -39,6 +40,7 @@ export interface LabelingStats {
   total_images: number;
   labeled_images: number;
   pending_images: number;
+  pending_crop: number;
   total_boxes: number;
   distinct_skus: number;
   ready_for_training: boolean;
@@ -71,6 +73,7 @@ export async function listLabelImages(params?: {
   skip?: number;
   limit?: number;
   labeled?: boolean;
+  cropped?: boolean;
 }): Promise<LabelImageListResponse> {
   const { data } = await apiClient.get<LabelImageListResponse>(
     "/ai/training/labels/images",
@@ -111,6 +114,13 @@ export async function cropLabelImage(
   const { data } = await apiClient.post<LabelImageDetail>(
     `/ai/training/labels/images/${imageId}/crop`,
     rect
+  );
+  return data;
+}
+
+export async function markLabelImageCropped(imageId: string): Promise<LabelImageSummary> {
+  const { data } = await apiClient.post<LabelImageSummary>(
+    `/ai/training/labels/images/${imageId}/mark-cropped`
   );
   return data;
 }

@@ -37,6 +37,7 @@ export default function BboxLabelEditor({
   mode = "label",
   cropRect,
   onCropRectChange,
+  labelingEnabled = true,
 }: {
   imageUrl: string | null;
   products: Product[];
@@ -49,6 +50,7 @@ export default function BboxLabelEditor({
   mode?: EditorMode;
   cropRect?: CropRect | null;
   onCropRectChange?: (rect: CropRect | null) => void;
+  labelingEnabled?: boolean;
 }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const imgRef = useRef<HTMLImageElement | null>(null);
@@ -173,7 +175,7 @@ export default function BboxLabelEditor({
       return;
     }
 
-    if (!product) return;
+    if (!product || !labelingEnabled) return;
     const hit = hitTest(x, y);
     if (hit) {
       onSelectBox(hit.clientId);
@@ -246,11 +248,16 @@ export default function BboxLabelEditor({
     return <Empty description="Chọn ảnh để gán nhãn" />;
   }
 
-  const canDraw = isCropMode || !!product;
+  const canDraw = isCropMode || (!!product && labelingEnabled);
 
   return (
     <div>
-      {!isCropMode && (
+      {!isCropMode && !labelingEnabled && (
+        <Tag color="warning" style={{ marginBottom: 12 }}>
+          Cắt ảnh hoặc bỏ qua cắt trước khi vẽ khung bbox
+        </Tag>
+      )}
+      {!isCropMode && labelingEnabled && (
         <Space wrap style={{ marginBottom: 12 }}>
           <Text strong>SKU đang vẽ:</Text>
           <Select

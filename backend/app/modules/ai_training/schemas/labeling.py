@@ -37,6 +37,7 @@ class LabelImageSummary(BaseModel):
     image_height: int | None
     box_count: int
     labeled: bool
+    is_cropped: bool
     created_at: datetime
 
 
@@ -75,6 +76,7 @@ class LabelingStatsResponse(BaseModel):
     total_images: int
     labeled_images: int
     pending_images: int
+    pending_crop: int
     total_boxes: int
     distinct_skus: int
     ready_for_training: bool

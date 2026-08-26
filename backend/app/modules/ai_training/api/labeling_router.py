@@ -52,6 +52,7 @@ def _summary(row, box_count: int) -> LabelImageSummary:
         image_height=row.image_height,
         box_count=box_count,
         labeled=box_count > 0,
+        is_cropped=row.cropped_at is not None,
         created_at=row.created_at,
     )
 
@@ -89,15 +90,17 @@ async def list_label_images(
     skip: int = Query(0, ge=0),
     limit: int = Query(50, ge=1, le=200),
     labeled: bool | None = Query(None),
+    cropped: bool | None = Query(None),
     current=Depends(require_roles(*_TRAINER_ROLES)),
     session: AsyncSession = Depends(get_session),
 ) -> LabelImageListResponse:
     service = _service(session)
-    rows, total, labeled_count, pending_count = await service.list_images(
+    rows, total, labeled_count, pending_count, pending_crop = await service.list_images(
         organization_id=current.organization_id,
         skip=skip,
         limit=limit,
         labeled=labeled,
+        cropped=cropped,
     )
     items = [_summary(row, int(box_count or 0)) for row, box_count in rows]
     return LabelImageListResponse(
@@ -175,6 +178,27 @@ async def crop_label_image(
     ]
     base = _summary(image, len(boxes))
     return LabelImageDetail(**base.model_dump(), preview_url=preview or "", boxes=boxes)
+
+
+@router.post("/images/{image_id}/mark-cropped", response_model=LabelImageSummary)
+async def mark_label_image_cropped(
+    image_id: uuid.UUID,
+    current=Depends(require_roles(*_TRAINER_ROLES)),
+    session: AsyncSession = Depends(get_session),
+) -> LabelImageSummary:
+    service = _service(session)
+    try:
+        image = await service.mark_cropped(
+            organization_id=current.organization_id,
+            image_id=image_id,
+        )
+        _, box_rows = await service.get_image(
+            organization_id=current.organization_id,
+            image_id=image_id,
+        )
+    except TrainingError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    return _summary(image, len(box_rows))
 
 
 @router.put("/images/{image_id}/boxes", response_model=list[LabelBoxOut])

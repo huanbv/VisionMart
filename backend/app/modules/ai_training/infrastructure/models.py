@@ -141,6 +141,7 @@ class LabelImage(Entity):
     original_filename: Mapped[str | None] = mapped_column(String(255), nullable=True)
     image_width: Mapped[int | None] = mapped_column(Integer, nullable=True)
     image_height: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    cropped_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 class LabelBox(Entity):
