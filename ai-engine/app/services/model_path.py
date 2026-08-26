@@ -85,6 +85,13 @@ def resolve_detection_weight() -> str:
     return stock or STOCK_WEIGHT
 
 
+def is_custom_detection_weight() -> bool:
+    """True when a deployed fine-tuned weight is active (not stock COCO yolov8n)."""
+    configured = os.path.basename(_configured_weight())
+    resolved = os.path.basename(resolve_detection_weight())
+    return configured != STOCK_WEIGHT and resolved != STOCK_WEIGHT
+
+
 def reload_detection_models() -> None:
     """Drop cached YOLO instances so the next inference reloads the resolved weight."""
     try:

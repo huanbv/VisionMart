@@ -950,9 +950,8 @@ async def process_frame(
             camera_key,
             is_checkout_zone=is_checkout,
             roi_zones=roi_zones,
-            # Same blob+crop detector as Chụp & Quét / Tải ảnh. Auto live
-            # previously used YOLO-track, which the full-image labels turn
-            # into ghosts on wood and missed bottles in the pay zone.
+            # Checkout / manual scan: dense product pass. Stock weights use
+            # blob→crop; deployed bbox weights use full-frame predict.
             dense_detect=is_checkout,
             product_min_confidence=min_confidence,
         )

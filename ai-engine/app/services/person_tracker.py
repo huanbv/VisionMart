@@ -975,26 +975,39 @@ async def track_frame_detailed(
                             )
                     _LATEST_PERSON_BOXES[camera_key] = latest_boxes
 
-        # 2. Products. Custom weights were trained as full-image labels, so
-        # tiled predict fires a class on every window (wood, white, a sleeve).
-        # Localize blobs first, then YOLO on each tight crop — that is the
-        # setting the weights actually learned. No tile fallback: empty
-        # wood has no blobs, and tiles would hallucinate SKUs again.
+        # 2. Products. Full-image classifier weights need blob→crop; bbox-trained
+        # custom weights need full-frame predict (same setting as labeled_scenes).
         if dense_detect:
+            from app.services.model_path import is_custom_detection_weight
             from app.services.region_detect import detect_products_from_regions
 
-            persons_now = [
-                o for o in out if str(o.class_name).lower() == "person"
-            ]
-            out.extend(
-                detect_products_from_regions(
-                    model_det,
-                    det_img,
-                    persons_now,
-                    roi_rect,
-                    conf_min=max(0.0, min(1.0, product_min_confidence)),
+            conf = max(0.0, min(1.0, product_min_confidence))
+            if is_custom_detection_weight():
+                det_results = model_det.predict(
+                    source=det_img,
+                    conf=conf,
+                    iou=0.45,
+                    max_det=24,
+                    verbose=False,
                 )
-            )
+                if det_results:
+                    for box in _boxes_from_yolo_result(det_results[0], id_base=1):
+                        if str(box.class_name).lower() == "person":
+                            continue
+                        out.append(box)
+            else:
+                persons_now = [
+                    o for o in out if str(o.class_name).lower() == "person"
+                ]
+                out.extend(
+                    detect_products_from_regions(
+                        model_det,
+                        det_img,
+                        persons_now,
+                        roi_rect,
+                        conf_min=conf,
+                    )
+                )
         else:
             det_results = model_det.track(
                 source=det_img,

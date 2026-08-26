@@ -188,7 +188,7 @@ def _classify_region(
         boxes = boxes_from_result(results[0], id_base=id_base)
         if boxes:
             best = max(boxes, key=lambda box: box.confidence)
-            if best.confidence >= max(conf_min, _ACCEPT_CONF):
+            if best.confidence >= conf_min:
                 return best
     return None
 
