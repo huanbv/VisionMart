@@ -105,20 +105,69 @@ def propose_regions(
         mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
     )
 
-    regions: list[ProposedRegion] = []
-    for cnt in contours:
-        area = cv2.contourArea(cnt)
-        frac = area / frame_area
-        if frac < min_area_frac or frac > max_area_frac:
-            continue
-        x, y, bw, bh = cv2.boundingRect(cnt)
-        # Loại dải quá dài/mảnh — thường là vệt cạnh của mép bàn hay khe ROI,
-        # không phải một sản phẩm.
-        aspect = max(bw, bh) / max(1, min(bw, bh))
-        if aspect > 6.0:
-            continue
-        regions.append(
-            ProposedRegion(x1=x, y1=y, x2=x + bw, y2=y + bh, score=float(frac))
+    def _regions_from_contours(items, *, reject_scene_spans: bool):
+        found: list[ProposedRegion] = []
+        for cnt in items:
+            area = cv2.contourArea(cnt)
+            frac = area / frame_area
+            if frac < min_area_frac or frac > max_area_frac:
+                continue
+            x, y, bw, bh = cv2.boundingRect(cnt)
+            # A contour spanning almost the complete ROI is the counter/floor
+            # boundary, not a product. This commonly happens with perspective
+            # camera views where the pay-zone contains several background
+            # colours and the global median is not a valid background model.
+            if reject_scene_spans and (bw >= 0.80 * w or bh >= 0.80 * h):
+                continue
+            # Loại dải quá dài/mảnh — thường là vệt cạnh của mép bàn hay khe ROI,
+            # không phải một sản phẩm.
+            aspect = max(bw, bh) / max(1, min(bw, bh))
+            if aspect > 6.0:
+                continue
+            found.append(
+                ProposedRegion(
+                    x1=x, y1=y, x2=x + bw, y2=y + bh, score=float(frac)
+                )
+            )
+        return found
+
+    regions = _regions_from_contours(contours, reject_scene_spans=True)
+
+    # A global median works for upload photos on a plain background. It fails
+    # on a real checkout view containing wood, floor, shadows and perspective:
+    # all surfaces merge into one large contour. If that happened, compare
+    # each pixel with a heavily blurred local background instead. Bottles and
+    # packs remain compact high-contrast islands while gradual lighting and
+    # wood-colour changes disappear.
+    if not regions and contours:
+        blur_size = max(15, min(51, (min(h, w) // 10) | 1))
+        local_bg = cv2.GaussianBlur(frame_bgr, (blur_size, blur_size), 0)
+        local_diff = np.abs(
+            frame_bgr.astype(np.int16) - local_bg.astype(np.int16)
+        ).sum(axis=2)
+        local_threshold = max(55, bg_tolerance)
+        # ``frame_bgr`` can also contain black person masks. Keep away from
+        # every black/non-black boundary so Gaussian blur does not turn the
+        # edge of a masked torso (or the ROI polygon) into a fake object.
+        safe_inside = cv2.erode(
+            is_inside_roi.astype(np.uint8),
+            cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (11, 11)),
+            iterations=1,
+        ).astype(bool)
+        local_mask = (
+            (local_diff > local_threshold) & safe_inside
+        ).astype(np.uint8) * 255
+        local_mask = cv2.morphologyEx(
+            local_mask, cv2.MORPH_OPEN, kernel, iterations=1
+        )
+        local_mask = cv2.morphologyEx(
+            local_mask, cv2.MORPH_CLOSE, kernel, iterations=2
+        )
+        local_contours, _ = cv2.findContours(
+            local_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
+        )
+        regions = _regions_from_contours(
+            local_contours, reject_scene_spans=True
         )
 
     # Vật to (diện tích lớn) đứng trước: nếu phải cắt bớt vì vượt max_regions,
