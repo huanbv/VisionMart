@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import uuid
+from datetime import datetime, timezone
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, UploadFile, File, status
@@ -599,7 +600,7 @@ async def trigger_camera_scan(
         "status": "ok",
         "camera_id": str(camera_id),
         "camera_name": camera.name,
-        "captured_at": datetime.utcnow().isoformat(),
+        "captured_at": datetime.now(timezone.utc).isoformat(),
         "frame_base64": image_b64,
         "emitted_events": frame_res.get("emitted_events", []),
         "detections": frame_res.get("detections", []),
