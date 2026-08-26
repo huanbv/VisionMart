@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Alert,
   Badge,
@@ -34,6 +34,7 @@ import {
   StopOutlined,
   SyncOutlined,
   ThunderboltOutlined,
+  UploadOutlined,
 } from "@ant-design/icons";
 import { isAxiosError } from "axios";
 
@@ -52,7 +53,7 @@ import {
   type CartStatus,
 } from "@/api/carts";
 import { type Branch, listBranches } from "@/api/tenancy";
-import { type Camera, getAiAutoScan, listCameras, setAiAutoScan, triggerCameraScan } from "@/api/cameras";
+import { type Camera, analyzeCameraFrame, getAiAutoScan, listCameras, setAiAutoScan, triggerCameraScan } from "@/api/cameras";
 import { tokenStore } from "@/api/client";
 import LiveCameraView, { type LiveStreamStatus } from "@/components/LiveCameraView";
 
@@ -77,6 +78,74 @@ const SOURCE_LABEL: Record<string, string> = {
   manual: "Thủ công",
   mobile_app: "Mobile",
 };
+
+type ScanDetection = { sku?: string | null; class_name?: string };
+type ScanEvent = {
+  event?: { product_sku?: string | null };
+  backend?: {
+    status?: number;
+    body?: { accepted?: boolean; reason?: string | null };
+  };
+};
+
+function reportScanOutcome(
+  detections: ScanDetection[],
+  events: ScanEvent[],
+  addLog: (type: AiLogItem["type"], messageText: string, detail?: string) => void,
+  sourceLabel: string,
+) {
+  const withSku = detections.filter((d) => d.sku);
+  const newlyAdded = events.filter(
+    (e) => e.backend?.body?.accepted && !e.backend?.body?.reason,
+  );
+  const accepted = events.filter((e) => e.backend?.body?.accepted);
+  const reasons = [
+    ...new Set(
+      events
+        .map((e) => e.backend?.body?.reason)
+        .filter((r): r is string => Boolean(r)),
+    ),
+  ];
+  const addedSkus = [
+    ...new Set(
+      newlyAdded
+        .map((e) => e.event?.product_sku)
+        .filter((s): s is string => Boolean(s)),
+    ),
+  ];
+  const skuList = addedSkus.join(", ") || [...new Set(withSku.map((d) => d.sku))].join(", ");
+
+  if (newlyAdded.length > 0) {
+    const n = addedSkus.length || newlyAdded.length;
+    message.success(`Đã thêm ${n} sản phẩm vào giỏ AI${skuList ? ` (${skuList})` : ""}`);
+    addLog("add", `${sourceLabel} — đã tạo/cập nhật giỏ`, skuList || `${n} SKU`);
+  } else if (accepted.length > 0) {
+    message.info(`Sản phẩm đã có trong giỏ AI${skuList ? ` (${skuList})` : ""}`);
+    addLog("info", `${sourceLabel} — SKU đã có trong giỏ`, skuList);
+  } else if (events.length > 0) {
+    const why = reasons.join(", ") || `HTTP ${events[0]?.backend?.status ?? "?"}`;
+    const hint =
+      why.includes("unknown_product")
+        ? " — SKU chưa có trong Danh mục sản phẩm"
+        : why.includes("low_confidence")
+          ? " — độ tin cậy thấp hơn ngưỡng giỏ"
+          : "";
+    message.warning(`Nhận diện được nhưng chưa vào giỏ: ${why}${hint}`);
+    addLog("remove", `${sourceLabel} — box bị backend từ chối`, why);
+  } else if (detections.length > 0 && withSku.length === 0) {
+    const names = detections.map((d) => d.class_name).join(", ");
+    message.warning(`Phát hiện ${detections.length} đối tượng (${names}) nhưng chưa map được SKU`);
+    addLog("remove", `${sourceLabel} — không map SKU`, names);
+  } else if (detections.length > 0) {
+    message.warning(
+      `Phát hiện ${withSku.length || detections.length} sản phẩm nhưng không phát sự kiện giỏ`,
+    );
+    addLog("remove", `${sourceLabel} — không emit product_scanned`, skuList);
+  } else {
+    message.warning("Không phát hiện sản phẩm");
+    addLog("remove", `${sourceLabel} — không có detection`, "");
+  }
+}
 
 function formatMoney(amount: string, currency: string): string {
   const value = Number(amount);
@@ -341,7 +410,7 @@ export default function LiveCartPage() {
       setAiPaused(res.paused);
       if (res.paused) {
         message.info("Đã tắt AI tự động thêm giỏ — live vẫn vẽ box sản phẩm trong vùng thanh toán");
-        addLog("info", "⏸️ Tắt AI tự động", "Không tự thêm giỏ; live overlay và Chụp & Quét vẫn chạy");
+        addLog("info", "⏸️ Tắt AI tự động", "Không tự thêm giỏ; live overlay, Chụp & Quét và Tải ảnh vẫn chạy");
       } else {
         message.success("Đã bật lại nhận diện AI tự động");
         addLog("info", "▶️ Bật AI tự động", "Luồng live lại thêm SKU vào giỏ");
@@ -486,6 +555,8 @@ export default function LiveCartPage() {
   };
 
   const [manualScanning, setManualScanning] = useState(false);
+  const [uploadingScan, setUploadingScan] = useState(false);
+  const uploadInputRef = useRef<HTMLInputElement>(null);
 
   const onManualTriggerScan = async () => {
     if (!liveCameraId) {
@@ -495,59 +566,7 @@ export default function LiveCartPage() {
     setManualScanning(true);
     try {
       const res = await triggerCameraScan(liveCameraId);
-      const detections = res.detections ?? [];
-      const withSku = detections.filter((d) => d.sku);
-      const events = res.emitted_events ?? [];
-      const newlyAdded = events.filter(
-        (e) => e.backend?.body?.accepted && !e.backend?.body?.reason,
-      );
-      const accepted = events.filter((e) => e.backend?.body?.accepted);
-      const reasons = [
-        ...new Set(
-          events
-            .map((e) => e.backend?.body?.reason)
-            .filter((r): r is string => Boolean(r)),
-        ),
-      ];
-      const addedSkus = [
-        ...new Set(
-          newlyAdded
-            .map((e) => e.event?.product_sku)
-            .filter((s): s is string => Boolean(s)),
-        ),
-      ];
-      const skuList = addedSkus.join(", ") || [...new Set(withSku.map((d) => d.sku))].join(", ");
-
-      if (newlyAdded.length > 0) {
-        const n = addedSkus.length || newlyAdded.length;
-        message.success(`Đã thêm ${n} sản phẩm vào giỏ AI${skuList ? ` (${skuList})` : ""}`);
-        addLog("add", "📸 Quét thủ công — đã tạo/cập nhật giỏ", skuList || `${n} SKU`);
-      } else if (accepted.length > 0) {
-        message.info(`Sản phẩm đã có trong giỏ AI${skuList ? ` (${skuList})` : ""}`);
-        addLog("info", "📸 Quét thủ công — SKU đã có trong giỏ", skuList);
-      } else if (events.length > 0) {
-        const why = reasons.join(", ") || `HTTP ${events[0]?.backend?.status ?? "?"}`;
-        const hint =
-          why.includes("unknown_product")
-            ? " — SKU chưa có trong Danh mục sản phẩm"
-            : why.includes("low_confidence")
-              ? " — độ tin cậy thấp hơn ngưỡng giỏ"
-              : "";
-        message.warning(`Nhận diện được nhưng chưa vào giỏ: ${why}${hint}`);
-        addLog("remove", "📸 Quét được box nhưng backend từ chối", why);
-      } else if (detections.length > 0 && withSku.length === 0) {
-        const names = detections.map((d) => d.class_name).join(", ");
-        message.warning(`Phát hiện ${detections.length} đối tượng (${names}) nhưng chưa map được SKU`);
-        addLog("remove", "📸 Có detection nhưng không map SKU", names);
-      } else if (detections.length > 0) {
-        message.warning(
-          `Phát hiện ${withSku.length || detections.length} sản phẩm nhưng không phát sự kiện giỏ (camera quầy + CHECKOUT_SCAN_MODE?)`,
-        );
-        addLog("remove", "📸 Có SKU nhưng không emit product_scanned", skuList);
-      } else {
-        message.warning("Không phát hiện sản phẩm trong khung hình");
-        addLog("remove", "📸 Quét thủ công — không có detection", "");
-      }
+      reportScanOutcome(res.detections ?? [], res.emitted_events ?? [], addLog, "📸 Quét khung live");
       load();
     } catch (err) {
       const detail =
@@ -557,6 +576,44 @@ export default function LiveCartPage() {
       message.error(detail);
     } finally {
       setManualScanning(false);
+    }
+  };
+
+  const onUploadImageScan = async (file: File) => {
+    if (!liveCameraId) {
+      message.warning("Chọn camera (chi nhánh) trước khi tải ảnh");
+      return;
+    }
+    if (file.size > 10 * 1024 * 1024) {
+      message.error("Ảnh vượt quá 10 MB");
+      if (uploadInputRef.current) uploadInputRef.current.value = "";
+      return;
+    }
+    setUploadingScan(true);
+    try {
+      const res = await analyzeCameraFrame(liveCameraId, file);
+      if (res.frame_pipeline_error) {
+        message.error(`Phân tích ảnh lỗi: ${res.frame_pipeline_error}`);
+        addLog("remove", "🖼️ Tải ảnh — pipeline lỗi", res.frame_pipeline_error);
+        return;
+      }
+      const pipeline = res.frame_pipeline;
+      reportScanOutcome(
+        pipeline?.detections ?? res.detections ?? [],
+        pipeline?.emitted_events ?? [],
+        addLog,
+        "🖼️ Tải ảnh",
+      );
+      load();
+    } catch (err) {
+      const detail =
+        isAxiosError(err) && err.response?.data?.detail
+          ? String(err.response.data.detail)
+          : "Không phân tích được ảnh";
+      message.error(detail);
+    } finally {
+      setUploadingScan(false);
+      if (uploadInputRef.current) uploadInputRef.current.value = "";
     }
   };
 
@@ -689,16 +746,45 @@ export default function LiveCartPage() {
           </Space>
         }
         extra={
-          <Space size="middle">
+          <Space size="middle" wrap>
+            <input
+              ref={uploadInputRef}
+              type="file"
+              accept="image/jpeg,image/png,image/webp,image/bmp"
+              style={{ display: "none" }}
+              onChange={(e) => {
+                const file = e.target.files?.[0];
+                if (file) void onUploadImageScan(file);
+              }}
+            />
             <Button
               type="primary"
               icon={<CameraOutlined />}
               loading={manualScanning}
+              disabled={!liveCameraId || uploadingScan}
               onClick={onManualTriggerScan}
               style={{ fontWeight: 600, backgroundColor: "#1677ff" }}
             >
               📸 Chụp & Quét AI Khung Hình Này
             </Button>
+            <Tooltip title="JPEG / PNG / WebP / BMP, tối đa 10 MB. Ảnh có sản phẩm trên quầy — AI nhận diện và thêm vào giỏ giống Chụp & Quét.">
+              <span>
+                <Button
+                  icon={<UploadOutlined />}
+                  loading={uploadingScan}
+                  disabled={!liveCameraId || manualScanning}
+                  onClick={() => {
+                    if (!liveCameraId) {
+                      message.warning("Chọn camera (chi nhánh) trước khi tải ảnh");
+                      return;
+                    }
+                    uploadInputRef.current?.click();
+                  }}
+                >
+                  Tải ảnh & Quét
+                </Button>
+              </span>
+            </Tooltip>
             <Space>
               <Typography.Text type="secondary">AI tự động</Typography.Text>
               <Switch
@@ -727,7 +813,7 @@ export default function LiveCartPage() {
                   type="warning"
                   showIcon
                   message="AI tự động đang tắt"
-                  description="Luồng live vẫn nhận diện và vẽ box sản phẩm trong vùng thanh toán. Chỉ không tự thêm vào giỏ — dùng Chụp & Quét khi cần nhập đơn. Bật lại công tắc AI tự động khi xong."
+                  description="Luồng live vẫn nhận diện và vẽ box sản phẩm trong vùng thanh toán. Chỉ không tự thêm vào giỏ — dùng Chụp & Quét hoặc Tải ảnh & Quét khi cần nhập đơn. Bật lại công tắc AI tự động khi xong."
                 />
               </Col>
             )}

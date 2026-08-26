@@ -152,7 +152,10 @@ export interface FramePipelineEvent {
     confidence: number;
     customer_id: string | null;
   };
-  backend: { status: number; body: unknown };
+  backend?: {
+    status?: number;
+    body?: { accepted?: boolean; reason?: string | null; cart_id?: string | null };
+  };
 }
 
 export interface FramePipelineResult {
@@ -160,6 +163,7 @@ export interface FramePipelineResult {
     track_id: number;
     class_name: string;
     confidence: number;
+    sku?: string | null;
     bbox: { x1: number; y1: number; x2: number; y2: number };
   }>;
   persons: number;
