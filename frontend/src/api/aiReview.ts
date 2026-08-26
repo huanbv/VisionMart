@@ -120,3 +120,39 @@ export async function resetVisionConfig(): Promise<VisionConfigResponse> {
   );
   return data;
 }
+
+// ---------------- Class -> SKU mapping & model selection ----------------
+
+export interface ClassSkuMapResponse {
+  organization_id: string;
+  /** detector class name -> SKU code */
+  mapping: Record<string, string>;
+  /** 80 COCO class names, offered as autocomplete in the editor */
+  coco_classes?: string[];
+}
+
+export async function getClassSkuMap(): Promise<ClassSkuMapResponse> {
+  const { data } = await apiClient.get<ClassSkuMapResponse>("/ai/class-sku-map");
+  return data;
+}
+
+export async function updateClassSkuMap(
+  mapping: Record<string, string>,
+): Promise<ClassSkuMapResponse> {
+  const { data } = await apiClient.put<ClassSkuMapResponse>("/ai/class-sku-map", {
+    mapping,
+  });
+  return data;
+}
+
+export interface ModelsResponse {
+  models: string[];
+  /** currently active YOLO_MODEL_PATH ("" = built-in stock model) */
+  active: string;
+  models_dir: string;
+}
+
+export async function listModels(): Promise<ModelsResponse> {
+  const { data } = await apiClient.get<ModelsResponse>("/ai/models");
+  return data;
+}

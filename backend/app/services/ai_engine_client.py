@@ -108,6 +108,55 @@ class AIEngineClient:
             logger.warning("ai-engine reset vision-config failed: %s", exc)
             raise AIEngineError(str(exc)) from exc
 
+    async def get_class_sku_map(self, organization_id: str) -> dict[str, Any]:
+        """Current org-level detector-class -> SKU mapping, plus the COCO
+        class names offered as autocomplete in the editor."""
+        url = f"{self._base_url}/ai/class-sku-map"
+        try:
+            async with httpx.AsyncClient(timeout=self._timeout) as client:
+                resp = await client.get(
+                    url,
+                    params={"organization_id": organization_id},
+                    headers=self._headers,
+                )
+                resp.raise_for_status()
+                return resp.json()
+        except httpx.HTTPError as exc:
+            logger.warning("ai-engine get class-sku map failed: %s", exc)
+            raise AIEngineError(str(exc)) from exc
+
+    async def update_class_sku_map(
+        self, organization_id: str, mapping: dict[str, str]
+    ) -> dict[str, Any]:
+        """Replace the org-level class -> SKU mapping."""
+        url = f"{self._base_url}/ai/class-sku-map"
+        try:
+            async with httpx.AsyncClient(timeout=self._timeout) as client:
+                resp = await client.put(
+                    url,
+                    json={"organization_id": organization_id, "mapping": mapping},
+                    headers=self._headers,
+                )
+                resp.raise_for_status()
+                return resp.json()
+        except httpx.HTTPStatusError as exc:
+            raise AIEngineError(exc.response.text) from exc
+        except httpx.HTTPError as exc:
+            logger.warning("ai-engine update class-sku map failed: %s", exc)
+            raise AIEngineError(str(exc)) from exc
+
+    async def list_models(self) -> dict[str, Any]:
+        """Detection weights available to select, and the active one."""
+        url = f"{self._base_url}/ai/models"
+        try:
+            async with httpx.AsyncClient(timeout=self._timeout) as client:
+                resp = await client.get(url, headers=self._headers)
+                resp.raise_for_status()
+                return resp.json()
+        except httpx.HTTPError as exc:
+            logger.warning("ai-engine list models failed: %s", exc)
+            raise AIEngineError(str(exc)) from exc
+
     async def trace_frame(
         self,
         *,

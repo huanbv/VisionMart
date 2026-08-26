@@ -39,6 +39,10 @@ _LOCK = asyncio.Lock()
 
 _SHARED_POSE_MODEL: Any = None
 _SHARED_DET_MODEL: Any = None
+# Path the currently-loaded detection weight came from, so _get_det_model
+# can notice when the admin points YOLO_MODEL_PATH at a different weight and
+# hot-swap it without a container restart.
+_LOADED_DET_PATH: str | None = None
 _POSE_TRACKER_STATE: dict[str, Any] = {}
 _DET_TRACKER_STATE: dict[str, Any] = {}
 _ACTIVE_CAMERA: dict[str, str] = {}
@@ -192,7 +196,7 @@ def prune_stale_trajectories(now: float) -> None:
 
 
 def reset_trackers() -> None:
-    global _SHARED_POSE_MODEL, _SHARED_DET_MODEL
+    global _SHARED_POSE_MODEL, _SHARED_DET_MODEL, _LOADED_DET_PATH
     _TRACKERS.clear()
     _POSE_TRACKER_STATE.clear()
     _DET_TRACKER_STATE.clear()
@@ -200,6 +204,7 @@ def reset_trackers() -> None:
     _PERSON_TRAJECTORIES.clear()
     _SHARED_POSE_MODEL = None
     _SHARED_DET_MODEL = None
+    _LOADED_DET_PATH = None
 
 
 class ReIDManager:
@@ -404,17 +409,49 @@ def _get_pose_model():
     return _SHARED_POSE_MODEL
 
 
+def _resolve_det_path() -> str:
+    """Which detection weight to load.
+
+    A non-empty ``YOLO_MODEL_PATH`` (set from the admin screen) wins, so an
+    operator can switch to a custom-trained weight live. An absolute path is
+    used as-is; a bare filename is looked up under the mounted /models
+    volume. Empty config, or a configured path that doesn't exist, falls
+    back to the built-in stock-model search so the detector never fails to
+    load just because a bad path was typed."""
+    configured = (get_vision_config().yolo_model_path or "").strip()
+    if configured:
+        if os.path.isabs(configured) and os.path.exists(configured):
+            return configured
+        for base in ("/models", "models", "."):
+            candidate = os.path.join(base, configured)
+            if os.path.exists(candidate):
+                return candidate
+        logger.warning(
+            "YOLO_MODEL_PATH=%s not found; falling back to stock model", configured
+        )
+    for path in ("/models/yolov8n.pt", "models/yolov8n.pt", "yolov8n.pt"):
+        if os.path.exists(path):
+            return path
+    return "yolov8n.pt"
+
+
 def _get_det_model():
-    global _SHARED_DET_MODEL
+    global _SHARED_DET_MODEL, _LOADED_DET_PATH
+    want = _resolve_det_path()
+    # Reload when the configured weight changed under us — the admin picked a
+    # different model. Cheap: this only re-reads config (throttled) and
+    # compares a string on the hot path; the YOLO() load happens only on an
+    # actual change or first use.
+    if _SHARED_DET_MODEL is not None and want != _LOADED_DET_PATH:
+        logger.info("YOLO detection weight changed: %s -> %s", _LOADED_DET_PATH, want)
+        _SHARED_DET_MODEL = None
+        _TRACKERS.clear()
+        _DET_TRACKER_STATE.clear()
     if _SHARED_DET_MODEL is None:
         from ultralytics import YOLO
-        det_path = "/models/yolov8n.pt"
-        if not os.path.exists(det_path):
-            det_path = "models/yolov8n.pt"
-        if not os.path.exists(det_path):
-            det_path = "yolov8n.pt"
-        _SHARED_DET_MODEL = YOLO(det_path)
-        logger.info("YOLO Detection model loaded: %s", det_path)
+        _SHARED_DET_MODEL = YOLO(want)
+        _LOADED_DET_PATH = want
+        logger.info("YOLO Detection model loaded: %s", want)
     return _SHARED_DET_MODEL
 
 

@@ -5,6 +5,7 @@ import {
   Card,
   Col,
   Divider,
+  Input,
   InputNumber,
   Popconfirm,
   Row,
@@ -22,6 +23,7 @@ import {
   updateVisionConfig,
   type VisionConfigResponse,
 } from "@/api/aiReview";
+import ProductRecognitionCard from "./ProductRecognitionCard";
 
 const { Title, Paragraph, Text } = Typography;
 
@@ -43,11 +45,18 @@ interface NumField {
   hint?: string;
 }
 
+interface TextField {
+  key: string;
+  label: string;
+  hint?: string;
+}
+
 interface Group {
   title: string;
   note?: string;
   toggle?: { key: string; label: string; hint?: string };
   numbers?: NumField[];
+  texts?: TextField[];
 }
 
 const GROUPS: Group[] = [
@@ -60,7 +69,37 @@ const GROUPS: Group[] = [
     },
   },
   {
-    title: "Phân loại SKU (Classifier)",
+    title: "Chế độ quét quầy thanh toán",
+    note: "Bật để sản phẩm nhận diện được tự thêm vào đơn ở camera quầy (đánh dấu \"Khu vực thanh toán\") mà không cần người trong khung. Cần bật cái này thì việc quét ảnh/luồng quầy mới tạo được đơn.",
+    toggle: {
+      key: "CHECKOUT_SCAN_MODE",
+      label: "Bật chế độ quét quầy",
+      hint: "Tắt = camera quầy chạy như kệ hàng (phải có người cầm sản phẩm).",
+    },
+  },
+  {
+    title: "Bật phân loại SKU (tầng 2)",
+    note: "Model tầng 2 phân loại ảnh cắt (crop) của vật thể thành SKU thật — cần khi YOLO chỉ cho ra lớp COCO chung chung (bottle, cup…). Cần có file model tại đường dẫn bên dưới; nếu chưa train thì để tắt và dùng bảng ánh xạ Lớp → SKU.",
+    toggle: {
+      key: "ENABLE_SKU_CLASSIFIER",
+      label: "Bật SKU classifier",
+      hint: "Chưa có model đã train thì bật cũng không có tác dụng — hãy dùng bảng ánh xạ Lớp → SKU.",
+    },
+    texts: [
+      {
+        key: "CLASSIFIER_MODEL_PATH",
+        label: "Đường dẫn model",
+        hint: "Ví dụ /models/sku_classifier.onnx",
+      },
+      {
+        key: "CLASSIFIER_LABELS_PATH",
+        label: "Đường dẫn nhãn",
+        hint: "Ví dụ /models/sku_labels.json",
+      },
+    ],
+  },
+  {
+    title: "Ngưỡng phân loại SKU (Classifier)",
     note: "Ngưỡng tin cậy tối thiểu để chấp nhận kết quả phân loại SKU (tầng 2, sau YOLO). Áp dụng cho MỌI đối tượng, kể cả vùng đề xuất contour (lớp \"region\" — sản phẩm YOLO không có lớp riêng, ví dụ gói mì) vốn trước đây bị khoá cứng ngưỡng riêng 0.68 không chỉnh được ở đây.",
     numbers: [
       {
@@ -400,6 +439,10 @@ export default function VisionConfigPage() {
     const n = typeof v === "number" ? v : Number(v);
     return Number.isFinite(n) ? n : 0;
   };
+  const strOf = (key: string) => {
+    const v = draft[key];
+    return v === undefined || v === null ? "" : String(v);
+  };
 
   return (
     <Space direction="vertical" size="large" style={{ width: "100%" }}>
@@ -431,6 +474,8 @@ export default function VisionConfigPage() {
       />
 
       {error && <Alert type="error" showIcon message={error} />}
+
+      <ProductRecognitionCard />
 
       <Card
         loading={loading}
@@ -501,6 +546,38 @@ export default function VisionConfigPage() {
                       {g.toggle.hint}
                     </Paragraph>
                   )}
+
+                  {g.texts?.length ? (
+                    <>
+                      <Divider style={{ margin: "8px 0" }} />
+                      <Space direction="vertical" size={8} style={{ width: "100%" }}>
+                        {g.texts.map((t) => (
+                          <div key={t.key}>
+                            <Space align="center" wrap>
+                              <Text style={{ minWidth: 130, display: "inline-block" }}>
+                                {t.label}
+                              </Text>
+                              <Input
+                                style={{ width: 260 }}
+                                value={strOf(t.key)}
+                                onChange={(e) =>
+                                  setDraft((d) => ({ ...d, [t.key]: e.target.value }))
+                                }
+                              />
+                              {isOverridden(t.key) && <Tag color="gold">tuỳ chỉnh</Tag>}
+                            </Space>
+                            {t.hint && (
+                              <div>
+                                <Text type="secondary" style={{ fontSize: 12 }}>
+                                  {t.hint}
+                                </Text>
+                              </div>
+                            )}
+                          </div>
+                        ))}
+                      </Space>
+                    </>
+                  ) : null}
 
                   {g.numbers?.length ? (
                     <>

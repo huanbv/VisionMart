@@ -8,6 +8,9 @@ from app.modules.ai_training.api.review_router import router as ai_review_router
 from app.modules.ai_training.api.vision_config_router import (
     router as ai_vision_config_router,
 )
+from app.modules.ai_training.api.class_sku_router import (
+    router as ai_class_sku_router,
+)
 from app.modules.ai_training.api.router import router as ai_training_router
 from app.modules.ai_pipeline.api.router import router as ai_pipeline_router
 from app.modules.audit.api.audit_router import router as audit_router
@@ -56,5 +59,6 @@ api_router.include_router(detection_router)
 api_router.include_router(ai_training_router)
 api_router.include_router(ai_review_router)
 api_router.include_router(ai_vision_config_router)
+api_router.include_router(ai_class_sku_router)
 api_router.include_router(ai_pipeline_router)
 api_router.include_router(ops_monitoring_router)

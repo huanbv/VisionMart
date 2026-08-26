@@ -67,6 +67,16 @@ def _load() -> dict[str, Any]:
 def map_class_to_sku(
     organization_id: str, branch_id: str, class_name: str
 ) -> str | None:
+    """Resolve a detector class name to a SKU, most specific first.
+
+    Lookup order (first hit wins):
+      1. ``data[org][branch][class]``  — exact org + branch
+      2. ``data[org]["_default"][class]`` — org-level default, applies to
+         every branch. This branch was previously missing, which is why a
+         file shaped ``{org: {_default: {...}}}`` silently mapped nothing
+         unless a camera's branch_id happened to be literally "_default".
+      3. ``data["_default"][class]`` — global default across all tenants.
+    """
     with _LOCK:
         data = _load()
     if not data:
@@ -76,8 +86,96 @@ def map_class_to_sku(
     sku = branch_map.get(class_name)
     if sku:
         return str(sku)
+    org_default = (org_map.get("_default") or {}).get(class_name)
+    if org_default:
+        return str(org_default)
     fallback = (data.get("_default") or {}).get(class_name)
     return str(fallback) if fallback else None
+
+
+# ---------------------------------------------------------------- editing
+# The admin "Nhận diện sản phẩm" screen reads and writes the class->SKU map
+# through these helpers (exposed via app/api/class_sku.py). Writes go to the
+# org-level "_default" bucket so a mapping applies to every branch/camera of
+# that tenant — the common case for a small shop, and the level the reader's
+# fallback #2 above now honours.
+
+_COCO_CLASS_NAMES: tuple[str, ...] = (
+    "person", "bicycle", "car", "motorcycle", "airplane", "bus", "train",
+    "truck", "boat", "traffic light", "fire hydrant", "stop sign",
+    "parking meter", "bench", "bird", "cat", "dog", "horse", "sheep", "cow",
+    "elephant", "bear", "zebra", "giraffe", "backpack", "umbrella", "handbag",
+    "tie", "suitcase", "frisbee", "skis", "snowboard", "sports ball", "kite",
+    "baseball bat", "baseball glove", "skateboard", "surfboard",
+    "tennis racket", "bottle", "wine glass", "cup", "fork", "knife", "spoon",
+    "bowl", "banana", "apple", "sandwich", "orange", "broccoli", "carrot",
+    "hot dog", "pizza", "donut", "cake", "chair", "couch", "potted plant",
+    "bed", "dining table", "toilet", "tv", "laptop", "mouse", "remote",
+    "keyboard", "cell phone", "microwave", "oven", "toaster", "sink",
+    "refrigerator", "book", "clock", "vase", "scissors", "teddy bear",
+    "hair drier", "toothbrush",
+)
+
+
+def list_coco_classes() -> list[str]:
+    """The 80 COCO class names yolov8n can emit — offered as autocomplete
+    options in the mapping editor so an operator maps the class the stock
+    detector actually produces (e.g. a drink often lands as "bottle")."""
+    return list(_COCO_CLASS_NAMES)
+
+
+def get_class_map(organization_id: str) -> dict[str, str]:
+    """The org-level ("_default") class->SKU mapping the editor manages."""
+    with _LOCK:
+        data = _load()
+    org_map = data.get(str(organization_id)) or {}
+    default_map = org_map.get("_default") or {}
+    return {str(k): str(v) for k, v in default_map.items()}
+
+
+def save_class_map(organization_id: str, mapping: dict[str, str]) -> dict[str, str]:
+    """Replace the org-level class->SKU mapping and persist to disk.
+
+    Writes the whole ``data[org]["_default"]`` bucket at once (the editor
+    always sends the full table), then invalidates the cache so the next
+    ``map_class_to_sku`` call re-reads the file. Empty keys/values are
+    dropped so a half-filled editor row can't write a blank rule.
+    """
+    path = _path()
+    clean = {
+        str(k).strip(): str(v).strip()
+        for k, v in mapping.items()
+        if str(k).strip() and str(v).strip()
+    }
+    with _LOCK:
+        try:
+            if os.path.isfile(path):
+                with open(path, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                if not isinstance(data, dict):
+                    data = {}
+            else:
+                data = {}
+        except (OSError, json.JSONDecodeError):
+            logger.exception("could not read class_to_sku before write: %s", path)
+            data = {}
+
+        org_key = str(organization_id)
+        org_map = data.get(org_key)
+        if not isinstance(org_map, dict):
+            org_map = {}
+        org_map["_default"] = clean
+        data[org_key] = org_map
+
+        os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+        tmp = f"{path}.tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2, sort_keys=True)
+        os.replace(tmp, path)
+        # Force a reload on next read (mtime may be identical within the
+        # same second on some filesystems).
+        _CACHE["mtime"] = 0.0
+    return clean
 
 
 # --------------------------------------------------------------- catalog

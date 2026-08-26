@@ -22,6 +22,7 @@ from app.api.live import router as live_router
 from app.api.trace import router as trace_router
 from app.api.vision_config import router as vision_config_router
 from app.api.training import router as training_router
+from app.api.class_sku import router as class_sku_router
 
 logger = logging.getLogger("ai-engine")
 
@@ -58,6 +59,7 @@ app.include_router(live_router)
 app.include_router(trace_router)
 app.include_router(vision_config_router)
 app.include_router(training_router)
+app.include_router(class_sku_router)
 
 
 @app.get("/metrics", include_in_schema=False)

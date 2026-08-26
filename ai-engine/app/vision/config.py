@@ -403,6 +403,16 @@ class VisionConfig:
         default_factory=lambda: _bool("SHARE_YOLO_WEIGHTS", True)
     )
 
+    # Detection weight the tracker loads. Empty ("") = use the built-in
+    # search (/models/yolov8n.pt -> models/yolov8n.pt -> yolov8n.pt), i.e.
+    # the stock COCO model. Point this at a custom-trained weight (in the
+    # mounted /models volume, or an absolute path) to make the detector emit
+    # your own SKU class names instead of COCO's — the admin "Nhận diện sản
+    # phẩm" screen sets this from a dropdown of weights it finds in /models.
+    # Changing it triggers a tracker reset so the new weight loads live,
+    # without a container restart (see person_tracker._get_det_model).
+    yolo_model_path: str = field(default_factory=lambda: _str("YOLO_MODEL_PATH", ""))
+
     # ---- Module 13: Telemetry push to the backend dashboard ----
     enable_telemetry: bool = field(
         default_factory=lambda: _bool("ENABLE_TELEMETRY", False)
