@@ -1,4 +1,4 @@
-"""Capture a single frame from a remote video source and run detection."""
+"""Capture a frame from a remote video source, optionally running detection."""
 
 from __future__ import annotations
 
@@ -19,6 +19,7 @@ from app.metrics import (
     INFERENCE_LATENCY,
 )
 from app.security import require_api_key
+from app.services.model_path import resolve_detection_weight
 from app.services.yolo_detector import YoloDetector
 from app.vision.capture.frame_source import instrumented_capture
 
@@ -30,6 +31,7 @@ router = APIRouter(tags=["capture"], dependencies=[Depends(require_api_key)])
 class CaptureRequest(BaseModel):
     stream_url: str = Field(min_length=1, max_length=1024)
     model: str | None = None
+    detect: bool = True
     open_timeout_ms: int = Field(default=5000, ge=500, le=30000)
     # Optional — Module 1 (OpenCV Integration Sprint) keys FPS/dropped-frame
     # stats per camera. Defaults to `stream_url` itself when not given, so
@@ -87,7 +89,10 @@ async def capture(payload: CaptureRequest) -> dict[str, Any]:
     jpeg_bytes = buf.tobytes()
 
     use_stub = (payload.model or "").lower() == "stub"
-    if use_stub:
+    if not payload.detect:
+        detections = []
+        model_name = resolve_detection_weight()
+    elif use_stub:
         detections = [
             {
                 "class_name": "person",
@@ -107,7 +112,7 @@ async def capture(payload: CaptureRequest) -> dict[str, Any]:
             detector = YoloDetector.get()
             detections = await detector.detect(jpeg_bytes)
             model_name = detector.model_name
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             logger.exception("YOLO inference failed during capture")
             raise HTTPException(
                 status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -115,9 +120,10 @@ async def capture(payload: CaptureRequest) -> dict[str, Any]:
             ) from exc
 
     elapsed_ms = round((time.perf_counter() - started) * 1000, 2)
-    INFERENCE_LATENCY.labels(model=model_name, endpoint="capture").observe(
-        elapsed_ms / 1000.0
-    )
+    if payload.detect:
+        INFERENCE_LATENCY.labels(model=model_name, endpoint="capture").observe(
+            elapsed_ms / 1000.0
+        )
     CAPTURE_REQUESTS_TOTAL.labels(outcome="ok").inc()
     for det in detections:
         cls = str(det.get("class_name") or "unknown")

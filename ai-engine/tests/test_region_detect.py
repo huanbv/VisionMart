@@ -36,6 +36,12 @@ def test_overlaps_person_keeps_pack_in_hands_on_counter():
     assert overlaps_person(pack, [person]) is False
 
 
+def test_high_iou_below_torso_still_keeps_counter_product():
+    product = Box("region", 1.0, 0, 50, 100, 100)
+    person = Box("person", 0.9, 0, 0, 100, 100)
+    assert overlaps_person(product, [person]) is False
+
+
 def test_empty_frame_does_not_call_yolo():
     class Boom:
         def predict(self, **kwargs):
@@ -93,9 +99,22 @@ class _StubModel:
         self.calls = 0
         self.class_name = class_name
         self.conf = conf
+        self.requested_conf: list[float] = []
 
     def predict(self, **kwargs):
         self.calls += 1
+        self.requested_conf.append(float(kwargs["conf"]))
+        return [_Result(self.class_name, self.conf)]
+
+
+class _ContextOnlyModel(_StubModel):
+    def predict(self, **kwargs):
+        self.calls += 1
+        self.requested_conf.append(float(kwargs["conf"]))
+        if self.calls == 1:
+            result = _Result(self.class_name, self.conf)
+            result.boxes = None
+            return [result]
         return [_Result(self.class_name, self.conf)]
 
 
@@ -110,6 +129,25 @@ def test_one_blob_one_product():
     assert out[0].confidence == 0.92
     assert 100 < out[0].cx < 190
     assert 60 < out[0].cy < 180
+
+
+def test_caller_confidence_is_honored():
+    img = np.full((240, 320, 3), 255, dtype=np.uint8)
+    img[70:170, 120:170] = (40, 40, 220)
+    model = _StubModel(conf=0.25)
+    out = detect_products_from_regions(model, img, [], conf_min=0.20)
+    assert len(out) == 1
+    assert model.requested_conf == [0.20]
+
+
+def test_context_crop_recovers_tight_crop_miss_without_dense_grid():
+    img = np.full((240, 320, 3), 255, dtype=np.uint8)
+    img[70:170, 120:170] = (40, 40, 220)
+    model = _ContextOnlyModel()
+    out = detect_products_from_regions(model, img, [])
+    assert len(out) == 1
+    assert out[0].class_name == "du_sti"
+    assert model.calls == 2
 
 
 def test_product_on_counter_in_front_of_person_is_kept():

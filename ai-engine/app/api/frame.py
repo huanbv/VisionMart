@@ -46,7 +46,10 @@ import httpx
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
 
 from app.security import require_api_key
+from app.services import review_capture, sku_identifier, telemetry_client
+from app.services.det_nms import cluster_winner_take_all
 from app.services.face_recognizer import get_face_recognizer
+from app.services.model_path import resolve_detection_weight
 from app.services.person_tracker import (
     TrackedObject,
     get_last_vision_result,
@@ -54,9 +57,7 @@ from app.services.person_tracker import (
     track_frame_detailed,
     trajectory_last_near_ts,
 )
-from app.services.det_nms import cluster_winner_take_all
 from app.services.product_mapper import map_class_to_sku
-from app.services import review_capture, sku_identifier, telemetry_client
 from app.vision.config import get_vision_config
 from app.vision.roi import zones_from_payload
 from app.vision.storage import step_writer
@@ -825,6 +826,17 @@ async def reset_checkout_session(
     return {"status": "ok", "message": "Checkout session reset successfully"}
 
 
+def _aggregate_manual_products(
+    products: list[tuple[TrackedObject, str]],
+) -> dict[str, tuple[int, float]]:
+    """Aggregate physical detections by SKU while preserving their quantity."""
+    aggregated: dict[str, tuple[int, float]] = {}
+    for product, sku in products:
+        count, confidence = aggregated.get(sku, (0, 0.0))
+        aggregated[sku] = (count + 1, max(confidence, float(product.confidence)))
+    return aggregated
+
+
 @router.post("/frame")
 async def process_frame(
     organization_id: uuid.UUID = Form(...),
@@ -836,6 +848,7 @@ async def process_frame(
     skip_roi: bool = Form(False),
     image: UploadFile = File(...),
 ) -> dict[str, Any]:
+    frame_started = time.perf_counter()
     content = await image.read()
     if not content:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Empty image upload")
@@ -890,6 +903,7 @@ async def process_frame(
             is_checkout_zone=is_checkout,
             roi_zones=roi_zones,
             dense_detect=manual_scan,
+            product_min_confidence=min_confidence,
         )
         detections = tracking.detections
         debug.add(
@@ -1081,10 +1095,8 @@ async def process_frame(
         # emit MỌI sản phẩm nhận được, KHÔNG dedup/đối soát theo phiên live. Nhờ
         # phiên riêng nên không đụng vào giỏ đang chạy của luồng camera.
         manual_track = f"manual-{uuid.uuid4().hex[:8]}"
-        present: dict[str, float] = {}
-        for product, sku in products:
-            present[sku] = max(present.get(sku, 0.0), float(product.confidence))
-        for sku, conf in present.items():
+        present = _aggregate_manual_products(products)
+        for sku, (quantity, conf) in present.items():
             event = {
                 "event_id": uuid.uuid4().hex,
                 "event_type": "product_scanned",
@@ -1094,7 +1106,7 @@ async def process_frame(
                 "track_id": manual_track,
                 "product_id": None,
                 "product_sku": sku,
-                "quantity": 1,
+                "quantity": quantity,
                 # Operator clicked scan / uploaded a frame — do not forward
                 # a low YOLO score that CART_AI_MIN_CONFIDENCE would drop.
                 "confidence": max(float(conf), 0.99),
@@ -1471,7 +1483,23 @@ async def process_frame(
         except Exception:  # noqa: BLE001 — telemetry must never fail a frame
             logger.exception("telemetry reporting failed")
 
+    metadata_frame = (
+        tracking.raw_frame
+        if tracking.raw_frame is not None
+        else tracking.frame_bgr
+    )
+    image_height, image_width = metadata_frame.shape[:2]
+    image_format = (image.content_type or "image/unknown").rsplit("/", 1)[-1].upper()
+
     return {
+        "model": resolve_detection_weight(),
+        "image": {
+            "width": int(image_width),
+            "height": int(image_height),
+            "format": image_format,
+            "size_bytes": len(content),
+        },
+        "elapsed_ms": round((time.perf_counter() - frame_started) * 1000.0, 2),
         "detections": [
             {
                 "track_id": d.track_id,

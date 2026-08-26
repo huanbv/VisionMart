@@ -161,6 +161,9 @@ export interface FramePipelineEvent {
 }
 
 export interface FramePipelineResult {
+  model?: string;
+  image?: { width: number; height: number; format: string; size_bytes: number };
+  elapsed_ms?: number;
   detections: Array<{
     track_id: number;
     class_name: string;
@@ -359,13 +362,9 @@ export interface TriggerScanResponse {
   camera_name: string;
   captured_at: string;
   frame_base64: string;
+  detection_event_id: string;
   emitted_events: TriggerScanEmittedEvent[];
-  detections: Array<{
-    class_name: string;
-    confidence: number;
-    track_id: number;
-    sku?: string | null;
-  }>;
+  detections: Detection[];
   products?: number;
 }
 

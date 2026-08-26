@@ -692,6 +692,7 @@ async def track_frame(
     is_checkout_zone: bool = False,
     roi_zones: list | None = None,
     dense_detect: bool = False,
+    product_min_confidence: float = 0.35,
 ) -> list[TrackedObject]:
     """Unchanged contract — see module docstring. Delegates to
     :func:`track_frame_detailed` so both paths share one implementation."""
@@ -701,6 +702,7 @@ async def track_frame(
         is_checkout_zone=is_checkout_zone,
         roi_zones=roi_zones,
         dense_detect=dense_detect,
+        product_min_confidence=product_min_confidence,
     )
     return outcome.detections
 
@@ -712,6 +714,7 @@ async def track_frame_detailed(
     is_checkout_zone: bool = False,
     roi_zones: list | None = None,
     dense_detect: bool = False,
+    product_min_confidence: float = 0.35,
 ) -> TrackingOutcome:
     cfg = get_vision_config()
 
@@ -835,7 +838,11 @@ async def track_frame_detailed(
             ]
             out.extend(
                 detect_products_from_regions(
-                    model_det, det_img, persons_now, roi_rect
+                    model_det,
+                    det_img,
+                    persons_now,
+                    roi_rect,
+                    conf_min=max(0.0, min(1.0, product_min_confidence)),
                 )
             )
         else:

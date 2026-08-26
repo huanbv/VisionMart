@@ -599,7 +599,9 @@ export default function LiveCartPage() {
       }
       const pipeline = res.frame_pipeline;
       reportScanOutcome(
-        pipeline?.detections ?? res.detections ?? [],
+        // Use the same archived/filtered list as Chụp & Quét. Raw pipeline
+        // detections may still contain persons or unmapped candidates.
+        res.detections ?? [],
         pipeline?.emitted_events ?? [],
         addLog,
         "🖼️ Tải ảnh",
@@ -887,7 +889,7 @@ export default function LiveCartPage() {
                         },
                         {
                           title: "AI YOLOv8 Nhận dạng",
-                          description: "Đang quét ROI payzone (Min 40%)",
+                          description: "Đang quét ROI payzone (Min 55%)",
                           icon: <SyncOutlined spin />,
                         },
                         {

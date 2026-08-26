@@ -363,17 +363,22 @@ async def analyze_camera_frame(
         )
 
     client = AIEngineClient()
-    try:
-        result = await client.detect(
-            content=content,
-            filename=image.filename or "frame.jpg",
-            content_type=image.content_type or "image/jpeg",
-            model=model,
-        )
-    except AIEngineError as exc:
-        raise HTTPException(
-            status.HTTP_502_BAD_GATEWAY, detail=f"AI engine error: {exc}"
-        ) from exc
+    result: dict[str, Any] | None = None
+    # A caller-selected detector still needs the legacy /detect result.
+    # Live Cart does not select one: /ai/frame now returns the same metadata,
+    # so avoid running YOLO twice for every uploaded image.
+    if model is not None:
+        try:
+            result = await client.detect(
+                content=content,
+                filename=image.filename or "frame.jpg",
+                content_type=image.content_type or "image/jpeg",
+                model=model,
+            )
+        except AIEngineError as exc:
+            raise HTTPException(
+                status.HTTP_502_BAD_GATEWAY, detail=f"AI engine error: {exc}"
+            ) from exc
 
     image_key: str | None = None
     try:
@@ -407,7 +412,7 @@ async def analyze_camera_frame(
             # luôn tạo một đơn mới trong giỏ AI, không đụng luồng camera live.
             manual_scan=True,
             skip_roi=True,
-            min_confidence=0.28,
+            min_confidence=0.35,
         )
     except AIEngineError as exc:
         frame_error = str(exc)
@@ -415,6 +420,27 @@ async def analyze_camera_frame(
     except Exception as exc:  # noqa: BLE001
         frame_error = f"{type(exc).__name__}: {exc}"
         logger.exception("ai-engine frame pipeline crashed")
+
+    if result is None and frame_pipeline is not None:
+        result = {
+            "model": frame_pipeline.get("model") or "unknown",
+            "image": frame_pipeline.get("image") or {},
+            "elapsed_ms": frame_pipeline.get("elapsed_ms") or 0,
+            "detections": frame_pipeline.get("detections") or [],
+        }
+    elif result is None:
+        # Preserve the old behavior when the cart pipeline is unavailable:
+        # archive plain detector output instead of losing the upload entirely.
+        try:
+            result = await client.detect(
+                content=content,
+                filename=image.filename or "frame.jpg",
+                content_type=image.content_type or "image/jpeg",
+            )
+        except AIEngineError as exc:
+            raise HTTPException(
+                status.HTTP_502_BAD_GATEWAY, detail=f"AI engine error: {exc}"
+            ) from exc
 
     sku_names = await _catalog_sku_names(session, current.organization_id)
     image_meta = result.get("image") or {}
@@ -663,6 +689,9 @@ async def trigger_camera_scan(
         cap_res = await client.capture(
             stream_url=camera.stream_url,
             open_timeout_ms=get_settings().RTSP_CAPTURE_OPEN_TIMEOUT_MS,
+            # The captured JPEG is immediately sent through /ai/frame below.
+            # Running detector inference here as well doubled scan latency.
+            detect=False,
         )
     except AIEngineError as exc:
         raise HTTPException(status.HTTP_502_BAD_GATEWAY, detail=f"AI engine error: {exc}") from exc
@@ -703,7 +732,7 @@ async def trigger_camera_scan(
             # GIỮ ROI — chỉ sản phẩm trong Vùng Thanh Toán.
             manual_scan=True,
             skip_roi=False,
-            min_confidence=0.28,
+            min_confidence=0.35,
         )
     except Exception as exc:
         logger.exception("AI engine frame failed during manual trigger scan: %s", exc)
@@ -743,10 +772,12 @@ async def trigger_camera_scan(
         camera_id=camera_id,
         user_id=current.user_id,
         result={
-            "model": (cap_res.get("model") if isinstance(cap_res, dict) else None)
+            "model": frame_res.get("model")
+            or (cap_res.get("model") if isinstance(cap_res, dict) else None)
             or "unknown",
             "image": cap_image or {},
-            "elapsed_ms": (cap_res.get("elapsed_ms") if isinstance(cap_res, dict) else 0)
+            "elapsed_ms": frame_res.get("elapsed_ms")
+            or (cap_res.get("elapsed_ms") if isinstance(cap_res, dict) else 0)
             or 0,
             "detections": archived,
         },

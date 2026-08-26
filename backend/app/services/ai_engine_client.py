@@ -256,11 +256,13 @@ class AIEngineClient:
         stream_url: str,
         model: str | None = None,
         open_timeout_ms: int = 5000,
+        detect: bool = True,
     ) -> dict[str, Any]:
         url = f"{self._base_url}/capture"
         payload = {
             "stream_url": stream_url,
             "open_timeout_ms": open_timeout_ms,
+            "detect": detect,
         }
         if model:
             payload["model"] = model
