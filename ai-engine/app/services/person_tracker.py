@@ -446,7 +446,38 @@ def dense_detect_on_model(
                 continue
             _run_predict(tile, float(ox), float(oy))
 
+    try:
+        from app.vision.region_proposal import propose_regions
+
+        for r in propose_regions(img, max_regions=6):
+            if any(
+                not (
+                    r.x2 <= d.x1 or r.x1 >= d.x2 or r.y2 <= d.y1 or r.y1 >= d.y2
+                )
+                and ((min(d.x2, r.x2) - max(d.x1, r.x1)) * (min(d.y2, r.y2) - max(d.y1, r.y1)))
+                / max(1.0, (r.x2 - r.x1) * (r.y2 - r.y1))
+                > 0.45
+                for d in collected
+            ):
+                continue
+            crop = img[r.y1 : r.y2, r.x1 : r.x2]
+            if crop.size == 0:
+                continue
+            _run_predict(crop, float(r.x1), float(r.y1))
+    except Exception:  # noqa: BLE001
+        logger.debug("dense region proposals skipped", exc_info=True)
+
     merged = merge_tiled_detections(collected, w, h)
+    if roi_rect is not None:
+        from app.services.det_nms import drop_giant_scene_boxes
+
+        rx1, ry1, rx2, ry2 = roi_rect
+        merged = drop_giant_scene_boxes(
+            merged,
+            max(1, rx2 - rx1),
+            max(1, ry2 - ry1),
+            max_frac=0.55,
+        )
     logger.warning(
         "DENSE DET: layout=%s roi=%s raw=%d final=%d classes=%s",
         layout,
@@ -811,13 +842,16 @@ async def track_frame_detailed(
         )
 
     if vision_result.zones:
-        from app.vision.roi import box_mostly_in_zones
+        from app.vision.roi import box_mostly_in_zones, point_in_zones
         fh, fw = frame_bgr.shape[:2]
         detections = [
             d for d in detections
             if str(getattr(d, "class_name", "")).lower() == "person"
-            or box_mostly_in_zones(
-                vision_result.zones, d.x1, d.y1, d.x2, d.y2, fw, fh, min_frac=0.5
+            or (
+                point_in_zones(vision_result.zones, d.cx, d.cy, fw, fh)
+                and box_mostly_in_zones(
+                    vision_result.zones, d.x1, d.y1, d.x2, d.y2, fw, fh, min_frac=0.55
+                )
             )
         ]
 

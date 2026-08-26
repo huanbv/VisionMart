@@ -11,7 +11,7 @@ WORKDIR /app
 # OpenCV runtime deps; full CV/ML deps will be added in later sprints.
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
-        build-essential curl ffmpeg libgl1 libglib2.0-0 \
+        build-essential curl ffmpeg libgl1 libglib2.0-0 fonts-dejavu-core \
     && rm -rf /var/lib/apt/lists/*
 
 FROM base AS deps

@@ -49,6 +49,7 @@ from app.vision.roi import (
     RoiZone,
     apply_roi,
     box_mostly_in_zones,
+    point_in_zones,
     zone_union_bbox,
     zones_from_payload,
 )
@@ -213,13 +214,17 @@ def _filter_by_zones(
             x2, y2 = float(bbox["x2"]), float(bbox["y2"])
         except (KeyError, TypeError, ValueError):
             continue
-        if box_mostly_in_zones(zones, x1, y1, x2, y2, w, h, min_frac=0.5):
+        if box_mostly_in_zones(zones, x1, y1, x2, y2, w, h, min_frac=0.55) and point_in_zones(
+            zones, (x1 + x2) / 2.0, (y1 + y2) / 2.0, w, h
+        ):
             out.append(det)
     return out
 
 
 def _draw_detections(frame, detections: list[dict]) -> None:
-    """Mutates `frame` in place, drawing a box + label per detection."""
+    """Mutates `frame` in place, drawing a box + Unicode label per detection."""
+    from app.vision.overlay.unicode_text import draw_label, measure_text
+
     for det in detections:
         bbox = det.get("bbox") or {}
         try:
@@ -233,28 +238,22 @@ def _draw_detections(frame, detections: list[dict]) -> None:
 
         cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2, cv2.LINE_AA)
 
-        # Uu tien ten SKU khi bo phan loai da nhan ra; van giu ten lop YOLO
-        # trong ngoac de con truy duoc tang nao dang sai khi ket qua la la.
         sku_label = det.get("sku_label")
         if sku_label:
             sku_conf = float(det.get("sku_confidence") or 0.0)
-            label = f"{sku_label} {sku_conf * 100:.0f}% ({class_name})"
+            label = f"{sku_label} {sku_conf * 100:.0f}%"
         else:
             label = f"{class_name} {confidence * 100:.0f}%"
-        (tw, th), baseline = cv2.getTextSize(
-            label, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 1
-        )
-        label_y1 = max(0, y1 - th - baseline - 4)
-        cv2.rectangle(frame, (x1, label_y1), (x1 + tw + 6, y1), color, -1)
-        cv2.putText(
+        _tw, th = measure_text(label, 16)
+        label_y = max(0, y1 - th - 8)
+        draw_label(
             frame,
             label,
-            (x1 + 3, y1 - 4),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            0.5,
-            (20, 20, 20),
-            1,
-            cv2.LINE_AA,
+            x=x1,
+            y=label_y,
+            fg_bgr=(20, 20, 20),
+            bg_bgr=color,
+            size=16,
         )
 
 

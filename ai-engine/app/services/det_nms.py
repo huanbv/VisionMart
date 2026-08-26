@@ -117,6 +117,29 @@ def merge_tiled_detections(dets: list[T], width: int, height: int) -> list[T]:
     return cluster_physical_objects(nmsed, width, height)
 
 
+def _grid(
+    width: int,
+    height: int,
+    cols: int,
+    rows: int,
+    tw_frac: float,
+    th_frac: float,
+    include_center: bool,
+) -> list[tuple[int, int, int, int]]:
+    w, h = max(1, width), max(1, height)
+    tw, th = max(32, int(w * tw_frac)), max(32, int(h * th_frac))
+    tw, th = min(tw, w), min(th, h)
+    origins: list[tuple[int, int, int, int]] = []
+    for r in range(rows):
+        for c in range(cols):
+            ox = int(round(c * (w - tw) / max(1, cols - 1)))
+            oy = int(round(r * (h - th) / max(1, rows - 1)))
+            origins.append((max(0, ox), max(0, oy), tw, th))
+    if include_center:
+        origins.append((max(0, (w - tw) // 2), max(0, (h - th) // 2), tw, th))
+    return origins
+
+
 def dense_tile_origins(
     width: int,
     height: int,
@@ -126,11 +149,12 @@ def dense_tile_origins(
 ) -> list[tuple[int, int, int, int]]:
     """Return (ox, oy, tile_w, tile_h) windows covering the frame or ROI.
 
-    ``scan`` (Chụp & Quét): 3×2 + center — enough windows to separate 3–4
-    products when the weight was trained on full-image labels.
+    ``scan`` (Chụp & Quét): coarse 3×2 + fine 4×3 — drinks need a mid-size
+    window; instant-noodle packs (Hảo Hảo / Gấu Đỏ) are much smaller and
+    disappear inside a tile that also contains a bottle.
 
-    ``overlay`` (live MJPEG): 2×2 + full-frame is enough to *draw* boxes
-    without running 8 predicts on every HUD refresh.
+    ``overlay`` (live MJPEG): 3×2 of ~40% ROI so the HUD can show each
+    product without 19 extra predicts per refresh.
 
     ``roi_rect`` (x1, y1, x2, y2) confines tiles to the pay zone so a
     statue beside the counter is never given its own window.
@@ -144,20 +168,7 @@ def dense_tile_origins(
 
     w, h = max(1, width), max(1, height)
     if layout == "overlay":
-        cols, rows = 2, 2
-        tw, th = max(32, int(w * 0.55)), max(32, int(h * 0.55))
-        include_center = False
-    else:
-        cols, rows = 3, 2
-        tw, th = max(32, int(w * 0.42)), max(32, int(h * 0.58))
-        include_center = True
-
-    origins: list[tuple[int, int, int, int]] = []
-    for r in range(rows):
-        for c in range(cols):
-            ox = int(round(c * (w - tw) / max(1, cols - 1)))
-            oy = int(round(r * (h - th) / max(1, rows - 1)))
-            origins.append((max(0, ox), max(0, oy), tw, th))
-    if include_center:
-        origins.append((max(0, (w - tw) // 2), max(0, (h - th) // 2), tw, th))
-    return origins
+        return _grid(w, h, 3, 2, 0.40, 0.52, include_center=True)
+    coarse = _grid(w, h, 3, 2, 0.42, 0.58, include_center=True)
+    fine = _grid(w, h, 4, 3, 0.30, 0.40, include_center=False)
+    return coarse + fine
