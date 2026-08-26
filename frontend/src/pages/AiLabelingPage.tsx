@@ -68,6 +68,9 @@ export default function AiLabelingPage() {
   const [training, setTraining] = useState(false);
   const [activeJob, setActiveJob] = useState<TrainingJob | null>(null);
   const pollRef = useRef<number | null>(null);
+  const uploadQueueRef = useRef<File[]>([]);
+  const uploadTimerRef = useRef<number | null>(null);
+  const uploadingRef = useRef(false);
 
   const productById = useMemo(() => {
     const m = new Map<string, Product>();
@@ -76,16 +79,32 @@ export default function AiLabelingPage() {
   }, [products]);
 
   const loadProducts = useCallback(async () => {
-    const res = await listProducts({ limit: 500 });
-    setProducts(res.items);
-    if (res.items.length && !selectedProductId) {
-      setSelectedProductId(res.items[0]!.id);
+    try {
+      const all: Product[] = [];
+      let skip = 0;
+      const pageSize = 200;
+      for (;;) {
+        const res = await listProducts({ limit: pageSize, skip, is_active: true });
+        all.push(...res.items);
+        if (all.length >= res.total || res.items.length < pageSize) break;
+        skip += pageSize;
+      }
+      setProducts(all);
+      if (all.length && !selectedProductId) {
+        setSelectedProductId(all[0]!.id);
+      }
+    } catch {
+      message.error("Không tải được danh sách sản phẩm");
     }
   }, [selectedProductId]);
 
   const refreshStats = useCallback(async () => {
-    const s = await getLabelingStats();
-    setStats(s);
+    try {
+      const s = await getLabelingStats();
+      setStats(s);
+    } catch {
+      /* stats optional on first load */
+    }
   }, []);
 
   const loadList = useCallback(async () => {
@@ -100,6 +119,16 @@ export default function AiLabelingPage() {
       });
       setItems(res.items);
       setTotal(res.total);
+    } catch (e: unknown) {
+      const detail =
+        e && typeof e === "object" && "response" in e
+          ? (e as { response?: { data?: { detail?: string } } }).response?.data?.detail
+          : undefined;
+      message.error(
+        typeof detail === "string"
+          ? detail
+          : "Không tải được danh sách ảnh — chạy migration DB nếu vừa deploy"
+      );
     } finally {
       setLoading(false);
     }
@@ -233,39 +262,57 @@ export default function AiLabelingPage() {
     return () => window.removeEventListener("keydown", onKey);
   });
 
+  const runUpload = useCallback(async () => {
+    if (uploadingRef.current) return;
+    const files = uploadQueueRef.current.splice(0);
+    if (!files.length) return;
+    uploadingRef.current = true;
+    setUploading(true);
+    setUploadPct(0);
+    let uploaded = 0;
+    let failed = 0;
+    try {
+      for (let i = 0; i < files.length; i += BATCH_SIZE) {
+        const batch = files.slice(i, i + BATCH_SIZE);
+        const res = await uploadLabelImages(batch);
+        uploaded += res.uploaded;
+        failed += res.failed;
+        setUploadPct(Math.round(((i + batch.length) / files.length) * 100));
+      }
+      message.success(`Đã tải lên ${uploaded} ảnh${failed ? `, ${failed} lỗi` : ""}`);
+      setPage(0);
+      setFilter("all");
+      setCurrentId(null);
+      await refreshStats();
+      await loadList();
+    } catch (e: unknown) {
+      const detail =
+        e && typeof e === "object" && "response" in e
+          ? (e as { response?: { data?: { detail?: string } } }).response?.data?.detail
+          : undefined;
+      message.error(typeof detail === "string" ? detail : "Upload thất bại");
+    } finally {
+      uploadingRef.current = false;
+      setUploading(false);
+      setUploadPct(0);
+      if (uploadQueueRef.current.length) {
+        void runUpload();
+      }
+    }
+  }, [loadList, refreshStats]);
+
   const uploadProps: UploadProps = {
     multiple: true,
-    accept: "image/jpeg,image/png,image/webp",
+    accept: "image/jpeg,image/png,image/webp,.jpg,.jpeg,.png,.webp",
     showUploadList: false,
-    beforeUpload: () => false,
-    onChange: async (info) => {
-      const files = info.fileList
-        .map((f) => f.originFileObj)
-        .filter((f): f is File => f instanceof File);
-      if (!files.length) return;
-      setUploading(true);
-      setUploadPct(0);
-      let uploaded = 0;
-      let failed = 0;
-      try {
-        for (let i = 0; i < files.length; i += BATCH_SIZE) {
-          const batch = files.slice(i, i + BATCH_SIZE);
-          const res = await uploadLabelImages(batch);
-          uploaded += res.uploaded;
-          failed += res.failed;
-          setUploadPct(Math.round(((i + batch.length) / files.length) * 100));
-        }
-        message.success(`Đã tải lên ${uploaded} ảnh${failed ? `, ${failed} lỗi` : ""}`);
-        setPage(0);
-        setFilter("all");
-        await refreshStats();
-        await loadList();
-      } catch {
-        message.error("Upload thất bại");
-      } finally {
-        setUploading(false);
-        setUploadPct(0);
-      }
+    disabled: uploading,
+    beforeUpload: (file) => {
+      uploadQueueRef.current.push(file);
+      if (uploadTimerRef.current) window.clearTimeout(uploadTimerRef.current);
+      uploadTimerRef.current = window.setTimeout(() => {
+        void runUpload();
+      }, 400);
+      return false;
     },
   };
 
@@ -295,6 +342,7 @@ export default function AiLabelingPage() {
   useEffect(
     () => () => {
       if (pollRef.current) window.clearInterval(pollRef.current);
+      if (uploadTimerRef.current) window.clearTimeout(uploadTimerRef.current);
     },
     []
   );

@@ -19,6 +19,7 @@ logger = logging.getLogger(__name__)
 
 _ALLOWED_TYPES = {"image/jpeg", "image/png", "image/webp"}
 _EXT_BY_TYPE = {"image/jpeg": "jpg", "image/png": "png", "image/webp": "webp"}
+_EXT_BY_NAME = {"jpg": "jpg", "jpeg": "jpg", "png": "png", "webp": "webp"}
 _MAX_IMAGE_BYTES = 12 * 1024 * 1024
 _MIN_LABELED_IMAGES = 10
 _MIN_BOXES_PER_CLASS = 5
@@ -52,16 +53,19 @@ class LabelingService:
         created: list[LabelImage] = []
         failed = 0
         for filename, content, content_type in files:
-            if content_type not in _ALLOWED_TYPES:
+            ext = _EXT_BY_TYPE.get(content_type)
+            if ext is None and filename:
+                ext = _EXT_BY_NAME.get(filename.rsplit(".", 1)[-1].lower())
+            if ext is None:
                 failed += 1
                 continue
             if len(content) > _MAX_IMAGE_BYTES:
                 failed += 1
                 continue
-            ext = _EXT_BY_TYPE[content_type]
+            put_type = content_type if content_type in _ALLOWED_TYPES else f"image/{ext}"
             key = f"labeling/{organization_id}/{uuid.uuid4()}.{ext}"
             try:
-                await self._storage.put(key, content, content_type=content_type)
+                await self._storage.put(key, content, content_type=put_type)
             except ObjectStorageError:
                 failed += 1
                 continue

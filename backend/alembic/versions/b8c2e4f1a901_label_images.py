@@ -44,6 +44,8 @@ def _common_columns() -> list[sa.Column]:
             nullable=False,
             server_default=sa.text("false"),
         ),
+        sa.Column("created_by", sa.UUID(), nullable=True),
+        sa.Column("updated_by", sa.UUID(), nullable=True),
     ]
 
 
