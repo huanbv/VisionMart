@@ -108,6 +108,7 @@ export default function BboxLabelEditor({
       sku: product.sku,
       product_name: product.name,
       ...bbox,
+      polygon: polygonPoints.map((p) => ({ x: p.x, y: p.y })),
     };
     onBoxesChange([...boxes, draft]);
     onSelectBox(draft.clientId);
@@ -145,12 +146,78 @@ export default function BboxLabelEditor({
     ctx.clearRect(0, 0, w, h);
     ctx.drawImage(img, 0, 0, w, h);
 
+    const drawPolygonShape = (
+      points: NormPoint[],
+      color: string,
+      selected: boolean,
+      opts?: { previewPoint?: NormPoint | null; showVertices?: boolean; showBbox?: NormPoint[] | null }
+    ) => {
+      if (points.length < 1) return;
+      const preview = opts?.previewPoint ?? null;
+      const showVertices = opts?.showVertices ?? false;
+      const bboxPts = opts?.showBbox ? points : null;
+
+      ctx.save();
+      ctx.strokeStyle = color;
+      ctx.fillStyle = color + (selected ? "55" : "33");
+      ctx.lineWidth = selected ? 3 : 2;
+      ctx.beginPath();
+      ctx.moveTo(points[0]!.x * w, points[0]!.y * h);
+      for (let i = 1; i < points.length; i++) {
+        const p = points[i]!;
+        ctx.lineTo(p.x * w, p.y * h);
+      }
+      if (preview) {
+        ctx.lineTo(preview.x * w, preview.y * h);
+      }
+      if (points.length >= 3 && !preview) {
+        ctx.closePath();
+        ctx.fill();
+      }
+      ctx.stroke();
+      ctx.restore();
+
+      if (showVertices) {
+        for (const p of points) {
+          ctx.beginPath();
+          ctx.arc(p.x * w, p.y * h, 5, 0, Math.PI * 2);
+          ctx.fillStyle = color;
+          ctx.fill();
+          ctx.strokeStyle = "#fff";
+          ctx.lineWidth = 1.5;
+          ctx.stroke();
+        }
+      }
+
+      const bbox = bboxPts ? bboxFromPoints(bboxPts) : null;
+      if (bbox) {
+        ctx.save();
+        ctx.strokeStyle = color;
+        ctx.lineWidth = 1;
+        ctx.setLineDash([4, 4]);
+        ctx.strokeRect(bbox.x1 * w, bbox.y1 * h, (bbox.x2 - bbox.x1) * w, (bbox.y2 - bbox.y1) * h);
+        ctx.restore();
+      }
+    };
+
     const drawBox = (b: DraftBox, selected: boolean) => {
       const x1 = b.x1 * w;
       const y1 = b.y1 * h;
       const bw = (b.x2 - b.x1) * w;
       const bh = (b.y2 - b.y1) * h;
       const color = colorForSku(b.sku);
+
+      if (b.polygon && b.polygon.length >= 3) {
+        drawPolygonShape(b.polygon, color, selected, {
+          showVertices: selected,
+          showBbox: b.polygon,
+        });
+        ctx.fillStyle = color;
+        ctx.font = "12px sans-serif";
+        ctx.fillText(b.sku, x1 + 4, y1 + 14);
+        return;
+      }
+
       ctx.strokeStyle = color;
       ctx.lineWidth = selected ? 3 : 2;
       ctx.strokeRect(x1, y1, bw, bh);
@@ -182,48 +249,11 @@ export default function BboxLabelEditor({
     const drawPolygonDraft = () => {
       if (!product || polygonPoints.length === 0) return;
       const color = colorForSku(product.sku);
-      const pts = [...polygonPoints];
-      if (hoverPoint) pts.push(hoverPoint);
-
-      ctx.save();
-      ctx.strokeStyle = color;
-      ctx.fillStyle = color + "33";
-      ctx.lineWidth = 2;
-      ctx.beginPath();
-      ctx.moveTo(polygonPoints[0]!.x * w, polygonPoints[0]!.y * h);
-      for (let i = 1; i < polygonPoints.length; i++) {
-        const p = polygonPoints[i]!;
-        ctx.lineTo(p.x * w, p.y * h);
-      }
-      if (hoverPoint && polygonPoints.length >= 1) {
-        ctx.lineTo(hoverPoint.x * w, hoverPoint.y * h);
-      }
-      if (polygonPoints.length >= 3) {
-        ctx.closePath();
-        ctx.fill();
-      }
-      ctx.stroke();
-      ctx.restore();
-
-      for (const p of polygonPoints) {
-        ctx.beginPath();
-        ctx.arc(p.x * w, p.y * h, 5, 0, Math.PI * 2);
-        ctx.fillStyle = color;
-        ctx.fill();
-        ctx.strokeStyle = "#fff";
-        ctx.lineWidth = 1.5;
-        ctx.stroke();
-      }
-
-      const bbox = bboxFromPoints(polygonPoints);
-      if (bbox) {
-        ctx.save();
-        ctx.strokeStyle = color;
-        ctx.lineWidth = 1;
-        ctx.setLineDash([4, 4]);
-        ctx.strokeRect(bbox.x1 * w, bbox.y1 * h, (bbox.x2 - bbox.x1) * w, (bbox.y2 - bbox.y1) * h);
-        ctx.restore();
-      }
+      drawPolygonShape(polygonPoints, color, true, {
+        previewPoint: hoverPoint,
+        showVertices: true,
+        showBbox: polygonPoints.length >= 3 ? polygonPoints : null,
+      });
     };
 
     for (const b of boxes) {
@@ -444,8 +474,8 @@ export default function BboxLabelEditor({
       )}
       {isPolygonTool && labelingEnabled && (
         <Tag color="blue" style={{ marginBottom: 12 }}>
-          Chấm điểm quanh sản phẩm → click điểm đầu (hoặc Enter) để đóng; Esc hủy; khung nét đứt =
-          bbox YOLO lưu train
+          Chấm điểm quanh sản phẩm → click điểm đầu (hoặc Enter) để đóng; Esc hủy. Đa giác được
+          lưu cùng ảnh; khung nét đứt = bbox YOLO train.
         </Tag>
       )}
       <div style={{ overflow: "auto", maxHeight: "calc(100vh - 320px)" }}>

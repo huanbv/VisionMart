@@ -1,6 +1,11 @@
 import { apiClient, UPLOAD_TIMEOUT_MS } from "./client";
 import type { TrainingJob } from "./aiTraining";
 
+export interface LabelPoint {
+  x: number;
+  y: number;
+}
+
 export interface LabelBox {
   id?: string;
   product_id: string;
@@ -10,6 +15,7 @@ export interface LabelBox {
   cy: number;
   w: number;
   h: number;
+  polygon?: LabelPoint[] | null;
 }
 
 export interface LabelImageSummary {
@@ -157,6 +163,8 @@ export interface DraftBox {
   y1: number;
   x2: number;
   y2: number;
+  /** Hiển thị trên canvas; lưu DB nhưng không dùng train YOLO. */
+  polygon?: LabelPoint[];
 }
 
 export function draftToYolo(box: DraftBox): Omit<LabelBox, "id"> {
@@ -166,13 +174,17 @@ export function draftToYolo(box: DraftBox): Omit<LabelBox, "id"> {
   const y2 = Math.max(box.y1, box.y2);
   const w = x2 - x1;
   const h = y2 - y1;
-  return {
+  const payload: Omit<LabelBox, "id"> = {
     product_id: box.product_id,
     cx: x1 + w / 2,
     cy: y1 + h / 2,
     w,
     h,
   };
+  if (box.polygon && box.polygon.length >= 3) {
+    payload.polygon = box.polygon.map((p) => ({ x: p.x, y: p.y }));
+  }
+  return payload;
 }
 
 export function yoloToDraft(
@@ -182,7 +194,7 @@ export function yoloToDraft(
 ): DraftBox {
   const x1 = box.cx - box.w / 2;
   const y1 = box.cy - box.h / 2;
-  return {
+  const draft: DraftBox = {
     clientId: box.id ?? crypto.randomUUID(),
     product_id: box.product_id,
     sku,
@@ -192,4 +204,8 @@ export function yoloToDraft(
     x2: x1 + box.w,
     y2: y1 + box.h,
   };
+  if (box.polygon && box.polygon.length >= 3) {
+    draft.polygon = box.polygon.map((p) => ({ x: p.x, y: p.y }));
+  }
+  return draft;
 }

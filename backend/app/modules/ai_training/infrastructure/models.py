@@ -167,6 +167,7 @@ class LabelBox(Entity):
     cy: Mapped[float] = mapped_column(Float, nullable=False)
     w: Mapped[float] = mapped_column(Float, nullable=False)
     h: Mapped[float] = mapped_column(Float, nullable=False)
+    polygon: Mapped[list | None] = mapped_column(JSONBType, nullable=True)
 
 
 class TrainingJob(Entity):

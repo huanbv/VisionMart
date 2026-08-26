@@ -30,6 +30,7 @@ from app.modules.ai_training.schemas.labeling import (
     LabelImageListResponse,
     LabelImageSummary,
     LabelingStatsResponse,
+    LabelPoint,
     SaveLabelBoxesRequest,
 )
 from app.modules.ai_training.schemas.training import LabeledJobCreate, TrainingJobRead
@@ -49,7 +50,7 @@ _MIGRATION_HINT = (
 def _raise_db_error(exc: BaseException) -> None:
     raw = str(getattr(exc, "orig", exc))
     logger.exception("labeling database error: %s", raw)
-    if "cropped_at" in raw or "does not exist" in raw or "UndefinedColumn" in raw:
+    if "cropped_at" in raw or "polygon" in raw or "does not exist" in raw or "UndefinedColumn" in raw:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail=_MIGRATION_HINT,
@@ -75,6 +76,23 @@ def _summary(row, box_count: int) -> LabelImageSummary:
         labeled=box_count > 0,
         is_cropped=row.cropped_at is not None,
         created_at=row.created_at,
+    )
+
+
+def _box_out(box, product) -> LabelBoxOut:
+    polygon = None
+    if box.polygon and len(box.polygon) >= 3:
+        polygon = [LabelPoint(x=float(p["x"]), y=float(p["y"])) for p in box.polygon]
+    return LabelBoxOut(
+        id=box.id,
+        product_id=box.product_id,
+        product_name=product.name,
+        sku=product.sku,
+        cx=box.cx,
+        cy=box.cy,
+        w=box.w,
+        h=box.h,
+        polygon=polygon,
     )
 
 
@@ -172,19 +190,7 @@ async def get_label_image(
     except TrainingError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
     preview = await service.presign(image.storage_key)
-    boxes = [
-        LabelBoxOut(
-            id=box.id,
-            product_id=box.product_id,
-            product_name=product.name,
-            sku=product.sku,
-            cx=box.cx,
-            cy=box.cy,
-            w=box.w,
-            h=box.h,
-        )
-        for box, product in box_rows
-    ]
+    boxes = [_box_out(box, product) for box, product in box_rows]
     base = _summary(image, len(boxes))
     payload = base.model_dump()
     payload["preview_url"] = preview or ""
@@ -211,19 +217,7 @@ async def crop_label_image(
     except TrainingError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
     preview = await service.presign(image.storage_key)
-    boxes = [
-        LabelBoxOut(
-            id=box.id,
-            product_id=box.product_id,
-            product_name=product.name,
-            sku=product.sku,
-            cx=box.cx,
-            cy=box.cy,
-            w=box.w,
-            h=box.h,
-        )
-        for box, product in box_rows
-    ]
+    boxes = [_box_out(box, product) for box, product in box_rows]
     base = _summary(image, len(boxes))
     payload = base.model_dump()
     payload["preview_url"] = preview or ""
@@ -271,19 +265,7 @@ async def save_label_boxes(
         )
     except TrainingError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
-    return [
-        LabelBoxOut(
-            id=box.id,
-            product_id=box.product_id,
-            product_name=product.name,
-            sku=product.sku,
-            cx=box.cx,
-            cy=box.cy,
-            w=box.w,
-            h=box.h,
-        )
-        for box, product in box_rows
-    ]
+    return [_box_out(box, product) for box, product in box_rows]
 
 
 @router.delete("/images/{image_id}", status_code=status.HTTP_204_NO_CONTENT)

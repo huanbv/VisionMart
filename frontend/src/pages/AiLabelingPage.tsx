@@ -246,10 +246,20 @@ export default function AiLabelingPage() {
     if (!currentId) return false;
     setSaving(true);
     try {
-      await saveLabelBoxes(
+      const saved = await saveLabelBoxes(
         currentId,
         boxes.map((b) => draftToYolo(b))
       );
+      setBoxes(
+        saved.map((b) =>
+          yoloToDraft(
+            b,
+            b.sku ?? productById.get(b.product_id)?.sku ?? "?",
+            b.product_name ?? productById.get(b.product_id)?.name ?? "?"
+          )
+        )
+      );
+      setSelectedBoxId(null);
       setDirty(false);
       message.success("Đã lưu nhãn");
       await refreshStats();

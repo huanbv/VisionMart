@@ -5,7 +5,12 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
+
+
+class LabelPoint(BaseModel):
+    x: float = Field(ge=0.0, le=1.0)
+    y: float = Field(ge=0.0, le=1.0)
 
 
 class LabelBoxIn(BaseModel):
@@ -14,6 +19,14 @@ class LabelBoxIn(BaseModel):
     cy: float = Field(ge=0.0, le=1.0)
     w: float = Field(gt=0.0, le=1.0)
     h: float = Field(gt=0.0, le=1.0)
+    polygon: list[LabelPoint] | None = None
+
+    @field_validator("polygon")
+    @classmethod
+    def polygon_min_points(cls, v: list[LabelPoint] | None) -> list[LabelPoint] | None:
+        if v is not None and len(v) < 3:
+            raise ValueError("polygon needs at least 3 points")
+        return v
 
 
 class LabelBoxOut(BaseModel):
@@ -25,6 +38,7 @@ class LabelBoxOut(BaseModel):
     cy: float
     w: float
     h: float
+    polygon: list[LabelPoint] | None = None
 
     model_config = {"from_attributes": True}
 

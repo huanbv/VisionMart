@@ -69,6 +69,39 @@ def _transform_box_after_crop(
     )
 
 
+def _transform_polygon_after_crop(
+    polygon: list | None,
+    *,
+    img_w: int,
+    img_h: int,
+    crop_left: int,
+    crop_top: int,
+    crop_w: int,
+    crop_h: int,
+) -> list[dict[str, float]] | None:
+    if not polygon or len(polygon) < 3:
+        return None
+    out: list[dict[str, float]] = []
+    for pt in polygon:
+        px = float(pt["x"]) * img_w
+        py = float(pt["y"]) * img_h
+        nx = (px - crop_left) / crop_w
+        ny = (py - crop_top) / crop_h
+        out.append(
+            {
+                "x": max(0.0, min(1.0, nx)),
+                "y": max(0.0, min(1.0, ny)),
+            }
+        )
+    return out if len(out) >= 3 else None
+
+
+def _polygon_to_db(polygon: list | None) -> list[dict[str, float]] | None:
+    if not polygon or len(polygon) < 3:
+        return None
+    return [{"x": float(p["x"]), "y": float(p["y"])} for p in polygon]
+
+
 class LabelingService:
     def __init__(
         self,
@@ -255,6 +288,7 @@ class LabelingService:
                 cy=b["cy"],
                 w=b["w"],
                 h=b["h"],
+                polygon=_polygon_to_db(b.get("polygon")),
             )
             self._session.add(row)
             created.append(row)
@@ -356,6 +390,15 @@ class LabelingService:
                 await self._session.delete(box)
                 continue
             box.cx, box.cy, box.w, box.h = mapped
+            box.polygon = _transform_polygon_after_crop(
+                box.polygon,
+                img_w=img_w,
+                img_h=img_h,
+                crop_left=left,
+                crop_top=top,
+                crop_w=crop_w,
+                crop_h=crop_h,
+            )
             kept.append((box, product))
 
         await self._session.commit()
