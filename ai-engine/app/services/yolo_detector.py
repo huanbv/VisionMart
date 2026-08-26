@@ -15,6 +15,8 @@ from typing import Any
 
 from PIL import Image
 
+from app.services.model_path import resolve_detection_weight
+
 logger = logging.getLogger("ai-engine.yolo")
 
 
@@ -38,11 +40,22 @@ class YoloDetector:
 
     @classmethod
     def get(cls) -> "YoloDetector":
+        # Same resolver as person_tracker: YOLO_MODEL_PATH (runtime) wins,
+        # then YOLO_MODEL, then stock yolov8n. If the admin deployed a
+        # different weight under us, drop the stale singleton.
+        want = resolve_detection_weight()
+        if cls._instance is not None and cls._instance._model_name != want:
+            logger.info(
+                "YOLO detection weight changed: %s -> %s",
+                cls._instance._model_name,
+                want,
+            )
+            cls.reset()
         if cls._instance is None:
             with cls._lock:
                 if cls._instance is None:
                     cls._instance = cls(
-                        model_name=os.getenv("YOLO_MODEL", "yolov8n.pt"),
+                        model_name=want,
                         conf_threshold=float(
                             os.getenv("YOLO_CONF_THRESHOLD", "0.25")
                         ),
@@ -55,7 +68,10 @@ class YoloDetector:
         """Drop the cached detector so the next call reloads (optionally new weight)."""
         with cls._lock:
             if new_model_path:
+                # Keep both names in sync so anything still reading the
+                # legacy YOLO_MODEL env sees the same file as YOLO_MODEL_PATH.
                 os.environ["YOLO_MODEL"] = new_model_path
+                os.environ["YOLO_MODEL_PATH"] = new_model_path
             cls._instance = None
 
     @property

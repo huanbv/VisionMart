@@ -175,6 +175,10 @@ services:
     env_file: .env
     environment:
       YOLO_MODEL: ${YOLO_MODEL:-yolov8n.pt}
+      # Canonical weight for BOTH YoloDetector (/detect, live overlay) and
+      # person_tracker (cart pipeline). Empty = fall back to YOLO_MODEL, then
+      # whatever deploy_model wrote into vision_runtime.json as YOLO_MODEL_PATH.
+      YOLO_MODEL_PATH: ${YOLO_MODEL_PATH:-}
       YOLO_CONF_THRESHOLD: ${YOLO_CONF_THRESHOLD:-0.25}
       YOLO_DEVICE: ${YOLO_DEVICE:-cuda}
       # Bật ROI để vùng đã vẽ THỰC SỰ có tác dụng: che ngoài vùng (vật ngoài

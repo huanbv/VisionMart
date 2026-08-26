@@ -347,6 +347,7 @@ async def analyze_camera_frame(
             # Upload ảnh phân tích = nhập đơn thủ công: bỏ ROI + phiên riêng để
             # luôn tạo một đơn mới trong giỏ AI, không đụng luồng camera live.
             manual_scan=True,
+            min_confidence=0.25,
         )
     except AIEngineError as exc:
         frame_error = str(exc)
@@ -591,10 +592,17 @@ async def trigger_camera_scan(
             organization_id=str(current.organization_id),
             branch_id=str(camera.branch_id),
             camera_id=str(camera_id),
-            manual_scan=False,
+            # Checkout-zone camera: same live cart session. Other cameras:
+            # one-shot order so the button still adds SKUs without grab-and-go.
+            manual_scan=not bool(camera.is_checkout_zone),
+            min_confidence=0.25,
         )
     except Exception as exc:
         logger.exception("AI engine frame failed during manual trigger scan: %s", exc)
+        raise HTTPException(
+            status.HTTP_502_BAD_GATEWAY,
+            detail=f"AI frame pipeline failed: {exc}",
+        ) from exc
 
     return {
         "status": "ok",

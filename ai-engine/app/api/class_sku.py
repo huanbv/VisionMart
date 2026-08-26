@@ -45,8 +45,9 @@ class ClassSkuUpdate(BaseModel):
 
 
 def _models_dir() -> str:
-    # Same volume the deploy_model endpoint downloads trained weights into.
-    return os.getenv("MODELS_DIR", "/app/models")
+    from app.services.model_path import models_dir
+
+    return models_dir()
 
 
 def _list_weights() -> list[str]:
@@ -99,10 +100,12 @@ def update_class_sku_map(payload: ClassSkuUpdate) -> dict[str, object]:
 @router.get("/models")
 def list_models() -> dict[str, object]:
     """Weights available to select, and which one is active right now."""
+    from app.services.model_path import resolve_detection_weight
     from app.vision.config import get_vision_config
 
     return {
         "models": _list_weights(),
         "active": (get_vision_config().yolo_model_path or "").strip(),
+        "resolved": resolve_detection_weight(),
         "models_dir": _models_dir(),
     }

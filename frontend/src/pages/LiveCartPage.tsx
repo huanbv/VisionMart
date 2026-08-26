@@ -449,8 +449,12 @@ export default function LiveCartPage() {
       message.success(`📸 Đã chụp & quét AI thành công! Phát hiện ${res.detections.length} sản phẩm`);
       addLog("add", "📸 Quét thủ công 1 khung hình camera", `Phát hiện ${res.detections.length} sản phẩm`);
       load();
-    } catch {
-      message.error("Không chụp/quét được khung hình camera");
+    } catch (err) {
+      const detail =
+        isAxiosError(err) && err.response?.data?.detail
+          ? String(err.response.data.detail)
+          : "Không chụp/quét được khung hình camera";
+      message.error(detail);
     } finally {
       setManualScanning(false);
     }

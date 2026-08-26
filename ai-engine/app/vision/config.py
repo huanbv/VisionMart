@@ -564,5 +564,14 @@ def save_runtime_overrides(overrides: dict[str, object]) -> dict[str, str]:
     os.replace(tmp, path)
 
     reload_vision_config()
+    if any(str(k).upper() == "YOLO_MODEL_PATH" for k in overrides):
+        # Admin picker / deploy_model: drop both cached detectors so
+        # /detect, live overlay, and the cart pipeline load the new weight
+        # without a container restart.
+        try:
+            from app.services.model_path import reload_detection_models
+
+            reload_detection_models()
+        except Exception:  # noqa: BLE001
+            logger.exception("could not reload detection models after YOLO_MODEL_PATH change")
     return current
-    return _CONFIG

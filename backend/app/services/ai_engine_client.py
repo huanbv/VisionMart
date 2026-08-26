@@ -223,7 +223,7 @@ class AIEngineClient:
         branch_id: str,
         camera_id: str | None = None,
         recognize_face: bool = False,
-        min_confidence: float = 0.4,
+        min_confidence: float = 0.25,
         manual_scan: bool = False,
     ) -> dict[str, Any]:
         url = f"{self._base_url}/ai/frame"

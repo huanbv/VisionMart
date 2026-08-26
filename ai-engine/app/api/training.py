@@ -97,7 +97,9 @@ async def training_status(job_id: str) -> TrainStatusResponse:
 @router.post("/config/model", response_model=DeployResponse)
 async def deploy_model(body: DeployRequest) -> DeployResponse:
     """Download a trained weight from MinIO and swap it into the running detector."""
-    local_dir = os.getenv("MODELS_DIR", "/app/models")
+    from app.services.model_path import models_dir, reload_detection_models
+
+    local_dir = models_dir()
     os.makedirs(local_dir, exist_ok=True)
     local_path = os.path.join(local_dir, os.path.basename(body.weight_key))
     with _DEPLOY_LOCK:
@@ -108,36 +110,20 @@ async def deploy_model(body: DeployRequest) -> DeployResponse:
                 status_code=502, detail=f"Weight download failed: {exc}"
             ) from exc
 
-        # Hai hệ detector phải cùng chuyển sang weight mới:
-        #  1) YoloDetector (đọc os.environ["YOLO_MODEL"]) — dùng bởi live
-        #     view, /detect, /capture.
-        try:
-            from app.services.yolo_detector import YoloDetector
-
-            YoloDetector.reset(local_path)
-        except AttributeError:
-            YoloDetector._instance = None  # type: ignore[attr-defined]
-            os.environ["YOLO_MODEL"] = local_path
-
-        #  2) person_tracker — đọc YOLO_MODEL_PATH từ vision config, và đây
-        #     mới là model mà LUỒNG GIỎ HÀNG (frame.py) thật sự chạy. Trước
-        #     đây deploy KHÔNG set biến này nên tracker vẫn âm thầm nạp
-        #     yolov8n gốc — model đã train không bao giờ tới được giỏ hàng.
-        #     Ghi bằng tên file trần: _resolve_det_path phân giải dưới
-        #     MODELS_DIR; lưu vào runtime config nên sống qua restart và hiện
-        #     là model đang dùng ở GET /ai/models + dropdown admin.
+        # Canonical name both detectors resolve: YOLO_MODEL_PATH in the
+        # runtime config (survives restart, drives the admin dropdown).
+        # save_runtime_overrides also drops the cached YOLO instances.
+        basename = os.path.basename(local_path)
+        os.environ["YOLO_MODEL"] = local_path
+        os.environ["YOLO_MODEL_PATH"] = basename
         try:
             from app.vision.config import save_runtime_overrides
 
-            save_runtime_overrides({"YOLO_MODEL_PATH": os.path.basename(local_path)})
+            save_runtime_overrides({"YOLO_MODEL_PATH": basename})
         except Exception:  # noqa: BLE001
             logger.exception("could not persist YOLO_MODEL_PATH override")
+            reload_detection_models()
 
-        try:
-            from app.services.person_tracker import reset_trackers
-
-            reset_trackers()
-        except ImportError:
-            pass
+        logger.info("deployed detection weight %s -> %s", body.weight_key, local_path)
 
     return DeployResponse(weight_key=body.weight_key, local_path=local_path)

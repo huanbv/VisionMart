@@ -410,34 +410,10 @@ def _get_pose_model():
 
 
 def _resolve_det_path() -> str:
-    """Which detection weight to load.
+    """Which detection weight to load — same resolver as YoloDetector."""
+    from app.services.model_path import resolve_detection_weight
 
-    A non-empty ``YOLO_MODEL_PATH`` (set from the admin screen) wins, so an
-    operator can switch to a custom-trained weight live. An absolute path is
-    used as-is; a bare filename is looked up under the mounted /models
-    volume. Empty config, or a configured path that doesn't exist, falls
-    back to the built-in stock-model search so the detector never fails to
-    load just because a bad path was typed."""
-    configured = (get_vision_config().yolo_model_path or "").strip()
-    if configured:
-        if os.path.isabs(configured) and os.path.exists(configured):
-            return configured
-        # MODELS_DIR first: that's where deploy_model downloads trained
-        # weights (default /app/models), and where the /ai/models dropdown
-        # lists them from — so a deployed weight referenced by bare filename
-        # resolves the same way it is listed and selected.
-        models_dir = os.getenv("MODELS_DIR", "/app/models")
-        for base in (models_dir, "/models", "models", "."):
-            candidate = os.path.join(base, configured)
-            if os.path.exists(candidate):
-                return candidate
-        logger.warning(
-            "YOLO_MODEL_PATH=%s not found; falling back to stock model", configured
-        )
-    for path in ("/models/yolov8n.pt", "models/yolov8n.pt", "yolov8n.pt"):
-        if os.path.exists(path):
-            return path
-    return "yolov8n.pt"
+    return resolve_detection_weight()
 
 
 def _get_det_model():

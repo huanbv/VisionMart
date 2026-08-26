@@ -960,6 +960,17 @@ async def process_frame(
             )
         if sku:
             products.append((det, sku))
+        else:
+            logger.warning("DET unmapped class=%s (no SKU in class_to_sku.json)", det.class_name)
+
+    logger.warning(
+        "FRAME PRODUCTS: n=%d skus=%s checkout_zone=%s scan_mode=%s manual=%s",
+        len(products),
+        [s for _, s in products],
+        bool(camera_info and camera_info.get("is_checkout_zone")),
+        getattr(vision_cfg, "checkout_scan_mode", False),
+        manual_scan,
+    )
 
     if debug.enabled:
         _collect_debug_steps(debug, tracking.frame_bgr, detections, identified, products)
@@ -1191,7 +1202,17 @@ async def process_frame(
             # sau thay vì rơi ngay về "không xác định người".
             if pp["unassigned_since"] is None:
                 pp["unassigned_since"] = now
-            if now - pp["unassigned_since"] < grace:
+            # Close-up scan / empty counter: CHECKOUT_SCAN_MODE means add
+            # the SKU without a person. Grace only helps when someone IS in
+            # the scene and might associate on the next live frames. A
+            # single trigger-scan (or a product filling the frame) would
+            # otherwise sit in CANDIDATE forever and never emit.
+            if not persons:
+                logger.warning(
+                    "CHECKOUT NO PERSON: logical=%s sku=%s — fallback ngay (không đợi grace %.0fs)",
+                    logical_id, pp["sku"], grace,
+                )
+            elif now - pp["unassigned_since"] < grace:
                 continue
             fallback_track, _fb_prev = _checkout_session_track(camera_key, now, True)
             # fallback_track đã có dạng "checkout-<epoch>" (xem
@@ -1295,6 +1316,18 @@ async def process_frame(
                     emitted.append({"event": event, "backend": result})
                     if not bucket["logical_ids"]:
                         _CHECKOUT_SCANNED[scanned_key].pop(pp["sku"], None)
+    elif products and not emitted:
+        logger.warning(
+            "CHECKOUT SKIPPED: %d product(s) %s not emitted "
+            "(is_checkout_zone=%s checkout_scan_mode=%s manual_scan=%s) — "
+            "close-up scan needs checkout-zone camera + CHECKOUT_SCAN_MODE, "
+            "or the upload Analyze path (manual_scan)",
+            len(products),
+            [s for _, s in products],
+            bool(camera_info and camera_info.get("is_checkout_zone")),
+            getattr(vision_cfg, "checkout_scan_mode", False),
+            manual_scan,
+        )
 
     # Product-returned detection: a sku that was picked up (has a cooldown
     # entry, i.e. we actually emitted product_picked_up for it) but hasn't
