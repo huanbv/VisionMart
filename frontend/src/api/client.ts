@@ -54,6 +54,15 @@ type RetriableConfig = AxiosRequestConfig & { _retry?: boolean };
 
 let refreshPromise: Promise<string> | null = null;
 
+function refreshAccessTokenOnce(): Promise<string> {
+  if (!refreshPromise) {
+    refreshPromise = refreshAccessToken().finally(() => {
+      refreshPromise = null;
+    });
+  }
+  return refreshPromise;
+}
+
 async function refreshAccessToken(): Promise<string> {
   const refresh = tokenStore.getRefresh();
   if (!refresh) throw new Error("No refresh token");
@@ -62,6 +71,11 @@ async function refreshAccessToken(): Promise<string> {
   });
   tokenStore.set(resp.data.access_token, resp.data.refresh_token);
   return resp.data.access_token as string;
+}
+
+export async function ensureAccessTokenFresh(): Promise<void> {
+  if (!tokenStore.getRefresh()) return;
+  await refreshAccessTokenOnce();
 }
 
 apiClient.interceptors.response.use(
@@ -77,14 +91,11 @@ apiClient.interceptors.response.use(
     }
     original._retry = true;
     try {
-      refreshPromise = refreshPromise ?? refreshAccessToken();
-      const newToken = await refreshPromise;
-      refreshPromise = null;
+      const newToken = await refreshAccessTokenOnce();
       original.headers = original.headers ?? {};
       (original.headers as Record<string, string>)["Authorization"] = `Bearer ${newToken}`;
       return apiClient.request(original);
     } catch (refreshErr) {
-      refreshPromise = null;
       tokenStore.clear();
       window.location.assign("/login");
       return Promise.reject(refreshErr);

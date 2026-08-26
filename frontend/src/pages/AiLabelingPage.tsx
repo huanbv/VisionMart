@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Alert,
+  App,
   Button,
   Card,
   Col,
+  Descriptions,
   Form,
   Input,
   InputNumber,
@@ -15,7 +17,6 @@ import {
   Tag,
   Typography,
   Upload,
-  message,
 } from "antd";
 import type { UploadProps } from "antd";
 import {
@@ -26,6 +27,8 @@ import {
   SaveOutlined,
   PlayCircleOutlined,
 } from "@ant-design/icons";
+
+import { Link } from "react-router-dom";
 
 import BboxLabelEditor from "@/components/BboxLabelEditor";
 import { listProducts, type Product } from "@/api/catalog";
@@ -42,13 +45,55 @@ import {
   type LabelImageSummary,
   type LabelingStats,
 } from "@/api/aiLabeling";
-import { getTrainingJob, type TrainingJob } from "@/api/aiTraining";
+import { getTrainingJob, listTrainingJobs, type TrainingJob } from "@/api/aiTraining";
+import { ensureAccessTokenFresh } from "@/api/client";
+import { useAuth } from "@/contexts/AuthContext";
 
 const { Title, Text, Paragraph } = Typography;
 const BATCH_SIZE = 40;
 const PAGE_SIZE = 50;
 
+const STATUS_COLORS: Record<string, string> = {
+  pending: "default",
+  running: "processing",
+  succeeded: "success",
+  failed: "error",
+};
+
+function formatDuration(seconds: number): string {
+  if (!Number.isFinite(seconds) || seconds < 0) return "—";
+  const s = Math.floor(seconds);
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  const sec = s % 60;
+  const pad = (n: number) => n.toString().padStart(2, "0");
+  return h > 0 ? `${h}:${pad(m)}:${pad(sec)}` : `${pad(m)}:${pad(sec)}`;
+}
+
+function trainingJobPercent(job: TrainingJob): number {
+  const total = job.total_epochs || job.epochs || 0;
+  const current = job.current_epoch || 0;
+  const running = job.status === "running" || job.status === "pending";
+  const succeeded = job.status === "succeeded";
+  const stage = job.stage || "";
+  const imgTotal = job.images_total || 0;
+  const imgDone = job.images_done || 0;
+
+  if (succeeded) return 100;
+  if (stage === "preparing" && imgTotal > 0) {
+    return Math.max(5, Math.round((imgDone / imgTotal) * 15));
+  }
+  if (stage === "uploading") return 97;
+  if (total > 0 && current > 0) {
+    return 15 + Math.min(80, Math.round((current / total) * 80));
+  }
+  if (running) return 5;
+  return 0;
+}
+
 export default function AiLabelingPage() {
+  const { message } = App.useApp();
+  const { user } = useAuth();
   const [products, setProducts] = useState<Product[]>([]);
   const [stats, setStats] = useState<LabelingStats | null>(null);
   const [items, setItems] = useState<LabelImageSummary[]>([]);
@@ -67,6 +112,7 @@ export default function AiLabelingPage() {
   const [uploadPct, setUploadPct] = useState(0);
   const [training, setTraining] = useState(false);
   const [activeJob, setActiveJob] = useState<TrainingJob | null>(null);
+  const [now, setNow] = useState(() => Date.now() / 1000);
   const pollRef = useRef<number | null>(null);
   const uploadQueueRef = useRef<File[]>([]);
   const uploadTimerRef = useRef<number | null>(null);
@@ -96,7 +142,7 @@ export default function AiLabelingPage() {
     } catch {
       message.error("Không tải được danh sách sản phẩm");
     }
-  }, [selectedProductId]);
+  }, [message, selectedProductId]);
 
   const refreshStats = useCallback(async () => {
     try {
@@ -132,7 +178,7 @@ export default function AiLabelingPage() {
     } finally {
       setLoading(false);
     }
-  }, [filter, page]);
+  }, [filter, message, page]);
 
   const loadImage = useCallback(
     async (id: string) => {
@@ -158,17 +204,19 @@ export default function AiLabelingPage() {
         setLoading(false);
       }
     },
-    [productById]
+    [message, productById]
   );
 
   useEffect(() => {
+    if (!user) return;
     void loadProducts();
     void refreshStats();
-  }, [loadProducts, refreshStats]);
+  }, [user, loadProducts, refreshStats]);
 
   useEffect(() => {
+    if (!user) return;
     void loadList();
-  }, [loadList]);
+  }, [user, loadList]);
 
   useEffect(() => {
     setCurrentId(null);
@@ -272,6 +320,7 @@ export default function AiLabelingPage() {
     let uploaded = 0;
     let failed = 0;
     try {
+      await ensureAccessTokenFresh();
       for (let i = 0; i < files.length; i += BATCH_SIZE) {
         const batch = files.slice(i, i + BATCH_SIZE);
         const res = await uploadLabelImages(batch);
@@ -299,7 +348,7 @@ export default function AiLabelingPage() {
         void runUpload();
       }
     }
-  }, [loadList, refreshStats]);
+  }, [loadList, message, refreshStats]);
 
   const uploadProps: UploadProps = {
     multiple: true,
@@ -325,19 +374,52 @@ export default function AiLabelingPage() {
       });
       setActiveJob(job);
       message.success("Đã bắt đầu huấn luyện từ dữ liệu gán nhãn");
-      pollRef.current = window.setInterval(async () => {
-        const j = await getTrainingJob(job.id);
-        setActiveJob(j);
-        if (j.status === "succeeded" || j.status === "failed") {
-          if (pollRef.current) window.clearInterval(pollRef.current);
-        }
-      }, 3000);
+      startJobPolling(job.id);
     } catch (e: unknown) {
       message.error(e instanceof Error ? e.message : "Không tạo được job");
     } finally {
       setTraining(false);
     }
   };
+
+  const startJobPolling = useCallback((jobId: string) => {
+    if (pollRef.current) window.clearInterval(pollRef.current);
+    pollRef.current = window.setInterval(async () => {
+      try {
+        const j = await getTrainingJob(jobId);
+        setActiveJob(j);
+        if (j.status === "succeeded" || j.status === "failed") {
+          if (pollRef.current) window.clearInterval(pollRef.current);
+          pollRef.current = null;
+        }
+      } catch {
+        /* poll retry next tick */
+      }
+    }, 3000);
+  }, []);
+
+  useEffect(() => {
+    if (!user) return;
+    void (async () => {
+      try {
+        const { items } = await listTrainingJobs();
+        const running = items.find(
+          (j) =>
+            (j.status === "running" || j.status === "pending") &&
+            j.class_map &&
+            typeof j.class_map === "object" &&
+            (j.class_map as { mode?: string }).mode === "labeled_scenes"
+        );
+        if (running) {
+          const fresh = await getTrainingJob(running.id);
+          setActiveJob(fresh);
+          startJobPolling(running.id);
+        }
+      } catch {
+        /* optional resume */
+      }
+    })();
+  }, [startJobPolling, user]);
 
   useEffect(
     () => () => {
@@ -346,6 +428,14 @@ export default function AiLabelingPage() {
     },
     []
   );
+
+  useEffect(() => {
+    const running =
+      activeJob?.status === "running" || activeJob?.status === "pending";
+    if (!running) return;
+    const tick = window.setInterval(() => setNow(Date.now() / 1000), 1000);
+    return () => window.clearInterval(tick);
+  }, [activeJob?.status]);
 
   return (
     <div>
@@ -551,12 +641,109 @@ export default function AiLabelingPage() {
               trang Train AI.
             </Paragraph>
             {activeJob && (
-              <Alert
-                style={{ marginTop: 12 }}
-                type={activeJob.status === "failed" ? "error" : "info"}
-                message={`Job: ${activeJob.status}`}
-                description={activeJob.progress ?? activeJob.error_message ?? undefined}
-              />
+              <Space direction="vertical" style={{ width: "100%", marginTop: 12 }} size={10}>
+                <Descriptions
+                  size="small"
+                  column={1}
+                  items={[
+                    {
+                      key: "status",
+                      label: "Trạng thái",
+                      children: (
+                        <Tag color={STATUS_COLORS[activeJob.status] || "default"}>
+                          {activeJob.status}
+                        </Tag>
+                      ),
+                    },
+                    { key: "name", label: "Tên job", children: activeJob.name },
+                  ]}
+                />
+                {(() => {
+                  const total = activeJob.total_epochs || activeJob.epochs || 0;
+                  const current = activeJob.current_epoch || 0;
+                  const running =
+                    activeJob.status === "running" || activeJob.status === "pending";
+                  const succeeded = activeJob.status === "succeeded";
+                  const stage = activeJob.stage || "";
+                  const imgTotal = activeJob.images_total || 0;
+                  const imgDone = activeJob.images_done || 0;
+                  const percent = trainingJobPercent(activeJob);
+                  const startTs = activeJob.started_at_ts || 0;
+                  const endTs = activeJob.finished_at_ts || 0;
+                  const elapsed = startTs ? (endTs > 0 ? endTs : now) - startTs : 0;
+                  const eta =
+                    running && current > 0 && total > 0 && elapsed > 0
+                      ? (elapsed / current) * (total - current)
+                      : 0;
+                  return (
+                    <>
+                      <Progress
+                        percent={percent}
+                        status={
+                          activeJob.status === "failed"
+                            ? "exception"
+                            : succeeded
+                              ? "success"
+                              : "active"
+                        }
+                      />
+                      <Row gutter={8}>
+                        <Col span={8}>
+                          <Statistic
+                            title="Epoch"
+                            value={total > 0 ? `${current}/${total}` : "—"}
+                          />
+                        </Col>
+                        <Col span={8}>
+                          <Statistic
+                            title="Đã chạy"
+                            value={startTs ? formatDuration(elapsed) : "—"}
+                          />
+                        </Col>
+                        <Col span={8}>
+                          <Statistic
+                            title="Còn lại (ước tính)"
+                            value={eta > 0 ? formatDuration(eta) : "—"}
+                          />
+                        </Col>
+                      </Row>
+                      {activeJob.progress && (
+                        <Text type="secondary">{activeJob.progress}</Text>
+                      )}
+                      {stage === "preparing" && imgTotal > 0 && (
+                        <Text type="secondary" style={{ display: "block" }}>
+                          Đã tải {imgDone}/{imgTotal} ảnh huấn luyện
+                        </Text>
+                      )}
+                      {activeJob.class_counts &&
+                        Object.keys(activeJob.class_counts).length > 0 && (
+                          <Space wrap size={4}>
+                            {Object.entries(activeJob.class_counts).map(([cls, n]) => (
+                              <Tag key={cls} color="blue">
+                                {cls}: {n}
+                              </Tag>
+                            ))}
+                          </Space>
+                        )}
+                    </>
+                  );
+                })()}
+                {activeJob.status === "failed" && activeJob.error_message && (
+                  <Alert type="error" message={activeJob.error_message} />
+                )}
+                {activeJob.status === "succeeded" && (
+                  <Alert
+                    type="success"
+                    message="Huấn luyện xong"
+                    description={
+                      <>
+                        Weight: {activeJob.weight_key || "—"}.{" "}
+                        <Link to="/ai-training">Deploy tại Train AI →</Link>
+                      </>
+                    }
+                  />
+                )}
+              </Space>
             )}
           </Card>
         </Col>
