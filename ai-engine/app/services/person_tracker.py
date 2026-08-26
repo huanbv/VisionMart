@@ -422,7 +422,12 @@ def _resolve_det_path() -> str:
     if configured:
         if os.path.isabs(configured) and os.path.exists(configured):
             return configured
-        for base in ("/models", "models", "."):
+        # MODELS_DIR first: that's where deploy_model downloads trained
+        # weights (default /app/models), and where the /ai/models dropdown
+        # lists them from — so a deployed weight referenced by bare filename
+        # resolves the same way it is listed and selected.
+        models_dir = os.getenv("MODELS_DIR", "/app/models")
+        for base in (models_dir, "/models", "models", "."):
             candidate = os.path.join(base, configured)
             if os.path.exists(candidate):
                 return candidate

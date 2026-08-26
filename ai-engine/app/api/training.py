@@ -108,6 +108,9 @@ async def deploy_model(body: DeployRequest) -> DeployResponse:
                 status_code=502, detail=f"Weight download failed: {exc}"
             ) from exc
 
+        # Hai hệ detector phải cùng chuyển sang weight mới:
+        #  1) YoloDetector (đọc os.environ["YOLO_MODEL"]) — dùng bởi live
+        #     view, /detect, /capture.
         try:
             from app.services.yolo_detector import YoloDetector
 
@@ -115,6 +118,20 @@ async def deploy_model(body: DeployRequest) -> DeployResponse:
         except AttributeError:
             YoloDetector._instance = None  # type: ignore[attr-defined]
             os.environ["YOLO_MODEL"] = local_path
+
+        #  2) person_tracker — đọc YOLO_MODEL_PATH từ vision config, và đây
+        #     mới là model mà LUỒNG GIỎ HÀNG (frame.py) thật sự chạy. Trước
+        #     đây deploy KHÔNG set biến này nên tracker vẫn âm thầm nạp
+        #     yolov8n gốc — model đã train không bao giờ tới được giỏ hàng.
+        #     Ghi bằng tên file trần: _resolve_det_path phân giải dưới
+        #     MODELS_DIR; lưu vào runtime config nên sống qua restart và hiện
+        #     là model đang dùng ở GET /ai/models + dropdown admin.
+        try:
+            from app.vision.config import save_runtime_overrides
+
+            save_runtime_overrides({"YOLO_MODEL_PATH": os.path.basename(local_path)})
+        except Exception:  # noqa: BLE001
+            logger.exception("could not persist YOLO_MODEL_PATH override")
 
         try:
             from app.services.person_tracker import reset_trackers
