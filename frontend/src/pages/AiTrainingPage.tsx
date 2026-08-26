@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Alert,
+  App,
   Button,
   Card,
   Col,
@@ -22,7 +23,6 @@ import {
   Tooltip,
   Typography,
   Upload,
-  message,
 } from "antd";
 import type { UploadProps } from "antd";
 import {
@@ -35,6 +35,7 @@ import {
 
 import { listProducts, type Product } from "@/api/catalog";
 import {
+  checkDeploy,
   createTrainingJob,
   deleteTrainingImage,
   deployTrainingJob,
@@ -66,6 +67,7 @@ function formatDuration(seconds: number): string {
 }
 
 export default function AiTrainingPage() {
+  const { message } = App.useApp();
   const [products, setProducts] = useState<Product[]>([]);
   const [selectedProductId, setSelectedProductId] = useState<string | null>(null);
   const [images, setImages] = useState<TrainingImage[]>([]);
@@ -76,6 +78,10 @@ export default function AiTrainingPage() {
   const [loadingImages, setLoadingImages] = useState(false);
   const [training, setTraining] = useState(false);
   const [now, setNow] = useState<number>(() => Date.now() / 1000);
+  const [deployBlocked, setDeployBlocked] = useState<{
+    jobId: string;
+    reason: string;
+  } | null>(null);
   // Panel "Bước 3" nằm PHÍA TRÊN bảng lịch sử, nên bấm Xem ở bảng sẽ cập
   // nhật một khối đã trôi khỏi màn hình — nhìn ra là nút không có tác
   // dụng. Cuộn tới nơi vừa đổi mới cho thấy việc đã xảy ra.
@@ -262,14 +268,32 @@ export default function AiTrainingPage() {
     }
   };
 
-  const handleDeploy = async (jobId: string) => {
+  const handleDeploy = async (jobId: string, force = false) => {
     try {
-      const updated = await deployTrainingJob(jobId);
+      if (!force) {
+        const gate = await checkDeploy(jobId);
+        if (!gate.allowed) {
+          setDeployBlocked({ jobId, reason: gate.reason });
+          return;
+        }
+      }
+      const updated = await deployTrainingJob(jobId, force);
       message.success("Đã triển khai weight mới cho AI");
       setActiveJob(updated);
-    } catch (err: any) {
-      const detail = err?.response?.data?.detail;
-      message.error(detail || "Triển khai thất bại");
+      setDeployBlocked(null);
+      void loadJobs();
+    } catch (err: unknown) {
+      const detail =
+        err &&
+        typeof err === "object" &&
+        "response" in err &&
+        (err as { response?: { data?: { detail?: unknown } } }).response?.data?.detail;
+      const text = typeof detail === "string" ? detail : "Triển khai thất bại";
+      if (!force && typeof detail === "string" && detail.includes("Blocked:")) {
+        setDeployBlocked({ jobId, reason: detail });
+        return;
+      }
+      message.error(text);
     }
   };
 
@@ -584,14 +608,37 @@ export default function AiTrainingPage() {
                   </Row>
                 )}
                 {activeJob.status === "succeeded" && activeJob.weight_key && (
-                  <Button
-                    type="primary"
-                    icon={<RocketOutlined />}
-                    block
-                    onClick={() => handleDeploy(activeJob.id)}
-                  >
-                    Triển khai weight cho AI Engine
-                  </Button>
+                  <Space direction="vertical" style={{ width: "100%" }}>
+                    {deployBlocked?.jobId === activeJob.id && (
+                      <Alert
+                        type="warning"
+                        showIcon
+                        message="Deploy bị chặn do metric giảm"
+                        description={deployBlocked.reason}
+                        action={
+                          <Popconfirm
+                            title="Triển khai dù metric thấp hơn model cũ?"
+                            description="Chỉ dùng khi model mới (bbox cảnh) thay thế model full-frame cũ."
+                            okText="Vẫn triển khai"
+                            cancelText="Huỷ"
+                            onConfirm={() => void handleDeploy(activeJob.id, true)}
+                          >
+                            <Button size="small" type="primary" danger>
+                              Deploy bỏ qua cảnh báo
+                            </Button>
+                          </Popconfirm>
+                        }
+                      />
+                    )}
+                    <Button
+                      type="primary"
+                      icon={<RocketOutlined />}
+                      block
+                      onClick={() => void handleDeploy(activeJob.id)}
+                    >
+                      Triển khai weight cho AI Engine
+                    </Button>
+                  </Space>
                 )}
               </Space>
             )}
