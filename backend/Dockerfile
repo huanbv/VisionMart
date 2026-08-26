@@ -1,4 +1,3 @@
-# syntax=docker/dockerfile:1.7
 # =============================================================
 # VisionMart Backend - multi-stage image
 #  - base    : OS + Python + system deps
