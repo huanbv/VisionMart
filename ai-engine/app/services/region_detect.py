@@ -14,7 +14,9 @@ from app.services.det_nms import box_iou, cluster_winner_take_all
 
 _REGION_ID_BASE = 700_000
 _MIN_CROP = 24
-_YOLO_CONF = 0.35
+# Wood reflections still fire Sting at ~0.50; real counter scans need higher floor.
+_YOLO_CONF = 0.55
+_ACCEPT_CONF = 0.55
 # Products on the counter sit near the bottom of a standing-person box.
 # Masking the upper 70% removes the whole arm/torso blob (not just a fragment)
 # while preserving packs and bottles on the table.
@@ -55,7 +57,7 @@ def detect_products_from_regions(
 ) -> list:
     """One TrackedObject per color-blob, class from YOLO on that crop."""
     from app.services.person_tracker import TrackedObject, _boxes_from_yolo_result
-    from app.vision.region_proposal import propose_regions
+    from app.vision.region_proposal import looks_like_product_blob, median_background, propose_regions
 
     if img is None or getattr(img, "size", 0) == 0:
         return []
@@ -79,9 +81,16 @@ def detect_products_from_regions(
         max_regions=12,
         bg_tolerance=38,
     )
+    bg_median = median_background(proposal_img)
     out: list = []
     next_id = _REGION_ID_BASE
     for r in regions:
+        blob = work[
+            max(0, r.y1) : min(work.shape[0], r.y2),
+            max(0, r.x1) : min(work.shape[1], r.x2),
+        ]
+        if not looks_like_product_blob(blob, bg_median=bg_median):
+            continue
         fx1, fy1 = float(x0 + r.x1), float(y0 + r.y1)
         fx2, fy2 = float(x0 + r.x2), float(y0 + r.y2)
         probe = TrackedObject(
@@ -178,7 +187,9 @@ def _classify_region(
             continue
         boxes = boxes_from_result(results[0], id_base=id_base)
         if boxes:
-            return max(boxes, key=lambda box: box.confidence)
+            best = max(boxes, key=lambda box: box.confidence)
+            if best.confidence >= max(conf_min, _ACCEPT_CONF):
+                return best
     return None
 
 
@@ -194,6 +205,8 @@ def _crop_is_non_product(crop, work) -> bool:
     val = hsv[:, :, 2].astype(np.float32)
     # Khay nhựa trắng / khăn / highlight bàn.
     if float(sat.mean()) < 40.0 and float(val.mean()) > 150.0:
+        return True
+    if float(sat.mean()) < 48.0 and float(val.mean()) > 135.0:
         return True
     pixels = work.reshape(-1, 3)
     pixels = pixels[pixels.sum(axis=1) > 24]

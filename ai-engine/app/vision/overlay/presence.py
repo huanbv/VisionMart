@@ -11,7 +11,7 @@ from __future__ import annotations
 from typing import Any
 
 # Live HUD only — cart scan / Chụp & Quét keep the lower YOLO floor.
-OVERLAY_MIN_CONFIDENCE = 0.35
+OVERLAY_MIN_CONFIDENCE = 0.55
 
 
 def _bbox(det: dict) -> tuple[float, float, float, float] | None:
@@ -80,7 +80,11 @@ def filter_overlay_ghosts(frame_bgr: Any, detections: list[dict]) -> list[dict]:
         return persons
 
     try:
-        from app.vision.region_proposal import propose_regions
+        from app.vision.region_proposal import (
+            looks_like_product_blob,
+            median_background,
+            propose_regions,
+        )
 
         regions = propose_regions(
             frame_bgr,
@@ -92,16 +96,28 @@ def filter_overlay_ghosts(frame_bgr: Any, detections: list[dict]) -> list[dict]:
             # YOLO hits on empty counter would survive this gate.
             allow_local_fallback=False,
         )
+        bg_median = median_background(frame_bgr)
+        product_regions = [
+            r
+            for r in regions
+            if looks_like_product_blob(
+                frame_bgr[
+                    max(0, r.y1) : min(frame_bgr.shape[0], r.y2),
+                    max(0, r.x1) : min(frame_bgr.shape[1], r.x2),
+                ],
+                bg_median=bg_median,
+            )
+        ]
     except Exception:  # noqa: BLE001 — overlay must never break the stream
         return persons + candidates
 
-    if not regions:
+    if not product_regions:
         return persons
 
     kept = [
         det
         for det in candidates
-        if any(_hits_region(_bbox(det), r) for r in regions)  # type: ignore[arg-type]
+        if any(_hits_region(_bbox(det), r) for r in product_regions)  # type: ignore[arg-type]
         and not _center_on_person_torso(_bbox(det), persons)  # type: ignore[arg-type]
     ]
     return persons + kept

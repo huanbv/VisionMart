@@ -159,10 +159,10 @@ def test_one_blob_one_product():
 def test_caller_confidence_is_honored():
     img = np.full((240, 320, 3), 255, dtype=np.uint8)
     img[70:170, 120:170] = (40, 40, 220)
-    model = _StubModel(conf=0.25)
-    out = detect_products_from_regions(model, img, [], conf_min=0.20)
+    model = _StubModel(conf=0.60)
+    out = detect_products_from_regions(model, img, [], conf_min=0.55)
     assert len(out) == 1
-    assert model.requested_conf == [0.20]
+    assert model.requested_conf == [0.55]
 
 
 def test_context_crop_recovers_tight_crop_miss_without_dense_grid():
@@ -183,6 +183,16 @@ def test_product_on_counter_in_front_of_person_is_kept():
     out = detect_products_from_regions(model, img, [person])
     assert len(out) == 1
     assert out[0].class_name == "du_sti"
+
+
+def test_wood_reflection_region_is_skipped():
+    img = np.full((240, 320, 3), (42, 88, 145), dtype=np.uint8)
+    # Desaturated glare on wood — propose_regions may pick it up, must not YOLO it.
+    img[100:150, 80:140] = (205, 190, 170)
+    model = _StubModel()
+    out = detect_products_from_regions(model, img, [])
+    assert out == []
+    assert model.calls == 0
 
 
 def test_blob_on_person_torso_is_skipped():

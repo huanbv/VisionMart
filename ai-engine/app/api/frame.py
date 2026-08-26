@@ -1038,6 +1038,7 @@ async def process_frame(
                 y2=det.y2,
             )
             for det, sku in products
+            if float(det.confidence) >= 0.55
         ]
         _cache_latest_product_boxes(camera_key, overlay_dets, fw, fh)
 

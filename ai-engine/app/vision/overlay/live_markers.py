@@ -113,7 +113,7 @@ def draw_live_detections(frame: Any, detections: list[dict]) -> None:
         return
     h, w = frame.shape[:2]
     radius = max(7, min(12, min(h, w) // 90))
-    merge_dist = float(max(48, radius * 7))
+    merge_dist = float(max(64, radius * 9))
 
     products: list[tuple[int, int, float, dict]] = []
     for det in detections:
