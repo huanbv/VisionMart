@@ -832,6 +832,7 @@ async def process_frame(
     recognize_face: bool = Form(False),
     min_confidence: float = Form(0.3),
     manual_scan: bool = Form(False),
+    skip_roi: bool = Form(False),
     image: UploadFile = File(...),
 ) -> dict[str, Any]:
     content = await image.read()
@@ -874,10 +875,9 @@ async def process_frame(
         # the same preprocessed frame YOLO saw, without re-preprocessing.
         # Vung nhan dien ve tren Admin di kem camera_info (da duoc cache
         # 30s trong _fetch_camera) — khong them mot luot goi mang nao.
-        # Quét thủ công (nút Phân tích khung hình, upload ảnh): bỏ ROI để phân
-        # tích TOÀN ảnh — ảnh upload thường khác khung/ROI của camera live, áp
-        # ROI sẽ che mất sản phẩm. Live path giữ nguyên ROI.
-        roi_zones = [] if manual_scan else zones_from_payload(
+        # Quét thủ công từ ảnh upload: bỏ ROI (khung ảnh ≠ camera).
+        # Chụp & Quét từ camera live: GIỮ ROI để contour/mì gói chạy trong vùng quầy.
+        roi_zones = [] if skip_roi else zones_from_payload(
             (camera_info or {}).get("roi_zones")
         )
         is_checkout = manual_scan or bool(
@@ -888,6 +888,7 @@ async def process_frame(
             camera_key,
             is_checkout_zone=is_checkout,
             roi_zones=roi_zones,
+            dense_detect=manual_scan,
         )
         detections = tracking.detections
         debug.add(

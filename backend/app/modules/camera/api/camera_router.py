@@ -401,6 +401,7 @@ async def analyze_camera_frame(
             # Upload ảnh phân tích = nhập đơn thủ công: bỏ ROI + phiên riêng để
             # luôn tạo một đơn mới trong giỏ AI, không đụng luồng camera live.
             manual_scan=True,
+            skip_roi=True,
             min_confidence=0.25,
         )
     except AIEngineError as exc:
@@ -649,7 +650,7 @@ async def trigger_camera_scan(
             # Nút "Chụp & Quét" = nhập đơn thủ công 1 khung: luôn emit
             # product_scanned ngay, không đi nhánh checkout (grace/người).
             manual_scan=True,
-            min_confidence=0.25,
+            min_confidence=0.15,
         )
     except Exception as exc:
         logger.exception("AI engine frame failed during manual trigger scan: %s", exc)

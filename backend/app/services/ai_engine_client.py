@@ -225,6 +225,7 @@ class AIEngineClient:
         recognize_face: bool = False,
         min_confidence: float = 0.25,
         manual_scan: bool = False,
+        skip_roi: bool = False,
     ) -> dict[str, Any]:
         url = f"{self._base_url}/ai/frame"
         files = {"image": (filename, content, content_type)}
@@ -234,6 +235,7 @@ class AIEngineClient:
             "recognize_face": "true" if recognize_face else "false",
             "min_confidence": str(min_confidence),
             "manual_scan": "true" if manual_scan else "false",
+            "skip_roi": "true" if skip_roi else "false",
         }
         if camera_id:
             data["camera_id"] = camera_id

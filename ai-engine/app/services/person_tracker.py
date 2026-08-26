@@ -349,6 +349,149 @@ def _iou(a: "TrackedObject", bx1: int, by1: int, bx2: int, by2: int) -> float:
     return inter / (area_a + area_b - inter)
 
 
+def _det_iou(a: "TrackedObject", b: "TrackedObject") -> float:
+    return _iou(a, int(b.x1), int(b.y1), int(b.x2), int(b.y2))
+
+
+def _boxes_from_yolo_result(
+    result, *, id_base: int, ox: float = 0.0, oy: float = 0.0
+) -> list[TrackedObject]:
+    """Read every box even when ByteTrack did not assign ids (single-frame scan)."""
+    names = result.names or {}
+    boxes = result.boxes
+    if boxes is None or len(boxes) == 0:
+        return []
+    n = len(boxes)
+    if boxes.id is not None:
+        ids = boxes.id.int().cpu().tolist()
+    else:
+        ids = [id_base + i for i in range(n)]
+    out: list[TrackedObject] = []
+    for i, tid in enumerate(ids):
+        cls_idx = int(boxes.cls[i]) if boxes.cls is not None else -1
+        class_name = str(names.get(cls_idx, str(cls_idx)))
+        if class_name.lower() == "person":
+            continue
+        conf = float(boxes.conf[i]) if boxes.conf is not None else 0.0
+        xy = boxes.xyxy[i].tolist()
+        out.append(
+            TrackedObject(
+                track_id=int(tid),
+                class_name=class_name,
+                confidence=conf,
+                x1=float(xy[0]) + ox,
+                y1=float(xy[1]) + oy,
+                x2=float(xy[2]) + ox,
+                y2=float(xy[3]) + oy,
+            )
+        )
+    return out
+
+
+def _nms_same_class(dets: list[TrackedObject], iou_thr: float = 0.45) -> list[TrackedObject]:
+    """Suppress overlaps of the SAME class only — 7up next to Sting must both survive."""
+    by_cls: dict[str, list[TrackedObject]] = {}
+    for d in dets:
+        by_cls.setdefault(d.class_name.lower(), []).append(d)
+    kept: list[TrackedObject] = []
+    for group in by_cls.values():
+        group = sorted(group, key=lambda d: d.confidence, reverse=True)
+        selected: list[TrackedObject] = []
+        for d in group:
+            if all(_det_iou(d, s) < iou_thr for s in selected):
+                selected.append(d)
+        kept.extend(selected)
+    return kept
+
+
+def _drop_giant_scene_boxes(dets: list[TrackedObject], width: int, height: int) -> list[TrackedObject]:
+    """Full-image training labels produce one box covering the whole counter.
+
+    Keep it only when it is the *only* detection; otherwise the smaller
+    tile/local boxes are the actual products.
+    """
+    area = float(max(1, width) * max(1, height))
+    localized = [
+        d for d in dets if ((d.x2 - d.x1) * (d.y2 - d.y1) / area) < 0.42
+    ]
+    return localized if localized else dets
+
+
+_DENSE_ID_BASE = 500_000
+
+
+def _dense_detect_products(model, img) -> list[TrackedObject]:
+    """Multi-window predict for a one-shot checkout scan.
+
+    Custom weights trained on full-image bboxes (0.5 0.5 1 1) usually emit
+    ONE class for the whole frame (often the most salient drink). Tiling
+    gives each product a close-up window the model actually knows how to
+    classify, then class-aware NMS merges the set.
+    """
+    import os
+
+    h, w = img.shape[:2]
+    conf = float(os.getenv("YOLO_CONF_THRESHOLD", "0.25"))
+    conf = min(conf, 0.20)
+    next_id = _DENSE_ID_BASE
+    collected: list[TrackedObject] = []
+
+    def _run_predict(source, ox: float = 0.0, oy: float = 0.0) -> None:
+        nonlocal next_id
+        results = model.predict(
+            source=source,
+            conf=conf,
+            iou=0.50,
+            max_det=30,
+            agnostic_nms=False,
+            verbose=False,
+        )
+        if not results:
+            return
+        boxes = _boxes_from_yolo_result(results[0], id_base=next_id, ox=ox, oy=oy)
+        next_id += max(1, len(boxes))
+        collected.extend(boxes)
+
+    _run_predict(img)
+    # 3×2 overlapping windows + center: a checkout counter with 3–4 products
+    # (7up / Sting / Hảo Hảo / Gấu Đỏ) needs more than one full-frame pass —
+    # the custom weight was trained on bbox=cả ảnh nên chỉ "thấy" 1 lớp/cửa sổ.
+    cols, rows = 3, 2
+    tw, th = max(32, int(w * 0.42)), max(32, int(h * 0.58))
+    origins: list[tuple[int, int]] = []
+    for r in range(rows):
+        for c in range(cols):
+            ox = int(round(c * (w - tw) / max(1, cols - 1)))
+            oy = int(round(r * (h - th) / max(1, rows - 1)))
+            origins.append((max(0, ox), max(0, oy)))
+    origins.append((max(0, (w - tw) // 2), max(0, (h - th) // 2)))
+    for ox, oy in origins:
+        tile = img[oy : oy + th, ox : ox + tw]
+        if tile.size == 0:
+            continue
+        _run_predict(tile, float(ox), float(oy))
+
+    pruned = _drop_giant_scene_boxes(collected, w, h)
+    merged = _nms_same_class(pruned, iou_thr=0.45)
+    logger.warning(
+        "DENSE DET: raw=%d localized=%d final=%d classes=%s",
+        len(collected),
+        len(pruned),
+        len(merged),
+        sorted({d.class_name for d in merged}),
+    )
+    return merged
+    ix1, iy1 = max(a.x1, bx1), max(a.y1, by1)
+    ix2, iy2 = min(a.x2, bx2), min(a.y2, by2)
+    iw, ih = max(0.0, ix2 - ix1), max(0.0, iy2 - iy1)
+    inter = iw * ih
+    if inter <= 0:
+        return 0.0
+    area_a = (a.x2 - a.x1) * (a.y2 - a.y1)
+    area_b = (bx2 - bx1) * (by2 - by1)
+    return inter / (area_a + area_b - inter)
+
+
 def _merge_classical_proposals(
     frame_bgr, detections: list["TrackedObject"], camera_key: str
 ) -> list["TrackedObject"]:
@@ -541,6 +684,7 @@ async def track_frame(
     *,
     is_checkout_zone: bool = False,
     roi_zones: list | None = None,
+    dense_detect: bool = False,
 ) -> list[TrackedObject]:
     """Unchanged contract — see module docstring. Delegates to
     :func:`track_frame_detailed` so both paths share one implementation."""
@@ -549,6 +693,7 @@ async def track_frame(
         camera_key,
         is_checkout_zone=is_checkout_zone,
         roi_zones=roi_zones,
+        dense_detect=dense_detect,
     )
     return outcome.detections
 
@@ -559,6 +704,7 @@ async def track_frame_detailed(
     *,
     is_checkout_zone: bool = False,
     roi_zones: list | None = None,
+    dense_detect: bool = False,
 ) -> TrackingOutcome:
     cfg = get_vision_config()
 
@@ -652,37 +798,20 @@ async def track_frame_detailed(
                         )
                 _LATEST_PERSON_BOXES[camera_key] = latest_boxes
 
-        # 2. Run object detection tracking on products
-        det_results = model_det.track(
-            source=img,
-            persist=True,
-            tracker="bytetrack.yaml",
-            verbose=False,
-        )
-        if det_results:
-            first_det = det_results[0]
-            names_det = first_det.names or {}
-            if first_det.boxes is not None and first_det.boxes.id is not None:
-                boxes = first_det.boxes
-                ids = boxes.id.int().cpu().tolist()
-                for i, tid in enumerate(ids):
-                    cls_idx = int(boxes.cls[i]) if boxes.cls is not None else -1
-                    class_name = names_det.get(cls_idx, str(cls_idx))
-                    if class_name.lower() == "person":
-                        continue
-                    conf = float(boxes.conf[i]) if boxes.conf is not None else 0.0
-                    xy = boxes.xyxy[i].tolist()
-                    out.append(
-                        TrackedObject(
-                            track_id=int(tid),
-                            class_name=str(class_name),
-                            confidence=conf,
-                            x1=float(xy[0]),
-                            y1=float(xy[1]),
-                            x2=float(xy[2]),
-                            y2=float(xy[3]),
-                        )
-                    )
+        # 2. Products: one-shot scan uses tiled predict (custom full-frame
+        # weights only see one class otherwise). Live path keeps ByteTrack
+        # but still accepts boxes that have no track id yet.
+        if dense_detect:
+            out.extend(_dense_detect_products(model_det, img))
+        else:
+            det_results = model_det.track(
+                source=img,
+                persist=True,
+                tracker="bytetrack.yaml",
+                verbose=False,
+            )
+            if det_results:
+                out.extend(_boxes_from_yolo_result(det_results[0], id_base=1))
         return out
 
     yolo_timer = StageTimer()
