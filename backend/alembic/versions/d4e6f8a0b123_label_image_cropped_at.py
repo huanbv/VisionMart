@@ -17,10 +17,14 @@ depends_on = None
 
 
 def upgrade() -> None:
-    op.add_column(
-        "ai_label_images",
-        sa.Column("cropped_at", sa.DateTime(timezone=True), nullable=True),
-    )
+    bind = op.get_bind()
+    insp = sa.inspect(bind)
+    existing = {c["name"] for c in insp.get_columns("ai_label_images")}
+    if "cropped_at" not in existing:
+        op.add_column(
+            "ai_label_images",
+            sa.Column("cropped_at", sa.DateTime(timezone=True), nullable=True),
+        )
     # Ảnh đã gán nhãn trước khi có luồng cắt — coi như đã xử lý.
     op.execute(
         """

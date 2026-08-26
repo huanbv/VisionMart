@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import uuid
 
 from fastapi import (
@@ -14,6 +15,7 @@ from fastapi import (
     UploadFile,
     status,
 )
+from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database.session import get_session
@@ -37,6 +39,25 @@ from app.services.object_storage import MinioStorage
 router = APIRouter(prefix="/ai/training/labels", tags=["ai-labeling"])
 
 _TRAINER_ROLES = ("super_admin", "org_admin", "ai_engineer")
+logger = logging.getLogger(__name__)
+_MIGRATION_HINT = (
+    "Database chưa migrate — trên VPS chạy: "
+    "sudo docker compose exec backend alembic upgrade head"
+)
+
+
+def _raise_db_error(exc: DBAPIError) -> None:
+    raw = str(exc.orig) if getattr(exc, "orig", None) else str(exc)
+    logger.exception("labeling database error: %s", raw)
+    if "cropped_at" in raw or "does not exist" in raw or "UndefinedColumn" in raw:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=_MIGRATION_HINT,
+        ) from exc
+    raise HTTPException(
+        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        detail="Lỗi database khi truy vấn ảnh gán nhãn",
+    ) from exc
 
 
 def _service(session: AsyncSession) -> LabelingService:
@@ -95,13 +116,16 @@ async def list_label_images(
     session: AsyncSession = Depends(get_session),
 ) -> LabelImageListResponse:
     service = _service(session)
-    rows, total, labeled_count, pending_count, pending_crop = await service.list_images(
-        organization_id=current.organization_id,
-        skip=skip,
-        limit=limit,
-        labeled=labeled,
-        cropped=cropped,
-    )
+    try:
+        rows, total, labeled_count, pending_count, pending_crop = await service.list_images(
+            organization_id=current.organization_id,
+            skip=skip,
+            limit=limit,
+            labeled=labeled,
+            cropped=cropped,
+        )
+    except DBAPIError as exc:
+        _raise_db_error(exc)
     items = []
     for row, box_count in rows:
         base = _summary(row, int(box_count or 0))
@@ -265,7 +289,10 @@ async def labeling_stats(
     session: AsyncSession = Depends(get_session),
 ) -> LabelingStatsResponse:
     service = _service(session)
-    data = await service.stats(organization_id=current.organization_id)
+    try:
+        data = await service.stats(organization_id=current.organization_id)
+    except DBAPIError as exc:
+        _raise_db_error(exc)
     return LabelingStatsResponse(**data)
 
 

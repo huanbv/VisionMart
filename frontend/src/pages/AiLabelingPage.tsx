@@ -50,7 +50,7 @@ import {
   type LabelingStats,
 } from "@/api/aiLabeling";
 import { getTrainingJob, listTrainingJobs, type TrainingJob } from "@/api/aiTraining";
-import { ensureAccessTokenFresh } from "@/api/client";
+import { ensureAccessTokenFresh, formatApiErrorDetail } from "@/api/client";
 import { useAuth } from "@/contexts/AuthContext";
 
 const { Title, Text, Paragraph } = Typography;
@@ -176,14 +176,11 @@ export default function AiLabelingPage() {
       setItems(res.items);
       setTotal(res.total);
     } catch (e: unknown) {
-      const detail =
-        e && typeof e === "object" && "response" in e
-          ? (e as { response?: { data?: { detail?: string } } }).response?.data?.detail
-          : undefined;
       message.error(
-        typeof detail === "string"
-          ? detail
-          : "Không tải được danh sách ảnh — chạy migration DB nếu vừa deploy"
+        formatApiErrorDetail(
+          e,
+          "Không tải được danh sách ảnh — chạy migration DB nếu vừa deploy"
+        )
       );
     } finally {
       setLoading(false);

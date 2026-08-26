@@ -78,6 +78,27 @@ export async function ensureAccessTokenFresh(): Promise<void> {
   await refreshAccessTokenOnce();
 }
 
+/** Turn FastAPI/axios error payloads into a single user-facing string. */
+export function formatApiErrorDetail(error: unknown, fallback: string): string {
+  if (!error || typeof error !== "object" || !("response" in error)) return fallback;
+  const detail = (error as { response?: { data?: { detail?: unknown } } }).response?.data
+    ?.detail;
+  if (typeof detail === "string" && detail.trim()) return detail;
+  if (Array.isArray(detail)) {
+    const parts = detail
+      .map((item) => {
+        if (item && typeof item === "object" && "msg" in item) {
+          return String((item as { msg: unknown }).msg);
+        }
+        return String(item);
+      })
+      .filter(Boolean);
+    if (parts.length) return parts.join("; ");
+  }
+  if (error instanceof AxiosError && error.message) return error.message;
+  return fallback;
+}
+
 apiClient.interceptors.response.use(
   (r) => r,
   async (error: AxiosError) => {
