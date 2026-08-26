@@ -14,19 +14,12 @@ The backend proxies this endpoint (see camera_router.py's
 `/cameras/{id}/live`) rather than exposing it to the browser directly —
 same "AI Engine isolation" boundary every other route here respects.
 
-Optional live YOLO overlay (`detect=true`, the default): every
-`detect_every_n`-th frame is run through the same `YoloDetector` used by
-`/detect` and `/capture`. Products are marked with colored dots at each
-box center (not full rectangles — custom weights often emit giant boxes
-that bury the counter). Persons keep a thin box. A HUD shows object
-count, inference time, and achieved fps. Detection does NOT run on
-every frame — YOLO inference on CPU is far slower than the stream's
-target fps, so inference runs in one background task while capture/JPEG
-delivery continues at camera speed. The last completed detection result is
-held and redrawn until the next result arrives. This is a fine trade-off for
-"watch it live and see markers appear," not analytics (the persisted
-DetectionEvent pipeline in the backend — rtsp.scan_all — is the source of
-truth for that).
+Optional live overlay (`detect=true`, the default) reuses the most recent
+detections produced by `/ai/frame`; it does not run a second dense YOLO model
+beside the video decoder. Products are marked with colored dots and persons
+keep a thin box. This keeps capture/JPEG delivery at camera speed even when
+one inference takes more than a second. `use_cached_detections=false` retains
+the asynchronous standalone detector as a debugging fallback.
 """
 
 from __future__ import annotations
@@ -279,9 +272,16 @@ def _run_live_detection(
     )
     _label_with_sku(frame, detections)
 
+    _append_latest_people(detections, camera_key, frame.shape[1], frame.shape[0])
+    return detections, (time.perf_counter() - started) * 1000.0
+
+
+def _append_latest_people(
+    detections: list[dict], camera_key: str, frame_w: int, frame_h: int
+) -> None:
     from app.services.person_tracker import get_latest_person_boxes
 
-    for tracked in get_latest_person_boxes(camera_key):
+    for tracked in get_latest_person_boxes(camera_key, frame_w, frame_h):
         bbox = tracked.get("bbox") or [0, 0, 0, 0]
         detections.append(
             {
@@ -297,7 +297,6 @@ def _run_live_detection(
                 },
             }
         )
-    return detections, (time.perf_counter() - started) * 1000.0
 
 
 async def _mjpeg_frames(
@@ -312,6 +311,8 @@ async def _mjpeg_frames(
     organization_id: str | None = None,
     branch_id: str | None = None,
     sku_names: dict[str, str] | None = None,
+    camera_key: str | None = None,
+    use_cached_detections: bool = True,
 ):
     fps = max(_MIN_FPS, min(_MAX_FPS, fps))
     interval = 1.0 / fps
@@ -327,7 +328,7 @@ async def _mjpeg_frames(
             return
 
         detector: YoloDetector | None = None
-        if detect:
+        if detect and not use_cached_detections:
             try:
                 detector = await asyncio.to_thread(YoloDetector.get)
             except Exception:  # noqa: BLE001
@@ -346,14 +347,17 @@ async def _mjpeg_frames(
         achieved_fps = fps
         last_tick = time.perf_counter()
 
-        camera_key = "default"
-        try:
-            import re
-            _cam_match = re.search(r"cam-([a-f0-9-]{36})", stream_url, re.IGNORECASE)
-            if _cam_match:
-                camera_key = _cam_match.group(1)
-        except Exception:
-            camera_key = "default"
+        resolved_camera_key = camera_key or "default"
+        if not camera_key:
+            try:
+                import re
+                match = re.search(
+                    r"cam-([a-f0-9-]{36})", stream_url, re.IGNORECASE
+                )
+                if match:
+                    resolved_camera_key = match.group(1)
+            except Exception:
+                resolved_camera_key = "default"
 
         while True:
             # Stop as soon as the client (backend proxy -> browser tab)
@@ -389,6 +393,30 @@ async def _mjpeg_frames(
                 instant_fps = 1.0 / delta
                 achieved_fps = (achieved_fps * 0.8) + (instant_fps * 0.2)
 
+            if detect and use_cached_detections:
+                from app.services.person_tracker import (
+                    get_last_vision_result,
+                    get_latest_product_boxes,
+                )
+
+                last_detections = get_latest_product_boxes(
+                    resolved_camera_key, frame.shape[1], frame.shape[0]
+                )
+                _label_from_training(
+                    last_detections,
+                    organization_id=organization_id,
+                    branch_id=branch_id,
+                    sku_names=sku_names or {},
+                )
+                _append_latest_people(
+                    last_detections,
+                    resolved_camera_key,
+                    frame.shape[1],
+                    frame.shape[0],
+                )
+                timing = get_last_vision_result(resolved_camera_key) or {}
+                last_infer_ms = timing.get("yolo_bytetrack_ms")
+
             # Collect a completed inference without ever blocking frame
             # delivery. Previously this loop awaited a 1.2s YOLO call inline,
             # freezing the MJPEG feed every third frame (~4.5 fps in practice).
@@ -417,14 +445,14 @@ async def _mjpeg_frames(
                         detector,
                         frame.copy(),
                         zones or [],
-                        camera_key,
+                        resolved_camera_key,
                         organization_id,
                         branch_id,
                         sku_names or {},
                     )
                 )
 
-            if detector is not None:
+            if detect:
                 # Lọc theo vùng NGAY TRƯỚC khi vẽ (dùng kích thước khung hiện
                 # tại), để panel chỉ hiện box trong vùng — khớp với giỏ.
                 visible = _filter_by_zones(frame, last_detections, zones or [])
@@ -435,7 +463,12 @@ async def _mjpeg_frames(
                 try:
                     from app.services.person_tracker import get_all_trajectories_xy
                     _fh, _fw = frame.shape[:2]
-                    _draw_trajectories(frame, get_all_trajectories_xy(camera_key, _fw, _fh))
+                    _draw_trajectories(
+                        frame,
+                        get_all_trajectories_xy(
+                            resolved_camera_key, _fw, _fh
+                        ),
+                    )
                 except Exception:  # noqa: BLE001
                     logger.exception("live stream: trajectory overlay failed")
                 _draw_detections(frame, visible)
@@ -444,7 +477,11 @@ async def _mjpeg_frames(
                     object_count=len(visible),
                     infer_ms=last_infer_ms,
                     fps=achieved_fps,
-                    model_name=detector.model_name,
+                    model_name=(
+                        detector.model_name
+                        if detector is not None
+                        else "cart-pipeline cache"
+                    ),
                 )
 
             ok2, buf = cv2.imencode(
@@ -487,6 +524,8 @@ async def live_stream(
     organization_id: str | None = Query(default=None, max_length=64),
     branch_id: str | None = Query(default=None, max_length=64),
     sku_names: str | None = Query(default=None, max_length=20000),
+    camera_key: str | None = Query(default=None, max_length=128),
+    use_cached_detections: bool = Query(default=True),
 ) -> StreamingResponse:
     # roi_zones: JSON các vùng (toạ độ phân số) do backend chuyển xuống. Chỉ
     # để LỌC box hiển thị cho khớp giỏ; lỗi parse thì bỏ qua (panel vẫn chạy,
@@ -519,6 +558,8 @@ async def live_stream(
             organization_id,
             branch_id,
             names,
+            camera_key,
+            use_cached_detections,
         ),
         media_type=f"multipart/x-mixed-replace; boundary={_BOUNDARY.decode()}",
     )

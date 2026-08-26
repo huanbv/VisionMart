@@ -283,10 +283,13 @@ class AIEngineClient:
         open_timeout_ms: int = 5000,
         detect: bool = True,
         detect_every_n: int = 3,
+        jpeg_quality: int = 80,
         roi_zones: str | None = None,
         organization_id: str | None = None,
         branch_id: str | None = None,
         sku_names: str | None = None,
+        camera_key: str | None = None,
+        use_cached_detections: bool = True,
     ) -> AsyncIterator[bytes]:
         """Async-generator proxy for the ai-engine's continuous MJPEG
         ``/live`` endpoint (app/api/live.py). Yields raw multipart chunk
@@ -306,9 +309,15 @@ class AIEngineClient:
             "stream_url": stream_url,
             "fps": fps,
             "open_timeout_ms": open_timeout_ms,
-            "jpeg_quality": 90,
+            # 1280x720 JPEG at quality 90 can saturate the backend/browser
+            # proxy path at 30 FPS. Quality 80 is visually equivalent in the
+            # dashboard-sized player and substantially lowers bandwidth.
+            "jpeg_quality": max(10, min(95, jpeg_quality)),
             "detect": "true" if detect else "false",
             "detect_every_n": detect_every_n,
+            "use_cached_detections": (
+                "true" if use_cached_detections else "false"
+            ),
         }
         # Chuyển vùng ROI xuống để ai-engine chỉ vẽ box trong vùng (khớp giỏ).
         if roi_zones:
@@ -319,6 +328,8 @@ class AIEngineClient:
             params["branch_id"] = branch_id
         if sku_names:
             params["sku_names"] = sku_names
+        if camera_key:
+            params["camera_key"] = camera_key
         try:
             async with httpx.AsyncClient(timeout=None) as client:
                 async with client.stream(

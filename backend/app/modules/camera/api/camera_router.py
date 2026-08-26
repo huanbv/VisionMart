@@ -615,9 +615,9 @@ async def live_camera_stream(
     it fetches this manually and parses the multipart frames itself — see
     frontend/src/utils/mjpegStream.ts.
 
-    ``detect`` (default on) asks ai-engine to burn YOLO boxes + a small
-    HUD into the frames before they reach us — see live.py. Purely a
-    pass-through param; the backend never decodes a single frame here.
+    ``detect`` (default on) asks ai-engine to draw the latest cached
+    `/ai/frame` results + HUD before frames reach us. The backend never
+    decodes a frame and live viewing does not launch another dense YOLO.
     """
     service = _service(session)
     try:
@@ -662,6 +662,11 @@ async def live_camera_stream(
             organization_id=str(current.organization_id),
             branch_id=str(camera.branch_id),
             sku_names=sku_names_json,
+            camera_key=str(camera.id),
+            # Reuse /ai/frame results instead of running a second dense YOLO
+            # beside MJPEG encoding; the latter saturated CPU and held live
+            # video near 5 FPS even after inference became asynchronous.
+            use_cached_detections=True,
         ),
         media_type="multipart/x-mixed-replace; boundary=frame",
     )

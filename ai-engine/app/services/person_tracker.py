@@ -52,14 +52,92 @@ _MODEL_LOCK = asyncio.Lock()
 
 _LAST_VISION_RESULT: dict[str, dict[str, Any]] = {}
 _LATEST_PERSON_BOXES: dict[str, list[dict]] = {}
+_LATEST_PRODUCT_BOXES: dict[str, dict[str, Any]] = {}
 
-def get_latest_person_boxes(camera_key: str) -> list[dict]:
+def get_latest_person_boxes(
+    camera_key: str, frame_w: int | None = None, frame_h: int | None = None
+) -> list[dict]:
     import time
     now = time.time()
     boxes = _LATEST_PERSON_BOXES.get(camera_key, [])
     valid_boxes = [b for b in boxes if now - b["timestamp"] < 10.0]
     _LATEST_PERSON_BOXES[camera_key] = valid_boxes
-    return valid_boxes
+    if not frame_w or not frame_h:
+        return valid_boxes
+    scaled: list[dict] = []
+    for item in valid_boxes:
+        source_w = max(1, int(item.get("frame_w") or frame_w))
+        source_h = max(1, int(item.get("frame_h") or frame_h))
+        x1, y1, x2, y2 = item["bbox"]
+        scaled.append(
+            {
+                **item,
+                "bbox": [
+                    x1 * frame_w / source_w,
+                    y1 * frame_h / source_h,
+                    x2 * frame_w / source_w,
+                    y2 * frame_h / source_h,
+                ],
+            }
+        )
+    return scaled
+
+
+def get_latest_product_boxes(
+    camera_key: str, frame_w: int, frame_h: int, max_age_seconds: float = 10.0
+) -> list[dict]:
+    """Return recent cart-pipeline boxes scaled to the live frame size."""
+    import time
+
+    cached = _LATEST_PRODUCT_BOXES.get(camera_key)
+    if not cached or time.time() - cached["timestamp"] > max_age_seconds:
+        return []
+    out: list[dict] = []
+    for item in cached["boxes"]:
+        x1, y1, x2, y2 = item["bbox_norm"]
+        out.append(
+            {
+                "class_name": item["class_name"],
+                "confidence": item["confidence"],
+                "bbox": {
+                    "x1": int(x1 * frame_w),
+                    "y1": int(y1 * frame_h),
+                    "x2": int(x2 * frame_w),
+                    "y2": int(y2 * frame_h),
+                },
+            }
+        )
+    return out
+
+
+def _cache_latest_product_boxes(
+    camera_key: str,
+    detections: list[TrackedObject],
+    frame_w: int,
+    frame_h: int,
+) -> None:
+    """Publish product boxes for live display without a second YOLO pass."""
+    import time
+
+    if frame_w <= 0 or frame_h <= 0:
+        return
+    _LATEST_PRODUCT_BOXES[camera_key] = {
+        "timestamp": time.time(),
+        "boxes": [
+            {
+                "class_name": d.class_name,
+                "confidence": float(d.confidence),
+                "bbox_norm": (
+                    max(0.0, min(1.0, d.x1 / frame_w)),
+                    max(0.0, min(1.0, d.y1 / frame_h)),
+                    max(0.0, min(1.0, d.x2 / frame_w)),
+                    max(0.0, min(1.0, d.y2 / frame_h)),
+                ),
+            }
+            for d in detections
+            if str(d.class_name).lower() != "person"
+        ],
+    }
 
 
 # --- Quỹ đạo di chuyển từng người (vài giây gần nhất) ---
@@ -886,7 +964,9 @@ async def track_frame_detailed(
                             latest_boxes.append({
                                 "mapped_id": obj.track_id,
                                 "bbox": [obj.x1, obj.y1, obj.x2, obj.y2],
-                                "timestamp": now_ts
+                                "timestamp": now_ts,
+                                "frame_w": frame_w,
+                                "frame_h": frame_h,
                             })
                             record_person_position(
                                 camera_key, obj.track_id, obj.cx, obj.cy, now_ts,
@@ -971,6 +1051,7 @@ async def track_frame_detailed(
         if str(getattr(d, "class_name", "")).lower() == "person"
         or ((d.x2 - d.x1) * (d.y2 - d.y1) / frame_area) < 0.35
     ]
+    _cache_latest_product_boxes(camera_key, detections, fw, fh)
 
     record_pipeline_timing(
         camera_key,
