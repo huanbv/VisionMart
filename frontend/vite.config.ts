@@ -20,9 +20,15 @@ export default defineConfig({
         target: "http://localhost:8000",
         changeOrigin: true,
       },
+      // Proxy ai-engine, nhưng bỏ qua route SPA /ai-training, /ai-labeling…
       "/ai": {
         target: "http://localhost:8100",
         changeOrigin: true,
+        bypass(req) {
+          const path = (req.url ?? "").split("?")[0] ?? "";
+          if (/^\/ai-/.test(path)) return path;
+          return null;
+        },
         rewrite: (path) => path.replace(/^\/ai/, ""),
       },
       "/ws": {
