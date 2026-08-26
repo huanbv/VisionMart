@@ -75,22 +75,42 @@ def map_class_to_sku(
          every branch. This branch was previously missing, which is why a
          file shaped ``{org: {_default: {...}}}`` silently mapped nothing
          unless a camera's branch_id happened to be literally "_default".
-      3. ``data["_default"][class]`` — global default across all tenants.
+      3. Any other branch bucket under the org (training writes to the
+         job's branch_id, which may differ from the live camera's).
+      4. ``data["_default"][class]`` — global default across all tenants.
     """
     with _LOCK:
         data = _load()
     if not data:
         return None
+    key = str(class_name).strip()
+    key_l = key.lower()
+
+    def _from_map(mapping: object) -> str | None:
+        if not isinstance(mapping, dict):
+            return None
+        if key in mapping and mapping[key]:
+            return str(mapping[key])
+        for ck, sku in mapping.items():
+            if str(ck).lower() == key_l and sku:
+                return str(sku)
+        return None
+
     org_map = data.get(str(organization_id)) or {}
-    branch_map = org_map.get(str(branch_id)) or {}
-    sku = branch_map.get(class_name)
-    if sku:
-        return str(sku)
-    org_default = (org_map.get("_default") or {}).get(class_name)
-    if org_default:
-        return str(org_default)
-    fallback = (data.get("_default") or {}).get(class_name)
-    return str(fallback) if fallback else None
+    hit = _from_map(org_map.get(str(branch_id)))
+    if hit:
+        return hit
+    hit = _from_map(org_map.get("_default"))
+    if hit:
+        return hit
+    if isinstance(org_map, dict):
+        for bkey, bmap in org_map.items():
+            if str(bkey) in {str(branch_id), "_default"}:
+                continue
+            hit = _from_map(bmap)
+            if hit:
+                return hit
+    return _from_map(data.get("_default"))
 
 
 # ---------------------------------------------------------------- editing

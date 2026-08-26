@@ -11,10 +11,19 @@ from __future__ import annotations
 from app.vision.roi.zones import (
     RoiZone,
     apply_roi,
+    box_mostly_in_zones,
     load_roi_config,
     point_in_zones,
+    zone_union_bbox,
     zones_from_payload,
 )
 
-__all__ = ["RoiZone", "apply_roi", "load_roi_config",
-    "point_in_zones", "zones_from_payload"]
+__all__ = [
+    "RoiZone",
+    "apply_roi",
+    "box_mostly_in_zones",
+    "load_roi_config",
+    "point_in_zones",
+    "zone_union_bbox",
+    "zones_from_payload",
+]

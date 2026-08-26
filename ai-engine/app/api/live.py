@@ -45,7 +45,13 @@ from app.services.person_tracker import TRAJECTORY_PALETTE as _TRAJECTORY_PALETT
 from app.services.yolo_detector import YoloDetector
 from app.vision.classify import get_classifier
 from app.vision.crop.cropper import crop_detection
-from app.vision.roi import RoiZone, point_in_zones, zones_from_payload
+from app.vision.roi import (
+    RoiZone,
+    apply_roi,
+    box_mostly_in_zones,
+    zone_union_bbox,
+    zones_from_payload,
+)
 
 logger = logging.getLogger("ai-engine.live")
 
@@ -113,6 +119,8 @@ def _label_with_sku(frame, detections: list[dict]) -> None:
     for det in detections:
         if str(det.get("class_name") or "").lower() == "person":
             continue
+        if det.get("sku_label"):
+            continue
         bbox = det.get("bbox") or {}
         try:
             crop = crop_detection(
@@ -139,6 +147,8 @@ def _label_with_sku(frame, detections: list[dict]) -> None:
     for (det, _), res in zip(targets, results):
         if res is None:
             continue
+        if det.get("sku_label"):
+            continue
         # Duoi nguong thi noi ro la "khong chac" thay vi im lang hien ten
         # san pham: mot nhan sai nhung trong day tu tin con nguy hiem hon
         # nhan "bottle" trung thuc, vi nguoi dung se tin no.
@@ -150,12 +160,43 @@ def _label_with_sku(frame, detections: list[dict]) -> None:
             det["sku_confidence"] = res.confidence
 
 
+def _label_from_training(
+    detections: list[dict],
+    *,
+    organization_id: str | None,
+    branch_id: str | None,
+    sku_names: dict[str, str],
+) -> None:
+    """Gắn tên sản phẩm đã train/deploy (class → SKU → tên catalog).
+
+    Live đang hiện `du_sti 75%` vì overlay chỉ in class YOLO. Mapping từ
+    /ai-training đã nằm trong class_to_sku.json — đọc ra để admin thấy
+    "Gấu Đỏ" / "7Up" đúng như trang training.
+    """
+    if not organization_id or not detections:
+        return
+    from app.services.product_mapper import map_class_to_sku
+
+    for det in detections:
+        if str(det.get("class_name") or "").lower() == "person":
+            continue
+        sku = map_class_to_sku(
+            organization_id, branch_id or "", str(det.get("class_name") or "")
+        )
+        if not sku:
+            continue
+        det["sku_label"] = sku_names.get(sku) or sku
+        det["sku_confidence"] = float(det.get("confidence") or 0.0)
+
+
 def _filter_by_zones(
     frame, detections: list[dict], zones: list[RoiZone]
 ) -> list[dict]:
-    """Chỉ giữ box có TÂM nằm trong vùng ROI, hoặc lớp là 'person', để lớp phủ xem-trực-tiếp khớp
-    với hành vi thêm-vào-giỏ (vẫn dựa trên mặt nạ ROI). Không có vùng => giữ
-    nguyên tất cả (hành vi cũ)."""
+    """Chỉ giữ box sản phẩm nằm phần lớn trong vùng ROI; người vẫn hiện.
+
+    Lọc theo tâm box không đủ: model train bbox-cả-ảnh cho box khổng lồ
+    phủ tượng ngựa bên trái, tâm vẫn rơi vào vùng thanh toán.
+    """
     if not zones:
         return detections
     h, w = frame.shape[:2]
@@ -168,11 +209,11 @@ def _filter_by_zones(
 
         bbox = det.get("bbox") or {}
         try:
-            cx = (float(bbox["x1"]) + float(bbox["x2"])) / 2.0
-            cy = (float(bbox["y1"]) + float(bbox["y2"])) / 2.0
+            x1, y1 = float(bbox["x1"]), float(bbox["y1"])
+            x2, y2 = float(bbox["x2"]), float(bbox["y2"])
         except (KeyError, TypeError, ValueError):
             continue
-        if point_in_zones(zones, cx, cy, w, h):
+        if box_mostly_in_zones(zones, x1, y1, x2, y2, w, h, min_frac=0.5):
             out.append(det)
     return out
 
@@ -273,6 +314,9 @@ async def _mjpeg_frames(
     detect: bool,
     detect_every_n: int,
     zones: list[RoiZone] | None = None,
+    organization_id: str | None = None,
+    branch_id: str | None = None,
+    sku_names: dict[str, str] | None = None,
 ):
     fps = max(_MIN_FPS, min(_MAX_FPS, fps))
     interval = 1.0 / fps
@@ -352,10 +396,21 @@ async def _mjpeg_frames(
             if detector is not None and frame_index % detect_every_n == 0:
                 started = time.perf_counter()
                 try:
-                    # Tiled overlay so 3 products in the pay zone each get a
-                    # box — single-pass custom weights usually draw 0–1.
+                    infer_src = frame
+                    roi_rect = None
+                    if zones:
+                        infer_src = apply_roi(frame, zones)
+                        roi_rect = zone_union_bbox(
+                            zones, frame.shape[1], frame.shape[0]
+                        )
                     last_detections = await asyncio.to_thread(
-                        detector.detect_dense_bgr, frame, "overlay"
+                        detector.detect_dense_bgr, infer_src, "overlay", roi_rect
+                    )
+                    _label_from_training(
+                        last_detections,
+                        organization_id=organization_id,
+                        branch_id=branch_id,
+                        sku_names=sku_names or {},
                     )
                     _label_with_sku(frame, last_detections)
 
@@ -437,6 +492,9 @@ async def live_stream(
         default=3, ge=_MIN_DETECT_EVERY_N, le=_MAX_DETECT_EVERY_N
     ),
     roi_zones: str | None = Query(default=None, max_length=20000),
+    organization_id: str | None = Query(default=None, max_length=64),
+    branch_id: str | None = Query(default=None, max_length=64),
+    sku_names: str | None = Query(default=None, max_length=20000),
 ) -> StreamingResponse:
     # roi_zones: JSON các vùng (toạ độ phân số) do backend chuyển xuống. Chỉ
     # để LỌC box hiển thị cho khớp giỏ; lỗi parse thì bỏ qua (panel vẫn chạy,
@@ -448,6 +506,14 @@ async def live_stream(
         except Exception:  # noqa: BLE001
             logger.warning("live stream: roi_zones parse lỗi, bỏ lọc vùng", exc_info=True)
             zones = []
+    names: dict[str, str] = {}
+    if sku_names:
+        try:
+            parsed = json.loads(sku_names)
+            if isinstance(parsed, dict):
+                names = {str(k): str(v) for k, v in parsed.items()}
+        except Exception:  # noqa: BLE001
+            logger.warning("live stream: sku_names parse lỗi", exc_info=True)
     return StreamingResponse(
         _mjpeg_frames(
             request,
@@ -458,6 +524,9 @@ async def live_stream(
             detect,
             detect_every_n,
             zones,
+            organization_id,
+            branch_id,
+            names,
         ),
         media_type=f"multipart/x-mixed-replace; boundary={_BOUNDARY.decode()}",
     )

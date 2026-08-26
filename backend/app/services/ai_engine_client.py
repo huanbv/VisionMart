@@ -282,6 +282,9 @@ class AIEngineClient:
         detect: bool = True,
         detect_every_n: int = 3,
         roi_zones: str | None = None,
+        organization_id: str | None = None,
+        branch_id: str | None = None,
+        sku_names: str | None = None,
     ) -> AsyncIterator[bytes]:
         """Async-generator proxy for the ai-engine's continuous MJPEG
         ``/live`` endpoint (app/api/live.py). Yields raw multipart chunk
@@ -308,6 +311,12 @@ class AIEngineClient:
         # Chuyển vùng ROI xuống để ai-engine chỉ vẽ box trong vùng (khớp giỏ).
         if roi_zones:
             params["roi_zones"] = roi_zones
+        if organization_id:
+            params["organization_id"] = organization_id
+        if branch_id:
+            params["branch_id"] = branch_id
+        if sku_names:
+            params["sku_names"] = sku_names
         try:
             async with httpx.AsyncClient(timeout=None) as client:
                 async with client.stream(

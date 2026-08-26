@@ -111,7 +111,12 @@ class YoloDetector:
                 )
         return detections
 
-    def detect_dense_bgr(self, frame_bgr, layout: str = "overlay") -> list[dict[str, Any]]:
+    def detect_dense_bgr(
+        self,
+        frame_bgr,
+        layout: str = "overlay",
+        roi_rect: tuple[int, int, int, int] | None = None,
+    ) -> list[dict[str, Any]]:
         """Tiled predict on a BGR OpenCV frame — used by the live MJPEG HUD.
 
         Uses this detector's own weights (not the ByteTrack instance) so
@@ -119,7 +124,9 @@ class YoloDetector:
         """
         from app.services.person_tracker import dense_detect_on_model
 
-        objs = dense_detect_on_model(self._model, frame_bgr, layout=layout)
+        objs = dense_detect_on_model(
+            self._model, frame_bgr, layout=layout, roi_rect=roi_rect
+        )
         return [
             {
                 "class_name": d.class_name,

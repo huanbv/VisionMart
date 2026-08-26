@@ -577,6 +577,21 @@ async def live_camera_stream(
     # khớp với hành vi thêm-vào-giỏ (vốn dựa trên mặt nạ ROI). Không có vùng
     # thì bỏ qua — panel giữ nguyên hành vi vẽ cả khung như trước.
     roi_zones_json = json.dumps(camera.roi_zones) if camera.roi_zones else None
+    sku_names_json = None
+    try:
+        from app.modules.catalog.infrastructure.repositories import (
+            SqlAlchemyProductRepository,
+        )
+
+        items, _ = await SqlAlchemyProductRepository(session).list_for_org(
+            current.organization_id, skip=0, limit=200, is_active=True
+        )
+        sku_names_json = json.dumps(
+            {p.sku: p.name for p in items if p.sku},
+            ensure_ascii=False,
+        )
+    except Exception:
+        logger.exception("live stream: could not load product names for overlay")
     return StreamingResponse(
         client.live_stream(
             stream_url=camera.stream_url,
@@ -585,6 +600,9 @@ async def live_camera_stream(
             detect=detect,
             detect_every_n=detect_every_n,
             roi_zones=roi_zones_json,
+            organization_id=str(current.organization_id),
+            branch_id=str(camera.branch_id),
+            sku_names=sku_names_json,
         ),
         media_type="multipart/x-mixed-replace; boundary=frame",
     )

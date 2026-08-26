@@ -173,3 +173,75 @@ def point_in_zones(
         if cv2.pointPolygonTest(polygon, (float(x), float(y)), False) >= 0:
             return True
     return False
+
+
+def zone_union_bbox(
+    zones: list[RoiZone], width: int, height: int
+) -> tuple[int, int, int, int] | None:
+    """Axis-aligned bounding rect of the union of zones, in pixels."""
+    if not zones:
+        return None
+    xs: list[int] = []
+    ys: list[int] = []
+    for zone in zones:
+        for x, y in zone.points:
+            xs.append(int(round(x * width)))
+            ys.append(int(round(y * height)))
+    if not xs:
+        return None
+    return (
+        max(0, min(xs)),
+        max(0, min(ys)),
+        min(width, max(xs)),
+        min(height, max(ys)),
+    )
+
+
+def box_fraction_in_zones(
+    zones: list[RoiZone],
+    x1: float,
+    y1: float,
+    x2: float,
+    y2: float,
+    width: int,
+    height: int,
+) -> float:
+    """How much of the detection box (by area) lies inside the ROI union.
+
+    A giant box whose label sits on a statue to the left of the pay zone
+    can still have its *center* inside the polygon. Requiring most of the
+    box to overlap the zone drops those false positives.
+    """
+    if not zones:
+        return 1.0
+    import cv2
+
+    w, h = max(1, int(width)), max(1, int(height))
+    bx1 = int(max(0, min(w, x1)))
+    by1 = int(max(0, min(h, y1)))
+    bx2 = int(max(0, min(w, x2)))
+    by2 = int(max(0, min(h, y2)))
+    box_area = float(max(1, bx2 - bx1) * max(1, by2 - by1))
+    mask = np.zeros((h, w), dtype=np.uint8)
+    for zone in zones:
+        cv2.fillPoly(mask, [zone.to_pixel_polygon(w, h)], 255)
+    box = np.zeros((h, w), dtype=np.uint8)
+    cv2.rectangle(box, (bx1, by1), (bx2, by2), 255, -1)
+    inter = cv2.countNonZero(cv2.bitwise_and(mask, box))
+    return float(inter) / box_area
+
+
+def box_mostly_in_zones(
+    zones: list[RoiZone],
+    x1: float,
+    y1: float,
+    x2: float,
+    y2: float,
+    width: int,
+    height: int,
+    min_frac: float = 0.5,
+) -> bool:
+    """True when the box is a product sitting in the pay zone, not spilling out."""
+    if not zones:
+        return True
+    return box_fraction_in_zones(zones, x1, y1, x2, y2, width, height) >= min_frac

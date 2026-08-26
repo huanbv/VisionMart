@@ -388,13 +388,17 @@ def _boxes_from_yolo_result(
 _DENSE_ID_BASE = 500_000
 
 
-def dense_detect_on_model(model, img, *, layout: str = "scan") -> list[TrackedObject]:
+def dense_detect_on_model(
+    model, img, *, layout: str = "scan", roi_rect: tuple[int, int, int, int] | None = None
+) -> list[TrackedObject]:
     """Multi-window predict, then spatial cluster to one box per product.
 
     Custom weights trained on full-image bboxes (0.5 0.5 1 1) usually emit
     ONE class for the whole frame. Tiling gives each product a close-up,
     then :func:`merge_tiled_detections` collapses duplicate windows of the
     same bottle so a 3-item counter does not become 7 cart lines.
+
+    ``roi_rect`` limits both the full-window pass and tiles to the pay zone.
     """
     import os
 
@@ -420,17 +424,33 @@ def dense_detect_on_model(model, img, *, layout: str = "scan") -> list[TrackedOb
         next_id += max(1, len(boxes))
         collected.extend(boxes)
 
-    _run_predict(img)
-    for ox, oy, tw, th in dense_tile_origins(w, h, layout=layout):
-        tile = img[oy : oy + th, ox : ox + tw]
-        if tile.size == 0:
-            continue
-        _run_predict(tile, float(ox), float(oy))
+    if roi_rect is not None:
+        rx1, ry1, rx2, ry2 = roi_rect
+        rx1, ry1 = max(0, rx1), max(0, ry1)
+        rx2, ry2 = min(w, max(rx1 + 1, rx2)), min(h, max(ry1 + 1, ry2))
+        crop = img[ry1:ry2, rx1:rx2]
+        if crop.size:
+            _run_predict(crop, float(rx1), float(ry1))
+        for ox, oy, tw, th in dense_tile_origins(
+            w, h, layout=layout, roi_rect=(rx1, ry1, rx2, ry2)
+        ):
+            tile = img[oy : oy + th, ox : ox + tw]
+            if tile.size == 0:
+                continue
+            _run_predict(tile, float(ox), float(oy))
+    else:
+        _run_predict(img)
+        for ox, oy, tw, th in dense_tile_origins(w, h, layout=layout):
+            tile = img[oy : oy + th, ox : ox + tw]
+            if tile.size == 0:
+                continue
+            _run_predict(tile, float(ox), float(oy))
 
     merged = merge_tiled_detections(collected, w, h)
     logger.warning(
-        "DENSE DET: layout=%s raw=%d final=%d classes=%s",
+        "DENSE DET: layout=%s roi=%s raw=%d final=%d classes=%s",
         layout,
+        roi_rect,
         len(collected),
         len(merged),
         sorted({d.class_name for d in merged}),
@@ -672,7 +692,16 @@ async def track_frame_detailed(
     loop = asyncio.get_event_loop()
 
     def _run() -> list[TrackedObject]:
+        # Pose stays on the full frame (people stand *beside* the pay zone).
+        # Products run on the ROI-masked frame so a statue/plant outside
+        # "Vùng Thanh Toán" cannot become a cart line.
         img = vision_result.raw_frame if vision_result.raw_frame is not None else frame_bgr
+        det_img = frame_bgr if vision_result.zones else img
+        roi_rect = None
+        if vision_result.zones:
+            from app.vision.roi import zone_union_bbox
+            fh, fw = det_img.shape[:2]
+            roi_rect = zone_union_bbox(vision_result.zones, fw, fh)
         
         if camera_key not in _REID_MANAGERS:
             _REID_MANAGERS[camera_key] = ReIDManager(similarity_threshold=0.72)
@@ -752,10 +781,12 @@ async def track_frame_detailed(
         # weights only see one class otherwise). Live path keeps ByteTrack
         # but still accepts boxes that have no track id yet.
         if dense_detect:
-            out.extend(_dense_detect_products(model_det, img))
+            out.extend(
+                dense_detect_on_model(model_det, det_img, layout="scan", roi_rect=roi_rect)
+            )
         else:
             det_results = model_det.track(
-                source=img,
+                source=det_img,
                 persist=True,
                 tracker="bytetrack.yaml",
                 verbose=False,
@@ -780,12 +811,14 @@ async def track_frame_detailed(
         )
 
     if vision_result.zones:
-        from app.vision.roi import point_in_zones
+        from app.vision.roi import box_mostly_in_zones
         fh, fw = frame_bgr.shape[:2]
         detections = [
             d for d in detections
             if str(getattr(d, "class_name", "")).lower() == "person"
-            or point_in_zones(vision_result.zones, d.cx, d.cy, fw, fh)
+            or box_mostly_in_zones(
+                vision_result.zones, d.x1, d.y1, d.x2, d.y2, fw, fh, min_frac=0.5
+            )
         ]
 
     record_pipeline_timing(

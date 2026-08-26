@@ -70,18 +70,15 @@ def preprocess_for_detection(
         raw_frame = frame
         recorder.capture("decode", "Decoded frame (input)", frame)
 
-        zones: list[RoiZone] = []
-        if cfg.enable_roi:
-            # Vung ve tren Admin (truyen vao qua roi_zones) THANG file YAML:
-            # nguoi van hanh vua keo chuot xong thi mong doi thay hieu luc
-            # ngay, chu khong phai bi mot file cau hinh cu de len. YAML van
-            # la duong du phong cho camera chua ve vung nao.
-            zones = list(roi_zones or [])
-            if not zones:
-                zones = load_roi_config(cfg.roi_config_path, camera_key)
-            if zones:
-                frame = apply_roi(frame, zones)
-                recorder.capture("roi", "ROI mask", frame, {"zones": len(zones)})
+        # Vùng vẽ trên Admin luôn được áp dụng (kể cả khi ENABLE_ROI tắt):
+        # đó là ranh giới nghiệp vụ "chỉ nhận diện trong vùng thanh toán".
+        # YAML + ENABLE_ROI vẫn là đường dự phòng cho camera chưa vẽ vùng.
+        zones: list[RoiZone] = list(roi_zones or [])
+        if cfg.enable_roi and not zones:
+            zones = load_roi_config(cfg.roi_config_path, camera_key)
+        if zones:
+            frame = apply_roi(frame, zones)
+            recorder.capture("roi", "ROI mask", frame, {"zones": len(zones)})
 
         if cfg.any_enhancement_enabled:
             frame = enhance_frame(frame, cfg, recorder=recorder)

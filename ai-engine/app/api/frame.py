@@ -954,12 +954,18 @@ async def process_frame(
             persons.append(det)
             continue
         item = identified.get(det.track_id)
-        if item is not None and item.match.sku:
+        # Custom YOLO classes from /ai-training already map to SKUs
+        # (du_7u → DU-7U). Prefer that over the SKU classifier, which
+        # confuses similar packs (Gấu Đỏ vs Hảo Hảo) and generic COCO crops.
+        mapped = map_class_to_sku(
+            str(organization_id), str(branch_id), det.class_name
+        )
+        if mapped:
+            sku = mapped
+        elif item is not None and item.match.sku:
             sku = item.match.sku
         else:
-            sku = map_class_to_sku(
-                str(organization_id), str(branch_id), det.class_name
-            )
+            sku = None
         if sku:
             products.append((det, sku))
         else:

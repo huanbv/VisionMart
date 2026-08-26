@@ -122,15 +122,26 @@ def dense_tile_origins(
     height: int,
     *,
     layout: str = "scan",
+    roi_rect: tuple[int, int, int, int] | None = None,
 ) -> list[tuple[int, int, int, int]]:
-    """Return (ox, oy, tile_w, tile_h) windows covering the frame.
+    """Return (ox, oy, tile_w, tile_h) windows covering the frame or ROI.
 
     ``scan`` (Chụp & Quét): 3×2 + center — enough windows to separate 3–4
     products when the weight was trained on full-image labels.
 
     ``overlay`` (live MJPEG): 2×2 + full-frame is enough to *draw* boxes
     without running 8 predicts on every HUD refresh.
+
+    ``roi_rect`` (x1, y1, x2, y2) confines tiles to the pay zone so a
+    statue beside the counter is never given its own window.
     """
+    if roi_rect is not None:
+        x1, y1, x2, y2 = roi_rect
+        x1, y1 = max(0, x1), max(0, y1)
+        x2, y2 = max(x1 + 1, x2), max(y1 + 1, y2)
+        local = dense_tile_origins(max(1, x2 - x1), max(1, y2 - y1), layout=layout)
+        return [(x1 + ox, y1 + oy, tw, th) for ox, oy, tw, th in local]
+
     w, h = max(1, width), max(1, height)
     if layout == "overlay":
         cols, rows = 2, 2
