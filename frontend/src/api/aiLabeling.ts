@@ -97,6 +97,24 @@ export async function saveLabelBoxes(
   return data;
 }
 
+export interface CropRect {
+  x1: number;
+  y1: number;
+  x2: number;
+  y2: number;
+}
+
+export async function cropLabelImage(
+  imageId: string,
+  rect: CropRect
+): Promise<LabelImageDetail> {
+  const { data } = await apiClient.post<LabelImageDetail>(
+    `/ai/training/labels/images/${imageId}/crop`,
+    rect
+  );
+  return data;
+}
+
 export async function deleteLabelImage(imageId: string): Promise<void> {
   await apiClient.delete(`/ai/training/labels/images/${imageId}`);
 }

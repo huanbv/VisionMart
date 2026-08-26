@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import io
 import logging
 import uuid
 from typing import Iterable
 
+from PIL import Image
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -20,9 +22,51 @@ logger = logging.getLogger(__name__)
 _ALLOWED_TYPES = {"image/jpeg", "image/png", "image/webp"}
 _EXT_BY_TYPE = {"image/jpeg": "jpg", "image/png": "png", "image/webp": "webp"}
 _EXT_BY_NAME = {"jpg": "jpg", "jpeg": "jpg", "png": "png", "webp": "webp"}
+_TYPE_BY_EXT = {"jpg": "image/jpeg", "png": "image/png", "webp": "image/webp"}
 _MAX_IMAGE_BYTES = 12 * 1024 * 1024
 _MIN_LABELED_IMAGES = 10
 _MIN_BOXES_PER_CLASS = 5
+_MIN_CROP_NORM = 0.02
+_MIN_CROP_PX = 16
+
+
+def _normalize_rect(x1: float, y1: float, x2: float, y2: float) -> tuple[float, float, float, float]:
+    ax, bx = sorted((x1, x2))
+    ay, by = sorted((y1, y2))
+    return ax, ay, bx, by
+
+
+def _transform_box_after_crop(
+    box: LabelBox,
+    *,
+    img_w: int,
+    img_h: int,
+    crop_left: int,
+    crop_top: int,
+    crop_w: int,
+    crop_h: int,
+) -> tuple[float, float, float, float] | None:
+    """Map a YOLO box through a pixel crop; return new normalized coords or None if clipped away."""
+    bx1 = (box.cx - box.w / 2) * img_w
+    by1 = (box.cy - box.h / 2) * img_h
+    bx2 = (box.cx + box.w / 2) * img_w
+    by2 = (box.cy + box.h / 2) * img_h
+    ix1 = max(bx1, float(crop_left))
+    iy1 = max(by1, float(crop_top))
+    ix2 = min(bx2, float(crop_left + crop_w))
+    iy2 = min(by2, float(crop_top + crop_h))
+    if ix2 - ix1 < 2 or iy2 - iy1 < 2:
+        return None
+    cx = ((ix1 + ix2) / 2 - crop_left) / crop_w
+    cy = ((iy1 + iy2) / 2 - crop_top) / crop_h
+    w = (ix2 - ix1) / crop_w
+    h = (iy2 - iy1) / crop_h
+    return (
+        max(0.0, min(1.0, cx)),
+        max(0.0, min(1.0, cy)),
+        max(1e-6, min(1.0, w)),
+        max(1e-6, min(1.0, h)),
+    )
 
 
 class LabelingService:
@@ -199,6 +243,98 @@ class LabelingService:
         for row in created:
             await self._session.refresh(row)
         return created
+
+    async def crop_image(
+        self,
+        *,
+        organization_id: uuid.UUID,
+        image_id: uuid.UUID,
+        x1: float,
+        y1: float,
+        x2: float,
+        y2: float,
+    ) -> tuple[LabelImage, list[tuple[LabelBox, Product]]]:
+        """Crop the stored scene image in-place and remap existing bbox labels."""
+        image, box_rows = await self.get_image(
+            organization_id=organization_id,
+            image_id=image_id,
+        )
+        nx1, ny1, nx2, ny2 = _normalize_rect(x1, y1, x2, y2)
+        if nx2 - nx1 < _MIN_CROP_NORM or ny2 - ny1 < _MIN_CROP_NORM:
+            raise TrainingError("Vùng cắt quá nhỏ")
+
+        try:
+            raw = await self._storage.get_bytes(image.storage_key)
+        except ObjectStorageError as exc:
+            raise TrainingError("Không đọc được ảnh gốc") from exc
+
+        try:
+            img = Image.open(io.BytesIO(raw))
+        except Exception as exc:  # noqa: BLE001
+            raise TrainingError("Ảnh không hợp lệ") from exc
+
+        img_w, img_h = img.size
+        left = int(round(nx1 * img_w))
+        top = int(round(ny1 * img_h))
+        right = int(round(nx2 * img_w))
+        bottom = int(round(ny2 * img_h))
+        left = max(0, min(left, img_w - 1))
+        top = max(0, min(top, img_h - 1))
+        right = max(left + 1, min(right, img_w))
+        bottom = max(top + 1, min(bottom, img_h))
+        crop_w = right - left
+        crop_h = bottom - top
+        if crop_w < _MIN_CROP_PX or crop_h < _MIN_CROP_PX:
+            raise TrainingError("Vùng cắt quá nhỏ")
+
+        cropped = img.crop((left, top, right, bottom))
+        ext = (image.image_format or "jpg").lower()
+        pil_fmt = {"jpg": "JPEG", "jpeg": "JPEG", "png": "PNG", "webp": "WEBP"}.get(
+            ext, "JPEG"
+        )
+        buf = io.BytesIO()
+        save_kwargs: dict = {}
+        if pil_fmt == "JPEG":
+            if cropped.mode not in ("RGB", "L"):
+                cropped = cropped.convert("RGB")
+            save_kwargs["quality"] = 92
+        elif pil_fmt == "WEBP":
+            save_kwargs["quality"] = 92
+        cropped.save(buf, format=pil_fmt, **save_kwargs)
+        content = buf.getvalue()
+        if len(content) > _MAX_IMAGE_BYTES:
+            raise TrainingError("Ảnh sau cắt vượt giới hạn kích thước")
+
+        content_type = _TYPE_BY_EXT.get(ext, "image/jpeg")
+        try:
+            await self._storage.put(image.storage_key, content, content_type=content_type)
+        except ObjectStorageError as exc:
+            raise TrainingError("Không lưu được ảnh đã cắt") from exc
+
+        image.image_width = crop_w
+        image.image_height = crop_h
+        image.image_size_bytes = len(content)
+
+        kept: list[tuple[LabelBox, Product]] = []
+        for box, product in box_rows:
+            mapped = _transform_box_after_crop(
+                box,
+                img_w=img_w,
+                img_h=img_h,
+                crop_left=left,
+                crop_top=top,
+                crop_w=crop_w,
+                crop_h=crop_h,
+            )
+            if mapped is None:
+                await self._session.delete(box)
+                continue
+            box.cx, box.cy, box.w, box.h = mapped
+            kept.append((box, product))
+
+        await self._session.commit()
+        await self._session.refresh(image)
+        return image, kept
 
     async def delete_image(
         self, *, organization_id: uuid.UUID, image_id: uuid.UUID

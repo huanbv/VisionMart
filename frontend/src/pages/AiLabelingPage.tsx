@@ -26,14 +26,16 @@ import {
   RightOutlined,
   SaveOutlined,
   PlayCircleOutlined,
+  ScissorOutlined,
 } from "@ant-design/icons";
 
 import { Link } from "react-router-dom";
 
-import BboxLabelEditor from "@/components/BboxLabelEditor";
+import BboxLabelEditor, { type EditorMode } from "@/components/BboxLabelEditor";
 import { listProducts, type Product } from "@/api/catalog";
 import {
   createLabeledTrainingJob,
+  cropLabelImage,
   draftToYolo,
   getLabelImage,
   getLabelingStats,
@@ -42,6 +44,7 @@ import {
   uploadLabelImages,
   yoloToDraft,
   type DraftBox,
+  type CropRect,
   type LabelImageSummary,
   type LabelingStats,
 } from "@/api/aiLabeling";
@@ -111,6 +114,9 @@ export default function AiLabelingPage() {
   const [uploading, setUploading] = useState(false);
   const [uploadPct, setUploadPct] = useState(0);
   const [training, setTraining] = useState(false);
+  const [editorMode, setEditorMode] = useState<EditorMode>("label");
+  const [cropRect, setCropRect] = useState<CropRect | null>(null);
+  const [cropping, setCropping] = useState(false);
   const [activeJob, setActiveJob] = useState<TrainingJob | null>(null);
   const [now, setNow] = useState(() => Date.now() / 1000);
   const pollRef = useRef<number | null>(null);
@@ -186,7 +192,7 @@ export default function AiLabelingPage() {
       try {
         const detail = await getLabelImage(id);
         setCurrentId(id);
-        setPreviewUrl(detail.preview_url);
+        setPreviewUrl(`${detail.preview_url}${detail.preview_url.includes("?") ? "&" : "?"}t=${Date.now()}`);
         setBoxes(
           detail.boxes.map((b) =>
             yoloToDraft(
@@ -198,6 +204,7 @@ export default function AiLabelingPage() {
         );
         setSelectedBoxId(null);
         setDirty(false);
+        setCropRect(null);
       } catch {
         message.error("Không tải được ảnh");
       } finally {
@@ -285,6 +292,42 @@ export default function AiLabelingPage() {
     setBoxes((prev) => prev.filter((b) => b.clientId !== selectedBoxId));
     setSelectedBoxId(null);
     setDirty(true);
+  };
+
+  const applyCrop = async () => {
+    if (!currentId || !cropRect) return;
+    if (dirty) {
+      const ok = await saveCurrent();
+      if (!ok) return;
+    }
+    setCropping(true);
+    try {
+      const detail = await cropLabelImage(currentId, cropRect);
+      setPreviewUrl(`${detail.preview_url}${detail.preview_url.includes("?") ? "&" : "?"}t=${Date.now()}`);
+      setBoxes(
+        detail.boxes.map((b) =>
+          yoloToDraft(
+            b,
+            b.sku ?? productById.get(b.product_id)?.sku ?? "?",
+            b.product_name ?? productById.get(b.product_id)?.name ?? "?"
+          )
+        )
+      );
+      setCropRect(null);
+      setEditorMode("label");
+      setDirty(false);
+      message.success("Đã cắt và lưu đè ảnh gốc");
+      await refreshStats();
+      await loadList();
+    } catch (e: unknown) {
+      const detail =
+        e && typeof e === "object" && "response" in e
+          ? (e as { response?: { data?: { detail?: string } } }).response?.data?.detail
+          : undefined;
+      message.error(typeof detail === "string" ? detail : "Cắt ảnh thất bại");
+    } finally {
+      setCropping(false);
+    }
   };
 
   useEffect(() => {
@@ -441,7 +484,8 @@ export default function AiLabelingPage() {
     <div>
       <Title level={3}>Gán nhãn bbox theo SKU</Title>
       <Paragraph type="secondary">
-        Upload ảnh cảnh (nhiều sản phẩm/khung), kéo chuột vẽ khung và gán SKU. Phím tắt: ← →
+        Upload ảnh cảnh (nhiều sản phẩm/khung), kéo chuột vẽ khung và gán SKU. Dùng{" "}
+        <strong>Cắt ảnh</strong> để bỏ vùng thừa quanh cạnh và lưu đè ảnh gốc. Phím tắt: ← →
         chuyển ảnh, Delete xóa khung, Ctrl+S lưu.
       </Paragraph>
 
@@ -573,12 +617,36 @@ export default function AiLabelingPage() {
                 : "Chưa có ảnh"
             }
             extra={
-              <Space>
+              <Space wrap>
+                <Button
+                  type={editorMode === "crop" ? "primary" : "default"}
+                  icon={<ScissorOutlined />}
+                  disabled={!currentId}
+                  onClick={() => {
+                    setEditorMode((m) => (m === "crop" ? "label" : "crop"));
+                    setCropRect(null);
+                    setSelectedBoxId(null);
+                  }}
+                >
+                  {editorMode === "crop" ? "Gán nhãn" : "Cắt ảnh"}
+                </Button>
+                {editorMode === "crop" && (
+                  <Button
+                    type="primary"
+                    icon={<ScissorOutlined />}
+                    loading={cropping}
+                    disabled={!cropRect}
+                    onClick={() => void applyCrop()}
+                  >
+                    Áp dụng cắt
+                  </Button>
+                )}
                 <Button icon={<LeftOutlined />} onClick={() => void goPrev()} />
                 <Button
                   type="primary"
                   icon={<SaveOutlined />}
                   loading={saving}
+                  disabled={editorMode === "crop"}
                   onClick={() => void saveCurrent()}
                 >
                   Lưu
@@ -587,7 +655,7 @@ export default function AiLabelingPage() {
                 <Button
                   danger
                   icon={<DeleteOutlined />}
-                  disabled={!selectedBoxId}
+                  disabled={!selectedBoxId || editorMode === "crop"}
                   onClick={deleteSelectedBox}
                 />
               </Space>
@@ -605,7 +673,18 @@ export default function AiLabelingPage() {
               }}
               selectedBoxId={selectedBoxId}
               onSelectBox={setSelectedBoxId}
+              mode={editorMode}
+              cropRect={cropRect}
+              onCropRectChange={setCropRect}
             />
+            {editorMode === "crop" && cropRect && (
+              <Alert
+                type="warning"
+                showIcon
+                message="Vùng cam = phần giữ lại. Bbox ngoài vùng sẽ bị cắt hoặc xóa."
+                style={{ marginTop: 8 }}
+              />
+            )}
             {dirty && (
               <Alert type="info" message="Có thay đổi chưa lưu" style={{ marginTop: 8 }} />
             )}

@@ -56,6 +56,15 @@ class SaveLabelBoxesRequest(BaseModel):
     boxes: list[LabelBoxIn]
 
 
+class CropLabelImageRequest(BaseModel):
+    """Normalized crop rectangle (0–1) relative to the current image."""
+
+    x1: float = Field(ge=0.0, le=1.0)
+    y1: float = Field(ge=0.0, le=1.0)
+    x2: float = Field(ge=0.0, le=1.0)
+    y2: float = Field(ge=0.0, le=1.0)
+
+
 class BulkUploadResponse(BaseModel):
     uploaded: int
     failed: int

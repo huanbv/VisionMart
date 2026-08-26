@@ -22,6 +22,9 @@ python-json-logger==2.0.7
 # Object storage
 minio==7.2.9
 
+# Image crop for bbox labeling
+Pillow==10.4.0
+
 # QR codes for customer checkout confirmation (SVG output, no Pillow needed)
 qrcode==8.0
 

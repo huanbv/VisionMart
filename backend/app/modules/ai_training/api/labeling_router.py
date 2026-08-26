@@ -22,6 +22,7 @@ from app.modules.ai_training.application.labeling_service import LabelingService
 from app.modules.ai_training.application.service import TrainingError
 from app.modules.ai_training.schemas.labeling import (
     BulkUploadResponse,
+    CropLabelImageRequest,
     LabelBoxOut,
     LabelImageDetail,
     LabelImageListResponse,
@@ -121,6 +122,43 @@ async def get_label_image(
         )
     except TrainingError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    preview = await service.presign(image.storage_key)
+    boxes = [
+        LabelBoxOut(
+            id=box.id,
+            product_id=box.product_id,
+            product_name=product.name,
+            sku=product.sku,
+            cx=box.cx,
+            cy=box.cy,
+            w=box.w,
+            h=box.h,
+        )
+        for box, product in box_rows
+    ]
+    base = _summary(image, len(boxes))
+    return LabelImageDetail(**base.model_dump(), preview_url=preview or "", boxes=boxes)
+
+
+@router.post("/images/{image_id}/crop", response_model=LabelImageDetail)
+async def crop_label_image(
+    image_id: uuid.UUID,
+    body: CropLabelImageRequest,
+    current=Depends(require_roles(*_TRAINER_ROLES)),
+    session: AsyncSession = Depends(get_session),
+) -> LabelImageDetail:
+    service = _service(session)
+    try:
+        image, box_rows = await service.crop_image(
+            organization_id=current.organization_id,
+            image_id=image_id,
+            x1=body.x1,
+            y1=body.y1,
+            x2=body.x2,
+            y2=body.y2,
+        )
+    except TrainingError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
     preview = await service.presign(image.storage_key)
     boxes = [
         LabelBoxOut(

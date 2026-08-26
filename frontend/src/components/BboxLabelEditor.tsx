@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Button, Empty, Select, Space, Tag, Typography } from "antd";
+import { Empty, Select, Space, Tag, Typography } from "antd";
 
-import type { DraftBox } from "@/api/aiLabeling";
+import type { CropRect, DraftBox } from "@/api/aiLabeling";
 import type { Product } from "@/api/catalog";
 
 const { Text } = Typography;
@@ -23,6 +23,8 @@ function colorForSku(sku: string): string {
   return COLORS[h]!;
 }
 
+export type EditorMode = "label" | "crop";
+
 export default function BboxLabelEditor({
   imageUrl,
   products,
@@ -32,6 +34,9 @@ export default function BboxLabelEditor({
   onBoxesChange,
   selectedBoxId,
   onSelectBox,
+  mode = "label",
+  cropRect,
+  onCropRectChange,
 }: {
   imageUrl: string | null;
   products: Product[];
@@ -41,14 +46,18 @@ export default function BboxLabelEditor({
   onBoxesChange: (boxes: DraftBox[]) => void;
   selectedBoxId: string | null;
   onSelectBox: (id: string | null) => void;
+  mode?: EditorMode;
+  cropRect?: CropRect | null;
+  onCropRectChange?: (rect: CropRect | null) => void;
 }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const imgRef = useRef<HTMLImageElement | null>(null);
   const [imgEpoch, setImgEpoch] = useState(0);
   const dragRef = useRef<{ x: number; y: number } | null>(null);
-  const [draftRect, setDraftRect] = useState<DraftBox | null>(null);
+  const [draftRect, setDraftRect] = useState<DraftBox | CropRect | null>(null);
 
   const product = products.find((p) => p.id === selectedProductId) ?? null;
+  const isCropMode = mode === "crop";
 
   const redraw = useCallback(() => {
     const canvas = canvasRef.current;
@@ -77,13 +86,36 @@ export default function BboxLabelEditor({
       ctx.fillText(b.sku, x1 + 4, y1 + 14);
     };
 
+    const drawCrop = (r: CropRect, dashed: boolean) => {
+      const x1 = Math.min(r.x1, r.x2) * w;
+      const y1 = Math.min(r.y1, r.y2) * h;
+      const bw = Math.abs(r.x2 - r.x1) * w;
+      const bh = Math.abs(r.y2 - r.y1) * h;
+      ctx.save();
+      ctx.strokeStyle = "#fa8c16";
+      ctx.lineWidth = 2;
+      if (dashed) ctx.setLineDash([8, 6]);
+      ctx.strokeRect(x1, y1, bw, bh);
+      ctx.fillStyle = "rgba(250, 140, 22, 0.12)";
+      ctx.fillRect(x1, y1, bw, bh);
+      ctx.restore();
+      ctx.fillStyle = "#fa8c16";
+      ctx.font = "12px sans-serif";
+      ctx.fillText("Vùng cắt", x1 + 4, y1 + 14);
+    };
+
     for (const b of boxes) {
       drawBox(b, b.clientId === selectedBoxId);
     }
-    if (draftRect) {
+    if (isCropMode) {
+      if (cropRect) drawCrop(cropRect, false);
+      if (draftRect && !("clientId" in draftRect)) {
+        drawCrop(draftRect, true);
+      }
+    } else if (draftRect && "clientId" in draftRect) {
       drawBox(draftRect, true);
     }
-  }, [boxes, draftRect, selectedBoxId]);
+  }, [boxes, cropRect, draftRect, isCropMode, selectedBoxId]);
 
   useEffect(() => {
     if (!imageUrl) {
@@ -106,7 +138,7 @@ export default function BboxLabelEditor({
 
   useEffect(() => {
     redraw();
-  }, [imgEpoch, redraw, boxes, draftRect, selectedBoxId]);
+  }, [imgEpoch, redraw, boxes, draftRect, selectedBoxId, cropRect, isCropMode]);
 
   const normFromEvent = (e: React.MouseEvent<HTMLCanvasElement>) => {
     const canvas = canvasRef.current!;
@@ -132,8 +164,16 @@ export default function BboxLabelEditor({
   };
 
   const onMouseDown = (e: React.MouseEvent<HTMLCanvasElement>) => {
-    if (!product) return;
     const { x, y } = normFromEvent(e);
+
+    if (isCropMode) {
+      onSelectBox(null);
+      dragRef.current = { x, y };
+      setDraftRect({ x1: x, y1: y, x2: x, y2: y });
+      return;
+    }
+
+    if (!product) return;
     const hit = hitTest(x, y);
     if (hit) {
       onSelectBox(hit.clientId);
@@ -154,13 +194,40 @@ export default function BboxLabelEditor({
   };
 
   const onMouseMove = (e: React.MouseEvent<HTMLCanvasElement>) => {
-    if (!dragRef.current || !draftRect || !product) return;
+    if (!dragRef.current || !draftRect) return;
     const { x, y } = normFromEvent(e);
+    if (isCropMode) {
+      setDraftRect({ ...(draftRect as CropRect), x2: x, y2: y });
+      return;
+    }
+    if (!product || !("clientId" in draftRect)) return;
     setDraftRect({ ...draftRect, x2: x, y2: y });
   };
 
   const onMouseUp = () => {
-    if (!draftRect || !product) {
+    if (!draftRect) {
+      dragRef.current = null;
+      return;
+    }
+
+    if (isCropMode) {
+      const r = draftRect as CropRect;
+      const w = Math.abs(r.x2 - r.x1);
+      const h = Math.abs(r.y2 - r.y1);
+      if (w > 0.02 && h > 0.02) {
+        onCropRectChange?.({
+          x1: Math.min(r.x1, r.x2),
+          y1: Math.min(r.y1, r.y2),
+          x2: Math.max(r.x1, r.x2),
+          y2: Math.max(r.y1, r.y2),
+        });
+      }
+      dragRef.current = null;
+      setDraftRect(null);
+      return;
+    }
+
+    if (!product || !("clientId" in draftRect)) {
       dragRef.current = null;
       setDraftRect(null);
       return;
@@ -179,30 +246,39 @@ export default function BboxLabelEditor({
     return <Empty description="Chọn ảnh để gán nhãn" />;
   }
 
+  const canDraw = isCropMode || !!product;
+
   return (
     <div>
-      <Space wrap style={{ marginBottom: 12 }}>
-        <Text strong>SKU đang vẽ:</Text>
-        <Select
-          showSearch
-          placeholder="Chọn sản phẩm (SKU)"
-          style={{ minWidth: 280 }}
-          value={selectedProductId ?? undefined}
-          onChange={onProductChange}
-          optionFilterProp="label"
-          options={products.map((p) => ({
-            value: p.id,
-            label: `${p.sku} — ${p.name}`,
-          }))}
-        />
-        {!product && <Tag color="warning">Chọn SKU trước khi kéo vẽ khung</Tag>}
-      </Space>
+      {!isCropMode && (
+        <Space wrap style={{ marginBottom: 12 }}>
+          <Text strong>SKU đang vẽ:</Text>
+          <Select
+            showSearch
+            placeholder="Chọn sản phẩm (SKU)"
+            style={{ minWidth: 280 }}
+            value={selectedProductId ?? undefined}
+            onChange={onProductChange}
+            optionFilterProp="label"
+            options={products.map((p) => ({
+              value: p.id,
+              label: `${p.sku} — ${p.name}`,
+            }))}
+          />
+          {!product && <Tag color="warning">Chọn SKU trước khi kéo vẽ khung</Tag>}
+        </Space>
+      )}
+      {isCropMode && (
+        <Tag color="orange" style={{ marginBottom: 12 }}>
+          Chế độ cắt ảnh — kéo chọn vùng giữ lại, bỏ phần thừa quanh cạnh
+        </Tag>
+      )}
       <div style={{ overflow: "auto", maxHeight: "calc(100vh - 320px)" }}>
         <canvas
           ref={canvasRef}
           style={{
             maxWidth: "100%",
-            cursor: product ? "crosshair" : "not-allowed",
+            cursor: canDraw ? "crosshair" : "not-allowed",
             border: "1px solid #d9d9d9",
             borderRadius: 4,
           }}
@@ -212,7 +288,7 @@ export default function BboxLabelEditor({
           onMouseLeave={onMouseUp}
         />
       </div>
-      {boxes.length > 0 && (
+      {boxes.length > 0 && !isCropMode && (
         <Space wrap style={{ marginTop: 8 }}>
           {boxes.map((b) => (
             <Tag
