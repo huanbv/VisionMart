@@ -1,10 +1,14 @@
 import { useEffect, useState } from "react";
-import { Divider, Form, Input, Modal, message } from "antd";
+import { Alert, Button, Divider, Form, Input, Modal, Space, Typography, message } from "antd";
+import { CopyOutlined } from "@ant-design/icons";
 import { isAxiosError } from "axios";
 
 import { updateProfile } from "@/api/auth";
+import { tokenStore } from "@/api/client";
 import { useAuth } from "@/contexts/AuthContext";
 import SessionsPanel from "@/components/SessionsPanel";
+
+const { Text, Paragraph } = Typography;
 
 interface Props {
   open: boolean;
@@ -19,10 +23,12 @@ export default function ProfileModal({ open, onClose }: Props) {
   const { user, refreshMe } = useAuth();
   const [form] = Form.useForm<FormValues>();
   const [submitting, setSubmitting] = useState(false);
+  const [accessToken, setAccessToken] = useState<string | null>(null);
 
   useEffect(() => {
     if (open) {
       form.setFieldsValue({ full_name: user?.full_name ?? "" });
+      setAccessToken(tokenStore.getAccess());
     }
   }, [open, user, form]);
 
@@ -73,6 +79,41 @@ export default function ProfileModal({ open, onClose }: Props) {
           <Input placeholder="Nguyễn Văn A" />
         </Form.Item>
       </Form>
+      <Divider />
+      <Space direction="vertical" style={{ width: "100%" }} size={8}>
+        <Text strong>API access token</Text>
+        <Alert
+          type="warning"
+          showIcon
+          message="Token đăng nhập hiện tại — dùng cho curl/API khi cần. Không chia sẻ; hết hạn sau một thời gian."
+        />
+        <Input.TextArea
+          readOnly
+          value={accessToken ?? ""}
+          rows={4}
+          placeholder="Chưa đăng nhập"
+          style={{ fontFamily: "monospace", fontSize: 12 }}
+        />
+        <Button
+          icon={<CopyOutlined />}
+          disabled={!accessToken}
+          onClick={async () => {
+            if (!accessToken) return;
+            try {
+              await navigator.clipboard.writeText(accessToken);
+              message.success("Đã copy access token");
+            } catch {
+              message.error("Không copy được — chọn và copy thủ công");
+            }
+          }}
+        >
+          Copy token
+        </Button>
+        <Paragraph type="secondary" style={{ marginBottom: 0, fontSize: 12 }}>
+          Mở modal này bằng cách bấm tên bạn ở góc phải header. Deploy model nên
+          dùng nút trên trang Train AI — không cần token tay.
+        </Paragraph>
+      </Space>
       <Divider />
       <SessionsPanel />
     </Modal>
