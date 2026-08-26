@@ -9,7 +9,6 @@ import {
   Form,
   Input,
   InputNumber,
-  List,
   Progress,
   Row,
   Space,
@@ -32,6 +31,7 @@ import {
 import { Link } from "react-router-dom";
 
 import BboxLabelEditor, { type EditorMode } from "@/components/BboxLabelEditor";
+import LabelImageGrid from "@/components/LabelImageGrid";
 import { listProducts, type Product } from "@/api/catalog";
 import {
   createLabeledTrainingJob,
@@ -55,7 +55,7 @@ import { useAuth } from "@/contexts/AuthContext";
 
 const { Title, Text, Paragraph } = Typography;
 const BATCH_SIZE = 40;
-const PAGE_SIZE = 50;
+const PAGE_SIZE = 24;
 
 const STATUS_COLORS: Record<string, string> = {
   pending: "default",
@@ -515,7 +515,7 @@ export default function AiLabelingPage() {
       </Paragraph>
 
       <Row gutter={[16, 16]}>
-        <Col xs={24} lg={6}>
+        <Col xs={24} lg={5}>
           <Card title="Thống kê" size="small">
             {stats && (
               <>
@@ -547,110 +547,9 @@ export default function AiLabelingPage() {
               Hỗ trợ upload hàng loạt — 600 ảnh chia nhiều lần hoặc một lần.
             </Text>
           </Card>
-
-          <Card
-            title="Danh sách ảnh"
-            size="small"
-            style={{ marginTop: 16 }}
-            extra={
-              <Space size={4}>
-                <Tag
-                  color={filter === "all" ? "blue" : "default"}
-                  style={{ cursor: "pointer" }}
-                  onClick={() => {
-                    setFilter("all");
-                    setPage(0);
-                  }}
-                >
-                  Tất cả
-                </Tag>
-                <Tag
-                  color={filter === "pending" ? "orange" : "default"}
-                  style={{ cursor: "pointer" }}
-                  onClick={() => {
-                    setFilter("pending");
-                    setPage(0);
-                  }}
-                >
-                  Chưa gán
-                </Tag>
-                <Tag
-                  color={filter === "labeled" ? "green" : "default"}
-                  style={{ cursor: "pointer" }}
-                  onClick={() => {
-                    setFilter("labeled");
-                    setPage(0);
-                  }}
-                >
-                  Đã gán
-                </Tag>
-                <Tag
-                  color={filter === "uncropped" ? "orange" : "default"}
-                  style={{ cursor: "pointer" }}
-                  onClick={() => {
-                    setFilter("uncropped");
-                    setPage(0);
-                  }}
-                >
-                  Chưa cắt
-                </Tag>
-              </Space>
-            }
-          >
-            <List
-              size="small"
-              loading={loading}
-              dataSource={items}
-              renderItem={(item) => (
-                <List.Item
-                  style={{
-                    cursor: "pointer",
-                    background: item.id === currentId ? "#e6f4ff" : undefined,
-                    padding: "4px 8px",
-                  }}
-                  onClick={() => void loadImage(item.id)}
-                >
-                  <Space>
-                    {!item.is_cropped && (
-                      <Tag color="orange" title="Chưa cắt">
-                        ✂
-                      </Tag>
-                    )}
-                    {item.labeled ? (
-                      <Tag color="green">{item.box_count}</Tag>
-                    ) : (
-                      <Tag>—</Tag>
-                    )}
-                    <Text ellipsis style={{ maxWidth: 160 }}>
-                      {item.original_filename ?? item.id.slice(0, 8)}
-                    </Text>
-                  </Space>
-                </List.Item>
-              )}
-            />
-            <Space style={{ marginTop: 8 }}>
-              <Button
-                size="small"
-                disabled={page === 0}
-                onClick={() => setPage((p) => p - 1)}
-              >
-                Trang trước
-              </Button>
-              <Text type="secondary">
-                {page + 1} / {Math.max(1, Math.ceil(total / PAGE_SIZE))}
-              </Text>
-              <Button
-                size="small"
-                disabled={(page + 1) * PAGE_SIZE >= total}
-                onClick={() => setPage((p) => p + 1)}
-              >
-                Trang sau
-              </Button>
-            </Space>
-          </Card>
         </Col>
 
-        <Col xs={24} lg={12}>
+        <Col xs={24} lg={13}>
           <Card
             title={
               currentId
@@ -887,6 +786,81 @@ export default function AiLabelingPage() {
           </Card>
         </Col>
       </Row>
+
+      <Card
+        title={`Thư viện ảnh (${total})`}
+        size="small"
+        style={{ marginTop: 16 }}
+        extra={
+          <Space wrap size={4}>
+            <Tag
+              color={filter === "all" ? "blue" : "default"}
+              style={{ cursor: "pointer" }}
+              onClick={() => {
+                setFilter("all");
+                setPage(0);
+              }}
+            >
+              Tất cả
+            </Tag>
+            <Tag
+              color={filter === "pending" ? "orange" : "default"}
+              style={{ cursor: "pointer" }}
+              onClick={() => {
+                setFilter("pending");
+                setPage(0);
+              }}
+            >
+              Chưa gán
+            </Tag>
+            <Tag
+              color={filter === "labeled" ? "green" : "default"}
+              style={{ cursor: "pointer" }}
+              onClick={() => {
+                setFilter("labeled");
+                setPage(0);
+              }}
+            >
+              Đã gán
+            </Tag>
+            <Tag
+              color={filter === "uncropped" ? "orange" : "default"}
+              style={{ cursor: "pointer" }}
+              onClick={() => {
+                setFilter("uncropped");
+                setPage(0);
+              }}
+            >
+              Chưa cắt
+            </Tag>
+          </Space>
+        }
+      >
+        <LabelImageGrid
+          items={items}
+          currentId={currentId}
+          loading={loading}
+          onSelect={(id) => void loadImage(id)}
+        />
+        <Space style={{ marginTop: 12 }}>
+          <Button size="small" disabled={page === 0} onClick={() => setPage((p) => p - 1)}>
+            Trang trước
+          </Button>
+          <Text type="secondary">
+            {page + 1} / {Math.max(1, Math.ceil(total / PAGE_SIZE))}
+          </Text>
+          <Button
+            size="small"
+            disabled={(page + 1) * PAGE_SIZE >= total}
+            onClick={() => setPage((p) => p + 1)}
+          >
+            Trang sau
+          </Button>
+        </Space>
+        <Text type="secondary" style={{ display: "block", marginTop: 8, fontSize: 12 }}>
+          ✂ cam = chưa cắt · số xanh = số bbox · bấm ô ảnh để mở cắt/gán nhãn
+        </Text>
+      </Card>
     </div>
   );
 }

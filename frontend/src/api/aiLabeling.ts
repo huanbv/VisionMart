@@ -21,6 +21,7 @@ export interface LabelImageSummary {
   box_count: number;
   labeled: boolean;
   is_cropped: boolean;
+  preview_url?: string | null;
   created_at: string;
 }
 

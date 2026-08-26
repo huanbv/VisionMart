@@ -102,7 +102,13 @@ async def list_label_images(
         labeled=labeled,
         cropped=cropped,
     )
-    items = [_summary(row, int(box_count or 0)) for row, box_count in rows]
+    items = []
+    for row, box_count in rows:
+        base = _summary(row, int(box_count or 0))
+        preview = await service.presign(row.storage_key)
+        items.append(
+            LabelImageSummary(**base.model_dump(), preview_url=preview or None)
+        )
     return LabelImageListResponse(
         items=items,
         total=total,

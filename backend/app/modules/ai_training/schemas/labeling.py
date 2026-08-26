@@ -38,6 +38,7 @@ class LabelImageSummary(BaseModel):
     box_count: int
     labeled: bool
     is_cropped: bool
+    preview_url: str | None = None
     created_at: datetime
 
 
