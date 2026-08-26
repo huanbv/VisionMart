@@ -17,13 +17,35 @@ const COLORS = [
   "#a0d911",
 ];
 
+const MIN_BOX_NORM = 0.01;
+const CLOSE_NORM = 0.02;
+
+type NormPoint = { x: number; y: number };
+
 function colorForSku(sku: string): string {
   let h = 0;
   for (let i = 0; i < sku.length; i++) h = (h + sku.charCodeAt(i) * 17) % COLORS.length;
   return COLORS[h]!;
 }
 
+function bboxFromPoints(points: NormPoint[]): { x1: number; y1: number; x2: number; y2: number } | null {
+  if (points.length < 3) return null;
+  const xs = points.map((p) => p.x);
+  const ys = points.map((p) => p.y);
+  return {
+    x1: Math.min(...xs),
+    y1: Math.min(...ys),
+    x2: Math.max(...xs),
+    y2: Math.max(...ys),
+  };
+}
+
+function distNorm(a: NormPoint, b: NormPoint): number {
+  return Math.hypot(a.x - b.x, a.y - b.y);
+}
+
 export type EditorMode = "label" | "crop";
+export type LabelTool = "rect" | "polygon";
 
 export default function BboxLabelEditor({
   imageUrl,
@@ -35,6 +57,7 @@ export default function BboxLabelEditor({
   selectedBoxId,
   onSelectBox,
   mode = "label",
+  labelTool = "rect",
   cropRect,
   onCropRectChange,
   labelingEnabled = true,
@@ -48,6 +71,7 @@ export default function BboxLabelEditor({
   selectedBoxId: string | null;
   onSelectBox: (id: string | null) => void;
   mode?: EditorMode;
+  labelTool?: LabelTool;
   cropRect?: CropRect | null;
   onCropRectChange?: (rect: CropRect | null) => void;
   labelingEnabled?: boolean;
@@ -57,9 +81,58 @@ export default function BboxLabelEditor({
   const [imgEpoch, setImgEpoch] = useState(0);
   const dragRef = useRef<{ x: number; y: number } | null>(null);
   const [draftRect, setDraftRect] = useState<DraftBox | CropRect | null>(null);
+  const [polygonPoints, setPolygonPoints] = useState<NormPoint[]>([]);
+  const [hoverPoint, setHoverPoint] = useState<NormPoint | null>(null);
 
   const product = products.find((p) => p.id === selectedProductId) ?? null;
   const isCropMode = mode === "crop";
+  const isPolygonTool = !isCropMode && labelTool === "polygon";
+
+  useEffect(() => {
+    setPolygonPoints([]);
+    setHoverPoint(null);
+    setDraftRect(null);
+    dragRef.current = null;
+  }, [imageUrl, labelTool, mode]);
+
+  const commitPolygon = useCallback(() => {
+    if (!product || polygonPoints.length < 3) return;
+    const bbox = bboxFromPoints(polygonPoints);
+    if (!bbox) return;
+    const w = bbox.x2 - bbox.x1;
+    const h = bbox.y2 - bbox.y1;
+    if (w < MIN_BOX_NORM || h < MIN_BOX_NORM) return;
+    const draft: DraftBox = {
+      clientId: crypto.randomUUID(),
+      product_id: product.id,
+      sku: product.sku,
+      product_name: product.name,
+      ...bbox,
+    };
+    onBoxesChange([...boxes, draft]);
+    onSelectBox(draft.clientId);
+    setPolygonPoints([]);
+    setHoverPoint(null);
+  }, [boxes, onBoxesChange, onSelectBox, polygonPoints, product]);
+
+  useEffect(() => {
+    if (!isPolygonTool || polygonPoints.length === 0) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) {
+        return;
+      }
+      if (e.key === "Escape") {
+        e.preventDefault();
+        setPolygonPoints([]);
+        setHoverPoint(null);
+      } else if (e.key === "Enter") {
+        e.preventDefault();
+        commitPolygon();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [commitPolygon, isPolygonTool, polygonPoints.length]);
 
   const redraw = useCallback(() => {
     const canvas = canvasRef.current;
@@ -106,6 +179,53 @@ export default function BboxLabelEditor({
       ctx.fillText("Vùng cắt", x1 + 4, y1 + 14);
     };
 
+    const drawPolygonDraft = () => {
+      if (!product || polygonPoints.length === 0) return;
+      const color = colorForSku(product.sku);
+      const pts = [...polygonPoints];
+      if (hoverPoint) pts.push(hoverPoint);
+
+      ctx.save();
+      ctx.strokeStyle = color;
+      ctx.fillStyle = color + "33";
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(polygonPoints[0]!.x * w, polygonPoints[0]!.y * h);
+      for (let i = 1; i < polygonPoints.length; i++) {
+        const p = polygonPoints[i]!;
+        ctx.lineTo(p.x * w, p.y * h);
+      }
+      if (hoverPoint && polygonPoints.length >= 1) {
+        ctx.lineTo(hoverPoint.x * w, hoverPoint.y * h);
+      }
+      if (polygonPoints.length >= 3) {
+        ctx.closePath();
+        ctx.fill();
+      }
+      ctx.stroke();
+      ctx.restore();
+
+      for (const p of polygonPoints) {
+        ctx.beginPath();
+        ctx.arc(p.x * w, p.y * h, 5, 0, Math.PI * 2);
+        ctx.fillStyle = color;
+        ctx.fill();
+        ctx.strokeStyle = "#fff";
+        ctx.lineWidth = 1.5;
+        ctx.stroke();
+      }
+
+      const bbox = bboxFromPoints(polygonPoints);
+      if (bbox) {
+        ctx.save();
+        ctx.strokeStyle = color;
+        ctx.lineWidth = 1;
+        ctx.setLineDash([4, 4]);
+        ctx.strokeRect(bbox.x1 * w, bbox.y1 * h, (bbox.x2 - bbox.x1) * w, (bbox.y2 - bbox.y1) * h);
+        ctx.restore();
+      }
+    };
+
     for (const b of boxes) {
       drawBox(b, b.clientId === selectedBoxId);
     }
@@ -114,10 +234,22 @@ export default function BboxLabelEditor({
       if (draftRect && !("clientId" in draftRect)) {
         drawCrop(draftRect, true);
       }
+    } else if (isPolygonTool) {
+      drawPolygonDraft();
     } else if (draftRect && "clientId" in draftRect) {
       drawBox(draftRect, true);
     }
-  }, [boxes, cropRect, draftRect, isCropMode, selectedBoxId]);
+  }, [
+    boxes,
+    cropRect,
+    draftRect,
+    hoverPoint,
+    isCropMode,
+    isPolygonTool,
+    polygonPoints,
+    product,
+    selectedBoxId,
+  ]);
 
   useEffect(() => {
     if (!imageUrl) {
@@ -139,7 +271,7 @@ export default function BboxLabelEditor({
 
   useEffect(() => {
     redraw();
-  }, [imgEpoch, redraw, boxes, draftRect, selectedBoxId, cropRect, isCropMode]);
+  }, [imgEpoch, redraw]);
 
   const normFromEvent = (e: React.MouseEvent<HTMLCanvasElement>) => {
     const canvas = canvasRef.current!;
@@ -175,11 +307,28 @@ export default function BboxLabelEditor({
     }
 
     if (!product || !labelingEnabled) return;
+
     const hit = hitTest(x, y);
     if (hit) {
       onSelectBox(hit.clientId);
       return;
     }
+
+    if (isPolygonTool) {
+      onSelectBox(null);
+      const first = polygonPoints[0];
+      if (
+        first &&
+        polygonPoints.length >= 3 &&
+        distNorm({ x, y }, first) <= CLOSE_NORM
+      ) {
+        commitPolygon();
+        return;
+      }
+      setPolygonPoints((prev) => [...prev, { x, y }]);
+      return;
+    }
+
     onSelectBox(null);
     dragRef.current = { x, y };
     setDraftRect({
@@ -195,8 +344,12 @@ export default function BboxLabelEditor({
   };
 
   const onMouseMove = (e: React.MouseEvent<HTMLCanvasElement>) => {
-    if (!dragRef.current || !draftRect) return;
     const { x, y } = normFromEvent(e);
+    if (isPolygonTool && polygonPoints.length > 0) {
+      setHoverPoint({ x, y });
+      return;
+    }
+    if (!dragRef.current || !draftRect) return;
     if (isCropMode) {
       setDraftRect({ ...(draftRect as CropRect), x2: x, y2: y });
       return;
@@ -206,6 +359,8 @@ export default function BboxLabelEditor({
   };
 
   const onMouseUp = () => {
+    if (isPolygonTool) return;
+
     if (!draftRect) {
       dragRef.current = null;
       return;
@@ -235,12 +390,20 @@ export default function BboxLabelEditor({
     }
     const w = Math.abs(draftRect.x2 - draftRect.x1);
     const h = Math.abs(draftRect.y2 - draftRect.y1);
-    if (w > 0.01 && h > 0.01) {
+    if (w > MIN_BOX_NORM && h > MIN_BOX_NORM) {
       onBoxesChange([...boxes, draftRect]);
       onSelectBox(draftRect.clientId);
     }
     dragRef.current = null;
     setDraftRect(null);
+  };
+
+  const onMouseLeave = () => {
+    if (isPolygonTool) {
+      setHoverPoint(null);
+      return;
+    }
+    onMouseUp();
   };
 
   if (!imageUrl) {
@@ -271,12 +434,18 @@ export default function BboxLabelEditor({
               label: `${p.sku} — ${p.name}`,
             }))}
           />
-          {!product && <Tag color="warning">Chọn SKU trước khi kéo vẽ khung</Tag>}
+          {!product && <Tag color="warning">Chọn SKU trước khi vẽ</Tag>}
         </Space>
       )}
       {isCropMode && (
         <Tag color="orange" style={{ marginBottom: 12 }}>
           Chế độ cắt ảnh — kéo chọn vùng giữ lại, bỏ phần thừa quanh cạnh
+        </Tag>
+      )}
+      {isPolygonTool && labelingEnabled && (
+        <Tag color="blue" style={{ marginBottom: 12 }}>
+          Chấm điểm quanh sản phẩm → click điểm đầu (hoặc Enter) để đóng; Esc hủy; khung nét đứt =
+          bbox YOLO lưu train
         </Tag>
       )}
       <div style={{ overflow: "auto", maxHeight: "calc(100vh - 320px)" }}>
@@ -291,7 +460,12 @@ export default function BboxLabelEditor({
           onMouseDown={onMouseDown}
           onMouseMove={onMouseMove}
           onMouseUp={onMouseUp}
-          onMouseLeave={onMouseUp}
+          onMouseLeave={onMouseLeave}
+          onDoubleClick={(e) => {
+            if (!isPolygonTool || polygonPoints.length < 3) return;
+            e.preventDefault();
+            commitPolygon();
+          }}
         />
       </div>
       {boxes.length > 0 && !isCropMode && (

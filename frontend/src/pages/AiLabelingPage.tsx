@@ -13,6 +13,7 @@ import {
   Row,
   Space,
   Statistic,
+  Segmented,
   Tag,
   Typography,
   Upload,
@@ -30,7 +31,7 @@ import {
 
 import { Link } from "react-router-dom";
 
-import BboxLabelEditor, { type EditorMode } from "@/components/BboxLabelEditor";
+import BboxLabelEditor, { type EditorMode, type LabelTool } from "@/components/BboxLabelEditor";
 import LabelImageGrid from "@/components/LabelImageGrid";
 import { listProducts, type Product } from "@/api/catalog";
 import {
@@ -117,6 +118,7 @@ export default function AiLabelingPage() {
   const [uploadPct, setUploadPct] = useState(0);
   const [training, setTraining] = useState(false);
   const [editorMode, setEditorMode] = useState<EditorMode>("label");
+  const [labelTool, setLabelTool] = useState<LabelTool>("rect");
   const [cropRect, setCropRect] = useState<CropRect | null>(null);
   const [cropping, setCropping] = useState(false);
   const [activeJob, setActiveJob] = useState<TrainingJob | null>(null);
@@ -572,6 +574,16 @@ export default function AiLabelingPage() {
                 >
                   {editorMode === "crop" ? "Gán nhãn" : "Cắt ảnh"}
                 </Button>
+                {editorMode === "label" && isCropped && (
+                  <Segmented
+                    value={labelTool}
+                    onChange={(v) => setLabelTool(v as LabelTool)}
+                    options={[
+                      { label: "Kéo vuông", value: "rect" },
+                      { label: "Chấm điểm", value: "polygon" },
+                    ]}
+                  />
+                )}
                 {editorMode === "crop" && (
                   <>
                     <Button
@@ -621,6 +633,7 @@ export default function AiLabelingPage() {
               selectedBoxId={selectedBoxId}
               onSelectBox={setSelectedBoxId}
               mode={editorMode}
+              labelTool={labelTool}
               cropRect={cropRect}
               onCropRectChange={setCropRect}
               labelingEnabled={isCropped}
