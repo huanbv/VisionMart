@@ -593,7 +593,7 @@ export default function CamerasPage() {
         ),
     },
     { title: "Mã", dataIndex: "code", width: 120 },
-    { title: "Tên", dataIndex: "name" },
+    { title: "Tên", dataIndex: "name", width: 200, ellipsis: true },
     {
       title: "Chi nhánh",
       dataIndex: "branch_name",
@@ -609,6 +609,7 @@ export default function CamerasPage() {
     {
       title: "Stream",
       dataIndex: "stream_url",
+      width: 240,
       ellipsis: true,
       render: (v: string) => <code style={{ fontSize: 12 }}>{v}</code>,
     },
@@ -806,7 +807,7 @@ export default function CamerasPage() {
           columns={columns}
           dataSource={data}
           loading={loading}
-          scroll={{ x: 1400 }}
+          scroll={{ x: 1790 }}
           pagination={{
             current: page,
             pageSize: PAGE_SIZE,
