@@ -11,6 +11,7 @@ import {
   InputNumber,
   Progress,
   Row,
+  Select,
   Space,
   Statistic,
   Segmented,
@@ -22,6 +23,7 @@ import type { UploadProps } from "antd";
 import {
   CloudUploadOutlined,
   DeleteOutlined,
+  DownloadOutlined,
   LeftOutlined,
   RightOutlined,
   SaveOutlined,
@@ -38,6 +40,7 @@ import {
   createLabeledTrainingJob,
   cropLabelImage,
   draftToYolo,
+  exportLabelImages,
   getLabelImage,
   getLabelingStats,
   listLabelImages,
@@ -117,6 +120,8 @@ export default function AiLabelingPage() {
   const [uploading, setUploading] = useState(false);
   const [uploadPct, setUploadPct] = useState(0);
   const [training, setTraining] = useState(false);
+  const [exporting, setExporting] = useState(false);
+  const [exportMode, setExportMode] = useState<"crops" | "scenes">("crops");
   const [editorMode, setEditorMode] = useState<EditorMode>("label");
   const [labelTool, setLabelTool] = useState<LabelTool>("rect");
   const [cropRect, setCropRect] = useState<CropRect | null>(null);
@@ -442,6 +447,25 @@ export default function AiLabelingPage() {
     },
   };
 
+  const handleExportLabels = async (productId?: string | null) => {
+    setExporting(true);
+    try {
+      await exportLabelImages({
+        mode: exportMode,
+        productId: productId ?? undefined,
+      });
+      message.success(
+        productId
+          ? "Đã tải ZIP ảnh gán nhãn của SKU đang chọn"
+          : "Đã tải ZIP ảnh gán nhãn theo sản phẩm"
+      );
+    } catch (e: unknown) {
+      message.error(formatApiErrorDetail(e, "Export ảnh gán nhãn thất bại"));
+    } finally {
+      setExporting(false);
+    }
+  };
+
   const startTrain = async (values: { name: string; epochs: number }) => {
     setTraining(true);
     try {
@@ -541,6 +565,38 @@ export default function AiLabelingPage() {
                     style={{ marginTop: 12 }}
                   />
                 )}
+                <Space direction="vertical" style={{ width: "100%", marginTop: 12 }} size={8}>
+                  <Text type="secondary" style={{ fontSize: 12 }}>
+                    Export ZIP theo thư mục SKU
+                  </Text>
+                  <Segmented
+                    block
+                    value={exportMode}
+                    onChange={(v) => setExportMode(v as "crops" | "scenes")}
+                    options={[
+                      { label: "Cắt bbox", value: "crops" },
+                      { label: "Ảnh cảnh", value: "scenes" },
+                    ]}
+                  />
+                  <Button
+                    block
+                    icon={<DownloadOutlined />}
+                    loading={exporting}
+                    disabled={(stats.total_boxes ?? 0) === 0}
+                    onClick={() => void handleExportLabels()}
+                  >
+                    Export tất cả SKU
+                  </Button>
+                  <Button
+                    block
+                    icon={<DownloadOutlined />}
+                    loading={exporting}
+                    disabled={!selectedProductId}
+                    onClick={() => void handleExportLabels(selectedProductId)}
+                  >
+                    Export SKU đang chọn
+                  </Button>
+                </Space>
               </>
             )}
           </Card>

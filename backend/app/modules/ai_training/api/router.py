@@ -16,6 +16,7 @@ from fastapi import (
     UploadFile,
     status,
 )
+from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database.session import get_session
@@ -90,6 +91,29 @@ async def list_images(
     )
     items = [await _attach_preview(service, row) for row in rows]
     return TrainingImageList(items=items, total=total)
+
+
+@router.get("/images/export")
+async def export_training_images(
+    product_id: uuid.UUID | None = Query(None),
+    current: CurrentUser = Depends(require_roles(*_TRAINER_ROLES)),
+    session: AsyncSession = Depends(get_session),
+) -> StreamingResponse:
+    service = _service(session)
+    try:
+        data, filename = await service.export_images_zip(
+            organization_id=current.organization_id,
+            product_id=product_id,
+        )
+    except TrainingError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)
+        ) from exc
+    return StreamingResponse(
+        iter([data]),
+        media_type="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 @router.delete(

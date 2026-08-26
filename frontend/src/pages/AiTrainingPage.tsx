@@ -28,6 +28,7 @@ import type { UploadProps } from "antd";
 import {
   CloudUploadOutlined,
   DeleteOutlined,
+  DownloadOutlined,
   PlayCircleOutlined,
   ReloadOutlined,
   RocketOutlined,
@@ -39,6 +40,7 @@ import {
   createTrainingJob,
   deleteTrainingImage,
   deployTrainingJob,
+  exportTrainingImages,
   getTrainingJob,
   listTrainingImages,
   listTrainingJobs,
@@ -46,6 +48,7 @@ import {
   type TrainingImage,
   type TrainingJob,
 } from "@/api/aiTraining";
+import { formatApiErrorDetail } from "@/api/client";
 
 const { Title, Text, Paragraph } = Typography;
 
@@ -77,6 +80,7 @@ export default function AiTrainingPage() {
   const [loadingProducts, setLoadingProducts] = useState(false);
   const [loadingImages, setLoadingImages] = useState(false);
   const [training, setTraining] = useState(false);
+  const [exporting, setExporting] = useState(false);
   const [now, setNow] = useState<number>(() => Date.now() / 1000);
   const [deployBlocked, setDeployBlocked] = useState<{
     jobId: string;
@@ -268,6 +272,20 @@ export default function AiTrainingPage() {
     }
   };
 
+  const handleExport = async (productId?: string | null) => {
+    setExporting(true);
+    try {
+      await exportTrainingImages(productId ?? undefined);
+      message.success(
+        productId ? "Đã tải ZIP ảnh huấn luyện của SKU đang chọn" : "Đã tải ZIP tất cả ảnh huấn luyện"
+      );
+    } catch (err: unknown) {
+      message.error(formatApiErrorDetail(err, "Export ảnh thất bại"));
+    } finally {
+      setExporting(false);
+    }
+  };
+
   const handleDeploy = async (jobId: string, force = false) => {
     try {
       if (!force) {
@@ -315,16 +333,33 @@ export default function AiTrainingPage() {
           <Card
             title="Bước 1 — Tải ảnh huấn luyện"
             extra={
-              <Button
-                icon={<ReloadOutlined />}
-                onClick={() => {
-                  void loadProducts();
-                  void loadAllCounts();
-                }}
-                loading={loadingProducts}
-              >
-                Làm mới
-              </Button>
+              <Space wrap>
+                <Button
+                  icon={<DownloadOutlined />}
+                  loading={exporting}
+                  disabled={!selectedProductId}
+                  onClick={() => void handleExport(selectedProductId)}
+                >
+                  Export SKU này
+                </Button>
+                <Button
+                  icon={<DownloadOutlined />}
+                  loading={exporting}
+                  onClick={() => void handleExport()}
+                >
+                  Export tất cả
+                </Button>
+                <Button
+                  icon={<ReloadOutlined />}
+                  onClick={() => {
+                    void loadProducts();
+                    void loadAllCounts();
+                  }}
+                  loading={loadingProducts}
+                >
+                  Làm mới
+                </Button>
+              </Space>
             }
           >
             <Space direction="vertical" style={{ width: "100%" }} size={12}>

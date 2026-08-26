@@ -15,6 +15,7 @@ from fastapi import (
     UploadFile,
     status,
 )
+from fastapi.responses import StreamingResponse
 from sqlalchemy.exc import DBAPIError, SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -222,6 +223,29 @@ async def crop_label_image(
     payload = base.model_dump()
     payload["preview_url"] = preview or ""
     return LabelImageDetail(**payload, boxes=boxes)
+
+
+@router.get("/export")
+async def export_label_images(
+    mode: str = Query("crops", pattern="^(crops|scenes)$"),
+    product_id: uuid.UUID | None = Query(None),
+    current=Depends(require_roles(*_TRAINER_ROLES)),
+    session: AsyncSession = Depends(get_session),
+) -> StreamingResponse:
+    service = _service(session)
+    try:
+        data, filename = await service.export_labels_zip(
+            organization_id=current.organization_id,
+            mode=mode,
+            product_id=product_id,
+        )
+    except TrainingError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    return StreamingResponse(
+        iter([data]),
+        media_type="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 @router.post("/images/{image_id}/mark-cropped", response_model=LabelImageSummary)

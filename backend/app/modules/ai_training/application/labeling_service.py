@@ -3,15 +3,17 @@
 from __future__ import annotations
 
 import io
+import json
 import logging
 import uuid
+import zipfile
 from datetime import datetime, timezone
 from typing import Iterable
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.modules.ai_training.application.service import TrainingError, _slug
+from app.modules.ai_training.application.service import TrainingError, _safe_zip_name, _slug
 from app.modules.ai_training.infrastructure.models import LabelBox, LabelImage, TrainingJob
 from app.modules.catalog.infrastructure.models import Product
 from app.services.ai_engine_client import AIEngineClient, AIEngineError
@@ -100,6 +102,34 @@ def _polygon_to_db(polygon: list | None) -> list[dict[str, float]] | None:
     if not polygon or len(polygon) < 3:
         return None
     return [{"x": float(p["x"]), "y": float(p["y"])} for p in polygon]
+
+
+def _crop_bbox_bytes(raw: bytes, *, cx: float, cy: float, w: float, h: float) -> bytes | None:
+    try:
+        from PIL import Image
+    except ImportError:
+        return None
+    try:
+        img = Image.open(io.BytesIO(raw))
+    except Exception:  # noqa: BLE001
+        return None
+    iw, ih = img.size
+    left = int(round((cx - w / 2) * iw))
+    top = int(round((cy - h / 2) * ih))
+    right = int(round((cx + w / 2) * iw))
+    bottom = int(round((cy + h / 2) * ih))
+    left = max(0, min(left, iw - 1))
+    top = max(0, min(top, ih - 1))
+    right = max(left + 1, min(right, iw))
+    bottom = max(top + 1, min(bottom, ih))
+    if right - left < 2 or bottom - top < 2:
+        return None
+    cropped = img.crop((left, top, right, bottom))
+    if cropped.mode not in ("RGB", "L"):
+        cropped = cropped.convert("RGB")
+    buf = io.BytesIO()
+    cropped.save(buf, format="JPEG", quality=92)
+    return buf.getvalue()
 
 
 class LabelingService:
@@ -647,6 +677,125 @@ class LabelingService:
         await self._session.commit()
         await self._session.refresh(job)
         return job
+
+    async def export_labels_zip(
+        self,
+        *,
+        organization_id: uuid.UUID,
+        mode: str = "crops",
+        product_id: uuid.UUID | None = None,
+    ) -> tuple[bytes, str]:
+        if mode not in {"crops", "scenes"}:
+            raise TrainingError("mode phải là crops hoặc scenes")
+
+        stmt = (
+            select(LabelBox, LabelImage, Product)
+            .join(LabelImage, LabelImage.id == LabelBox.label_image_id)
+            .join(Product, Product.id == LabelBox.product_id)
+            .where(
+                LabelImage.organization_id == organization_id,
+                LabelImage.deleted_at.is_(None),
+                LabelBox.deleted_at.is_(None),
+                Product.deleted_at.is_(None),
+            )
+            .order_by(Product.sku, LabelImage.created_at, LabelBox.created_at)
+        )
+        if product_id is not None:
+            stmt = stmt.where(LabelBox.product_id == product_id)
+
+        rows = list((await self._session.execute(stmt)).all())
+        if not rows:
+            raise TrainingError("Không có nhãn bbox để export")
+
+        image_cache: dict[str, bytes] = {}
+        manifest: list[dict] = []
+        written: set[str] = set()
+        buf = io.BytesIO()
+
+        async def load_raw(storage_key: str) -> bytes | None:
+            if storage_key in image_cache:
+                return image_cache[storage_key]
+            try:
+                raw = await self._storage.get_bytes(storage_key)
+            except ObjectStorageError:
+                logger.warning("export skip missing object %s", storage_key)
+                return None
+            image_cache[storage_key] = raw
+            return raw
+
+        with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+            box_idx_by_image: dict[uuid.UUID, int] = {}
+            for box, image, product in rows:
+                raw = await load_raw(image.storage_key)
+                if raw is None:
+                    continue
+                sku_dir = _safe_zip_name(product.sku)
+                ext = image.image_format or "jpg"
+
+                if mode == "scenes":
+                    arcname = f"{sku_dir}/{image.id}.{ext}"
+                    if arcname in written:
+                        manifest.append(
+                            {
+                                "mode": "scenes",
+                                "sku": product.sku,
+                                "product_id": str(product.id),
+                                "image_id": str(image.id),
+                                "box_id": str(box.id),
+                                "path": arcname,
+                            }
+                        )
+                        continue
+                    zf.writestr(arcname, raw)
+                    written.add(arcname)
+                    manifest.append(
+                        {
+                            "mode": "scenes",
+                            "sku": product.sku,
+                            "product_id": str(product.id),
+                            "image_id": str(image.id),
+                            "box_id": str(box.id),
+                            "path": arcname,
+                        }
+                    )
+                    continue
+
+                idx = box_idx_by_image.get(image.id, 0) + 1
+                box_idx_by_image[image.id] = idx
+                arcname = f"{sku_dir}/{image.id}_{idx:03d}.jpg"
+                crop_bytes = _crop_bbox_bytes(
+                    raw, cx=box.cx, cy=box.cy, w=box.w, h=box.h
+                )
+                if crop_bytes is None:
+                    continue
+                zf.writestr(arcname, crop_bytes)
+                written.add(arcname)
+                manifest.append(
+                    {
+                        "mode": "crops",
+                        "sku": product.sku,
+                        "product_id": str(product.id),
+                        "image_id": str(image.id),
+                        "box_id": str(box.id),
+                        "cx": box.cx,
+                        "cy": box.cy,
+                        "w": box.w,
+                        "h": box.h,
+                        "path": arcname,
+                    }
+                )
+
+            if not manifest:
+                raise TrainingError("Không đọc được ảnh từ storage để export")
+            zf.writestr("manifest.json", json.dumps(manifest, ensure_ascii=False, indent=2))
+
+        suffix = ""
+        if product_id is not None:
+            suffix = f"-{_safe_zip_name(rows[0][2].sku)}"
+        filename = (
+            f"label-{mode}{suffix}-{datetime.now(timezone.utc):%Y%m%d-%H%M%S}.zip"
+        )
+        return buf.getvalue(), filename
 
     async def _load_products(
         self, organization_id: uuid.UUID, product_ids: Iterable[uuid.UUID]

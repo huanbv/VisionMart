@@ -1,4 +1,4 @@
-import { apiClient, UPLOAD_TIMEOUT_MS } from "./client";
+import { apiClient, downloadApiFile, UPLOAD_TIMEOUT_MS } from "./client";
 import type { TrainingJob } from "./aiTraining";
 
 export interface LabelPoint {
@@ -139,6 +139,17 @@ export async function deleteLabelImage(imageId: string): Promise<void> {
 export async function getLabelingStats(): Promise<LabelingStats> {
   const { data } = await apiClient.get<LabelingStats>("/ai/training/labels/stats");
   return data;
+}
+
+export async function exportLabelImages(options?: {
+  mode?: "crops" | "scenes";
+  productId?: string;
+}): Promise<void> {
+  const params: Record<string, string | undefined> = {
+    mode: options?.mode ?? "crops",
+  };
+  if (options?.productId) params.product_id = options.productId;
+  await downloadApiFile("/ai/training/labels/export", params, "label-images.zip");
 }
 
 export async function createLabeledTrainingJob(payload: {

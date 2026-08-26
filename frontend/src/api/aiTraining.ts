@@ -1,4 +1,4 @@
-import { apiClient, UPLOAD_TIMEOUT_MS } from "./client";
+import { apiClient, downloadApiFile, UPLOAD_TIMEOUT_MS } from "./client";
 
 export interface TrainingImage {
   id: string;
@@ -127,6 +127,14 @@ export interface DeployCheck {
   delta: number | null;
   comparable: boolean;
   details: Record<string, number>;
+}
+
+export async function exportTrainingImages(productId?: string): Promise<void> {
+  await downloadApiFile(
+    "/ai/training/images/export",
+    productId ? { product_id: productId } : undefined,
+    "training-images.zip"
+  );
 }
 
 /** Dry-run the regression gate before committing to a deploy. */

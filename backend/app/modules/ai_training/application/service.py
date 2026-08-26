@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import io
+import json
 import logging
 import re
 import uuid
+import zipfile
 from datetime import datetime, timezone
 from typing import Iterable
 
@@ -37,6 +40,11 @@ class TrainingError(RuntimeError):
 
 def _slug(text: str) -> str:
     return re.sub(r"[^a-z0-9]+", "_", text.lower()).strip("_") or "class"
+
+
+def _safe_zip_name(text: str) -> str:
+    cleaned = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "_", text.strip())
+    return cleaned or "unknown"
 
 
 class TrainingService:
@@ -344,6 +352,61 @@ class TrainingService:
             "deployed job=%s org=%s gate=%s", job_id, organization_id, gate.reason
         )
         return job
+
+    async def export_images_zip(
+        self,
+        *,
+        organization_id: uuid.UUID,
+        product_id: uuid.UUID | None = None,
+    ) -> tuple[bytes, str]:
+        stmt = (
+            select(TrainingImage, Product)
+            .join(Product, Product.id == TrainingImage.product_id)
+            .where(
+                TrainingImage.organization_id == organization_id,
+                TrainingImage.deleted_at.is_(None),
+                Product.deleted_at.is_(None),
+            )
+            .order_by(Product.sku, TrainingImage.created_at)
+        )
+        if product_id is not None:
+            stmt = stmt.where(TrainingImage.product_id == product_id)
+
+        rows = list((await self._session.execute(stmt)).all())
+        if not rows:
+            raise TrainingError("Không có ảnh huấn luyện để export")
+
+        manifest: list[dict] = []
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+            for image, product in rows:
+                try:
+                    raw = await self._storage.get_bytes(image.storage_key)
+                except ObjectStorageError:
+                    logger.warning("export skip missing object %s", image.storage_key)
+                    continue
+                ext = image.image_format or "jpg"
+                sku_dir = _safe_zip_name(product.sku)
+                arcname = f"{sku_dir}/{image.id}.{ext}"
+                zf.writestr(arcname, raw)
+                manifest.append(
+                    {
+                        "sku": product.sku,
+                        "product_id": str(product.id),
+                        "image_id": str(image.id),
+                        "storage_key": image.storage_key,
+                        "path": arcname,
+                    }
+                )
+            if not manifest:
+                raise TrainingError("Không đọc được ảnh từ storage để export")
+            zf.writestr("manifest.json", json.dumps(manifest, ensure_ascii=False, indent=2))
+
+        suffix = ""
+        if product_id is not None:
+            suffix = f"-{_safe_zip_name(rows[0][1].sku)}"
+        filename = f"training-images{suffix}-{datetime.now(timezone.utc):%Y%m%d-%H%M%S}.zip"
+        return buf.getvalue(), filename
 
     async def _load_products(
         self, organization_id: uuid.UUID, product_ids: Iterable[uuid.UUID]

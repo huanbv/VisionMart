@@ -99,6 +99,32 @@ export function formatApiErrorDetail(error: unknown, fallback: string): string {
   return fallback;
 }
 
+/** Download a binary API response (ZIP/CSV) as a file in the browser. */
+export async function downloadApiFile(
+  path: string,
+  params?: Record<string, string | undefined>,
+  fallbackName = "download.zip"
+): Promise<void> {
+  await ensureAccessTokenFresh();
+  const response = await apiClient.get<Blob>(path, {
+    params,
+    responseType: "blob",
+    timeout: UPLOAD_TIMEOUT_MS,
+  });
+  const disposition = response.headers["content-disposition"] as string | undefined;
+  let filename = fallbackName;
+  const match = disposition?.match(/filename="?([^";]+)"?/i);
+  if (match?.[1]) filename = match[1];
+  const url = window.URL.createObjectURL(response.data);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = filename;
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  window.URL.revokeObjectURL(url);
+}
+
 apiClient.interceptors.response.use(
   (r) => r,
   async (error: AxiosError) => {
