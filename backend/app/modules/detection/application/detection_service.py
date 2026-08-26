@@ -51,6 +51,8 @@ def archive_product_detections(
             continue
         if not _bbox_center_in_roi(bbox, image_width, image_height, roi_zones):
             continue
+        if float(item.get("confidence") or 0.0) < _ARCHIVE_MIN_CONF:
+            continue
         out.append(
             {
                 "class_name": class_name,
@@ -64,6 +66,7 @@ def archive_product_detections(
 
 
 _GIANT_BOX_FRAC = 0.35
+_ARCHIVE_MIN_CONF = 0.45
 
 
 def _is_giant_scene_box(bbox: object, width: int, height: int) -> bool:

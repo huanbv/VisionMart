@@ -757,9 +757,14 @@ async def track_frame_detailed(
         if pose_results:
             first_pose = pose_results[0]
             names_pose = first_pose.names or {}
-            if first_pose.boxes is not None and first_pose.boxes.id is not None:
+            if first_pose.boxes is not None and len(first_pose.boxes) > 0:
                 boxes = first_pose.boxes
-                ids = boxes.id.int().cpu().tolist()
+                has_ids = boxes.id is not None
+                ids = (
+                    boxes.id.int().cpu().tolist()
+                    if has_ids
+                    else [900_000 + i for i in range(len(boxes))]
+                )
                 if first_pose.keypoints is not None and first_pose.keypoints.xy is not None:
                     keypoints_xy = first_pose.keypoints.xy.cpu().numpy()
                 
@@ -769,7 +774,9 @@ async def track_frame_detailed(
                     conf = float(boxes.conf[i]) if boxes.conf is not None else 0.0
                     xy = boxes.xyxy[i].tolist()
                     
-                    mapped_tid = reid_manager.get_mapped_id(tid, img, xy)
+                    mapped_tid = (
+                        reid_manager.get_mapped_id(tid, img, xy) if has_ids else int(tid)
+                    )
 
                     left_hand = None
                     right_hand = None
@@ -797,29 +804,39 @@ async def track_frame_detailed(
                         )
                     )
                 
-                import time
-                now_ts = time.time()
-                frame_h, frame_w = img.shape[:2]
-                latest_boxes = []
-                for obj in out:
-                    if obj.class_name == "person":
-                        latest_boxes.append({
-                            "mapped_id": obj.track_id,
-                            "bbox": [obj.x1, obj.y1, obj.x2, obj.y2],
-                            "timestamp": now_ts
-                        })
-                        record_person_position(
-                            camera_key, obj.track_id, obj.cx, obj.cy, now_ts,
-                            frame_w, frame_h,
-                        )
-                _LATEST_PERSON_BOXES[camera_key] = latest_boxes
+                if has_ids:
+                    import time
+                    now_ts = time.time()
+                    frame_h, frame_w = img.shape[:2]
+                    latest_boxes = []
+                    for obj in out:
+                        if obj.class_name == "person":
+                            latest_boxes.append({
+                                "mapped_id": obj.track_id,
+                                "bbox": [obj.x1, obj.y1, obj.x2, obj.y2],
+                                "timestamp": now_ts
+                            })
+                            record_person_position(
+                                camera_key, obj.track_id, obj.cx, obj.cy, now_ts,
+                                frame_w, frame_h,
+                            )
+                    _LATEST_PERSON_BOXES[camera_key] = latest_boxes
 
-        # 2. Products: one-shot scan uses tiled predict (custom full-frame
-        # weights only see one class otherwise). Live path keeps ByteTrack
-        # but still accepts boxes that have no track id yet.
+        # 2. Products. Custom weights were trained as full-image labels, so
+        # tiled predict fires a class on every window (wood, white, a sleeve).
+        # Localize blobs first, then YOLO on each tight crop — that is the
+        # setting the weights actually learned. No tile fallback: empty
+        # wood has no blobs, and tiles would hallucinate SKUs again.
         if dense_detect:
+            from app.services.region_detect import detect_products_from_regions
+
+            persons_now = [
+                o for o in out if str(o.class_name).lower() == "person"
+            ]
             out.extend(
-                dense_detect_on_model(model_det, det_img, layout="scan", roi_rect=roi_rect)
+                detect_products_from_regions(
+                    model_det, det_img, persons_now, roi_rect
+                )
             )
         else:
             det_results = model_det.track(
@@ -842,7 +859,8 @@ async def track_frame_detailed(
     # Lấp chỗ detector COCO bỏ sót bằng đề xuất vùng contour — chủ yếu là
     # gói mì mà yolov8n không có lớp nào để nhận. Chỉ chạy khi camera đã vẽ
     # ROI (vision_result.zones khác rỗng): ngoài ROI cách cổ điển sinh rác.
-    if cfg.enable_classical_proposals and vision_result.zones:
+    # Chụp & Quét / Tải ảnh already used propose_regions + YOLO-on-crop.
+    if cfg.enable_classical_proposals and vision_result.zones and not dense_detect:
         detections = _merge_classical_proposals(
             frame_bgr, detections, camera_key
         )

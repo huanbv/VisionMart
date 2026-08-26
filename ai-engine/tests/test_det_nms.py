@@ -2,7 +2,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from app.services.det_nms import cluster_physical_objects, drop_giant_scene_boxes, merge_tiled_detections
+from app.services.det_nms import (
+    cluster_physical_objects,
+    cluster_winner_take_all,
+    drop_giant_scene_boxes,
+    merge_tiled_detections,
+)
 
 
 @dataclass
@@ -40,6 +45,28 @@ def test_adjacent_different_skus_are_kept():
     assert {d.class_name for d in kept} == {"du_7u", "du_sti"}
 
 
+def test_winner_take_all_keeps_one_class_on_same_object():
+    """Sting bottle tiles also fire du_7u — keep the higher-confidence class."""
+    sevenup = Box("du_7u", 0.91, 250, 200, 380, 430)
+    sting = Box("du_sti", 0.81, 260, 210, 390, 440)
+    kept = cluster_winner_take_all([sevenup, sting])
+    assert [d.class_name for d in kept] == ["du_7u"]
+
+
+def test_winner_take_all_keeps_side_by_side_bottles():
+    a = Box("du_7u", 0.9, 100, 200, 220, 400)
+    b = Box("du_sti", 0.9, 240, 200, 360, 400)
+    kept = cluster_winner_take_all([a, b])
+    assert {d.class_name for d in kept} == {"du_7u", "du_sti"}
+
+
 def test_sole_full_frame_box_is_dropped():
     giant = Box("du_sti", 0.72, 0, 0, 1280, 724)
     assert drop_giant_scene_boxes([giant], 1280, 724) == []
+
+
+def test_merge_drops_second_class_on_same_bottle():
+    sevenup = Box("du_7u", 0.98, 250, 200, 400, 450)
+    sting = Box("du_sti", 0.81, 255, 205, 395, 445)
+    merged = merge_tiled_detections([sevenup, sting], 960, 540)
+    assert [d.class_name for d in merged] == ["du_7u"]

@@ -110,10 +110,33 @@ def cluster_physical_objects(dets: list[T], width: int, height: int) -> list[T]:
     return kept
 
 
+def cluster_winner_take_all(dets: list[T], iou_thr: float = 0.22) -> list[T]:
+    """One box per physical object regardless of class.
+
+    Tiles of a Sting bottle also fire ``du_7u``; class-aware merge kept both.
+    Heavy overlap / containment → keep the higher-confidence class only.
+    Side-by-side 7Up + Sting have low IoU and both survive.
+    """
+    if not dets:
+        return []
+    ordered = sorted(dets, key=lambda d: d.confidence, reverse=True)
+    kept: list[T] = []
+    for d in ordered:
+        clash = False
+        for s in kept:
+            if box_iou(d, s) >= iou_thr or _center_in_box(d, s) or _center_in_box(s, d):
+                clash = True
+                break
+        if not clash:
+            kept.append(d)
+    return kept
+
+
 def merge_tiled_detections(dets: list[T], width: int, height: int) -> list[T]:
     pruned = drop_giant_scene_boxes(dets, width, height)
     nmsed = nms_same_class(pruned, iou_thr=0.25)
-    return cluster_physical_objects(nmsed, width, height)
+    clustered = cluster_physical_objects(nmsed, width, height)
+    return cluster_winner_take_all(clustered)
 
 
 def _grid(

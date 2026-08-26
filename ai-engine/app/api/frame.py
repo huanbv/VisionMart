@@ -54,7 +54,7 @@ from app.services.person_tracker import (
     track_frame_detailed,
     trajectory_last_near_ts,
 )
-from app.services.det_nms import cluster_physical_objects
+from app.services.det_nms import cluster_winner_take_all
 from app.services.product_mapper import map_class_to_sku
 from app.services import review_capture, sku_identifier, telemetry_client
 from app.vision.config import get_vision_config
@@ -975,7 +975,6 @@ async def process_frame(
     # physical object (by SKU + position) before emitting cart events so
     # "3 món trên bàn" không thành 7 dòng giỏ / toast.
     if products and (manual_scan or is_checkout):
-        fh, fw = tracking.frame_bgr.shape[:2]
         tagged = [
             TrackedObject(
                 track_id=det.track_id,
@@ -988,7 +987,7 @@ async def process_frame(
             )
             for det, sku in products
         ]
-        unique = cluster_physical_objects(tagged, fw, fh)
+        unique = cluster_winner_take_all(tagged)
         keep_ids = {d.track_id for d in unique}
         by_id = {det.track_id: (det, sku) for det, sku in products}
         products = [by_id[d.track_id] for d in unique if d.track_id in by_id]

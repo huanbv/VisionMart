@@ -72,3 +72,21 @@ def test_archive_drops_center_outside_pay_zone():
         roi_zones=roi,
     )
     assert [d["sku"] for d in out] == ["DU-STI"]
+
+
+def test_archive_drops_low_confidence_ghosts():
+    wood = {
+        "class_name": "du_7u",
+        "sku": "DU-7U",
+        "confidence": 0.26,
+        "bbox": {"x1": 700, "y1": 420, "x2": 780, "y2": 500},
+    }
+    real = {
+        "class_name": "du_sti",
+        "sku": "DU-STI",
+        "confidence": 0.92,
+        "bbox": {"x1": 500, "y1": 400, "x2": 580, "y2": 600},
+    }
+    out = archive_product_detections([wood, real], None, {"DU-7U": "7Up", "DU-STI": "Sting đỏ"})
+    assert [d["sku"] for d in out] == ["DU-STI"]
+

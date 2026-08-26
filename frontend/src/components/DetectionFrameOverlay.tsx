@@ -13,6 +13,7 @@ const PALETTE = [
 ];
 
 const GIANT_BOX_FRAC = 0.35;
+const MIN_VISIBLE_CONF = 0.45;
 
 export function detectionLabel(d: Detection): string {
   const name = d.name || d.class_name || "object";
@@ -68,6 +69,7 @@ export function visibleArchivedDetections(
     if (cls === "person") return false;
     if (cls === "region" && !d.sku) return false;
     if (isGiantBox(d, imageWidth, imageHeight)) return false;
+    if (Number.isFinite(d.confidence) && d.confidence < MIN_VISIBLE_CONF) return false;
     if (zones.length > 0 && !centerInZones(d, imageWidth, imageHeight, zones)) return false;
     return true;
   });
