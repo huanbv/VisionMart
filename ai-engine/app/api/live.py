@@ -21,11 +21,12 @@ box center (not full rectangles — custom weights often emit giant boxes
 that bury the counter). Persons keep a thin box. A HUD shows object
 count, inference time, and achieved fps. Detection does NOT run on
 every frame — YOLO inference on CPU is far slower than the stream's
-target fps, so running it every frame would make the stream stutter
-badly. Instead the last detection result is held and redrawn on the
-frames in between, which is a fine trade-off for "watch it live and see
-markers appear," not analytics (the persisted DetectionEvent pipeline in
-the backend — rtsp.scan_all — is the source of truth for that).
+target fps, so inference runs in one background task while capture/JPEG
+delivery continues at camera speed. The last completed detection result is
+held and redrawn until the next result arrives. This is a fine trade-off for
+"watch it live and see markers appear," not analytics (the persisted
+DetectionEvent pipeline in the backend — rtsp.scan_all — is the source of
+truth for that).
 """
 
 from __future__ import annotations
@@ -34,6 +35,7 @@ import asyncio
 import json
 import logging
 import time
+from contextlib import suppress
 from typing import Any
 
 import cv2  # type: ignore[import-not-found]
@@ -251,6 +253,53 @@ def _draw_hud(
     )
 
 
+def _run_live_detection(
+    detector: YoloDetector,
+    frame,
+    zones: list[RoiZone],
+    camera_key: str,
+    organization_id: str | None,
+    branch_id: str | None,
+    sku_names: dict[str, str],
+) -> tuple[list[dict], float]:
+    """Run the expensive overlay inference away from the video loop."""
+    started = time.perf_counter()
+    infer_src = frame
+    roi_rect = None
+    if zones:
+        infer_src = apply_roi(frame, zones)
+        roi_rect = zone_union_bbox(zones, frame.shape[1], frame.shape[0])
+    detections = detector.detect_dense_bgr(infer_src, "overlay", roi_rect)
+    detections = filter_overlay_ghosts(infer_src, detections)
+    _label_from_training(
+        detections,
+        organization_id=organization_id,
+        branch_id=branch_id,
+        sku_names=sku_names,
+    )
+    _label_with_sku(frame, detections)
+
+    from app.services.person_tracker import get_latest_person_boxes
+
+    for tracked in get_latest_person_boxes(camera_key):
+        bbox = tracked.get("bbox") or [0, 0, 0, 0]
+        detections.append(
+            {
+                "class_name": "person",
+                "confidence": 1.0,
+                "sku_label": f"Khach hang #{tracked.get('mapped_id')}",
+                "sku_confidence": 1.0,
+                "bbox": {
+                    "x1": int(bbox[0]),
+                    "y1": int(bbox[1]),
+                    "x2": int(bbox[2]),
+                    "y2": int(bbox[3]),
+                },
+            }
+        )
+    return detections, (time.perf_counter() - started) * 1000.0
+
+
 async def _mjpeg_frames(
     request: Request,
     stream_url: str,
@@ -271,6 +320,7 @@ async def _mjpeg_frames(
     )
 
     cap = await asyncio.to_thread(_open_capture, stream_url, open_timeout_ms)
+    inference_task: asyncio.Task[tuple[list[dict], float]] | None = None
     try:
         if not cap.isOpened():
             logger.warning("live stream: could not open %s", stream_url)
@@ -339,53 +389,40 @@ async def _mjpeg_frames(
                 instant_fps = 1.0 / delta
                 achieved_fps = (achieved_fps * 0.8) + (instant_fps * 0.2)
 
-            if detector is not None and frame_index % detect_every_n == 0:
-                started = time.perf_counter()
+            # Collect a completed inference without ever blocking frame
+            # delivery. Previously this loop awaited a 1.2s YOLO call inline,
+            # freezing the MJPEG feed every third frame (~4.5 fps in practice).
+            if inference_task is not None and inference_task.done():
                 try:
-                    infer_src = frame
-                    roi_rect = None
-                    if zones:
-                        infer_src = apply_roi(frame, zones)
-                        roi_rect = zone_union_bbox(
-                            zones, frame.shape[1], frame.shape[0]
-                        )
-                    last_detections = await asyncio.to_thread(
-                        detector.detect_dense_bgr, infer_src, "overlay", roi_rect
-                    )
-                    last_detections = filter_overlay_ghosts(infer_src, last_detections)
-                    _label_from_training(
-                        last_detections,
-                        organization_id=organization_id,
-                        branch_id=branch_id,
-                        sku_names=sku_names or {},
-                    )
-                    _label_with_sku(frame, last_detections)
-
-                    from app.services.person_tracker import get_latest_person_boxes
-                    tracker_boxes = get_latest_person_boxes(camera_key)
-                    for tb in tracker_boxes:
-                        bbox = tb.get("bbox") or [0, 0, 0, 0]
-                        last_detections.append(
-                            {
-                                "class_name": "person",
-                                "confidence": 1.0,
-                                "sku_label": f"Khach hang #{tb.get('mapped_id')}",
-                                "sku_confidence": 1.0,
-                                "bbox": {
-                                    "x1": int(bbox[0]),
-                                    "y1": int(bbox[1]),
-                                    "x2": int(bbox[2]),
-                                    "y2": int(bbox[3]),
-                                },
-                            }
-                        )
-
-                    last_infer_ms = (time.perf_counter() - started) * 1000.0
+                    last_detections, last_infer_ms = inference_task.result()
                 except Exception:  # noqa: BLE001
                     logger.exception(
                         "live stream: YOLO inference failed, "
                         "keeping last known boxes"
                     )
+                finally:
+                    inference_task = None
+
+            # Keep at most one inference in flight. Copy the frame because
+            # drawing/JPEG encoding below mutates the current ndarray while
+            # the worker thread is reading its own inference input.
+            if (
+                detector is not None
+                and inference_task is None
+                and frame_index % detect_every_n == 0
+            ):
+                inference_task = asyncio.create_task(
+                    asyncio.to_thread(
+                        _run_live_detection,
+                        detector,
+                        frame.copy(),
+                        zones or [],
+                        camera_key,
+                        organization_id,
+                        branch_id,
+                        sku_names or {},
+                    )
+                )
 
             if detector is not None:
                 # Lọc theo vùng NGAY TRƯỚC khi vẽ (dùng kích thước khung hiện
@@ -428,6 +465,10 @@ async def _mjpeg_frames(
             sleep_duration = max(0.001, interval - processing_time)
             await asyncio.sleep(sleep_duration)
     finally:
+        if inference_task is not None:
+            inference_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await inference_task
         await asyncio.to_thread(cap.release)
 
 
