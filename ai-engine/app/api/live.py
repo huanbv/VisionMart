@@ -177,18 +177,6 @@ def _filter_by_zones(
     return out
 
 
-def _iou(boxA, boxB):
-    xA = max(boxA[0], boxB[0])
-    yA = max(boxA[1], boxB[1])
-    xB = min(boxA[2], boxB[2])
-    yB = min(boxA[3], boxB[3])
-    interArea = max(0, xB - xA + 1) * max(0, yB - yA + 1)
-    boxAArea = (boxA[2] - boxA[0] + 1) * (boxA[3] - boxA[1] + 1)
-    boxBArea = (boxB[2] - boxB[0] + 1) * (boxB[3] - boxB[1] + 1)
-    iou_score = interArea / float(boxAArea + boxBArea - interArea + 1e-6)
-    return iou_score
-
-
 def _draw_detections(frame, detections: list[dict]) -> None:
     """Mutates `frame` in place, drawing a box + label per detection."""
     for det in detections:
@@ -318,6 +306,15 @@ async def _mjpeg_frames(
         achieved_fps = fps
         last_tick = time.perf_counter()
 
+        camera_key = "default"
+        try:
+            import re
+            _cam_match = re.search(r"cam-([a-f0-9-]{36})", stream_url, re.IGNORECASE)
+            if _cam_match:
+                camera_key = _cam_match.group(1)
+        except Exception:
+            camera_key = "default"
+
         while True:
             # Stop as soon as the client (backend proxy -> browser tab)
             # goes away instead of reading an RTSP/video source forever
@@ -353,52 +350,40 @@ async def _mjpeg_frames(
                 achieved_fps = (achieved_fps * 0.8) + (instant_fps * 0.2)
 
             if detector is not None and frame_index % detect_every_n == 0:
-                ok3, det_buf = cv2.imencode(".jpg", frame)
-                if ok3:
-                    started = time.perf_counter()
-                    try:
-                        last_detections = await detector.detect(
-                            det_buf.tobytes()
+                started = time.perf_counter()
+                try:
+                    # Tiled overlay so 3 products in the pay zone each get a
+                    # box — single-pass custom weights usually draw 0–1.
+                    last_detections = await asyncio.to_thread(
+                        detector.detect_dense_bgr, frame, "overlay"
+                    )
+                    _label_with_sku(frame, last_detections)
+
+                    from app.services.person_tracker import get_latest_person_boxes
+                    tracker_boxes = get_latest_person_boxes(camera_key)
+                    for tb in tracker_boxes:
+                        bbox = tb.get("bbox") or [0, 0, 0, 0]
+                        last_detections.append(
+                            {
+                                "class_name": "person",
+                                "confidence": 1.0,
+                                "sku_label": f"Khach hang #{tb.get('mapped_id')}",
+                                "sku_confidence": 1.0,
+                                "bbox": {
+                                    "x1": int(bbox[0]),
+                                    "y1": int(bbox[1]),
+                                    "x2": int(bbox[2]),
+                                    "y2": int(bbox[3]),
+                                },
+                            }
                         )
-                        # Chi phan loai o dung nhung khung vua chay detector
-                        # (moi detect_every_n khung), khong phai moi khung —
-                        # nhan duoc giu lai va ve lai cho toi lan detect sau.
-                        _label_with_sku(frame, last_detections)
 
-                        # Match detected people with the latest persistent tracker boxes!
-                        try:
-                            import re
-                            _cam_match = re.search(r"cam-([a-f0-9-]{36})", stream_url, re.IGNORECASE)
-                            camera_key = _cam_match.group(1) if _cam_match else "default"
-
-                            from app.services.person_tracker import get_latest_person_boxes
-                            tracker_boxes = get_latest_person_boxes(camera_key)
-                            
-                            for det in last_detections:
-                                if str(det.get("class_name")).lower() == "person":
-                                    bbox = det.get("bbox") or {}
-                                    det_box = [bbox.get("x1", 0), bbox.get("y1", 0), bbox.get("x2", 0), bbox.get("y2", 0)]
-                                    
-                                    best_iou = 0.0
-                                    matched_id = None
-                                    for tb in tracker_boxes:
-                                        score = _iou(det_box, tb["bbox"])
-                                        if score > best_iou:
-                                            best_iou = score
-                                            matched_id = tb["mapped_id"]
-                                    
-                                    if best_iou > 0.4 and matched_id is not None:
-                                        det["sku_label"] = f"Khach hang #{matched_id}"
-                                        det["sku_confidence"] = 1.0
-                        except Exception:
-                            logger.exception("live stream: person ID matching failed")
-
-                        last_infer_ms = (time.perf_counter() - started) * 1000.0
-                    except Exception:  # noqa: BLE001
-                        logger.exception(
-                            "live stream: YOLO inference failed, "
-                            "keeping last known boxes"
-                        )
+                    last_infer_ms = (time.perf_counter() - started) * 1000.0
+                except Exception:  # noqa: BLE001
+                    logger.exception(
+                        "live stream: YOLO inference failed, "
+                        "keeping last known boxes"
+                    )
 
             if detector is not None:
                 # Lọc theo vùng NGAY TRƯỚC khi vẽ (dùng kích thước khung hiện

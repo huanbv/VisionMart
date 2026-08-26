@@ -54,6 +54,7 @@ from app.services.person_tracker import (
     track_frame_detailed,
     trajectory_last_near_ts,
 )
+from app.services.det_nms import cluster_physical_objects
 from app.services.product_mapper import map_class_to_sku
 from app.services import review_capture, sku_identifier, telemetry_client
 from app.vision.config import get_vision_config
@@ -963,6 +964,40 @@ async def process_frame(
             products.append((det, sku))
         else:
             logger.warning("DET unmapped class=%s (no SKU in class_to_sku.json)", det.class_name)
+
+    # Tiled scan yields several boxes on the same bottle. Collapse to one
+    # physical object (by SKU + position) before emitting cart events so
+    # "3 món trên bàn" không thành 7 dòng giỏ / toast.
+    if products and (manual_scan or is_checkout):
+        fh, fw = tracking.frame_bgr.shape[:2]
+        tagged = [
+            TrackedObject(
+                track_id=det.track_id,
+                class_name=sku,
+                confidence=det.confidence,
+                x1=det.x1,
+                y1=det.y1,
+                x2=det.x2,
+                y2=det.y2,
+            )
+            for det, sku in products
+        ]
+        unique = cluster_physical_objects(tagged, fw, fh)
+        keep_ids = {d.track_id for d in unique}
+        by_id = {det.track_id: (det, sku) for det, sku in products}
+        products = [by_id[d.track_id] for d in unique if d.track_id in by_id]
+        detections = [
+            d
+            for d in detections
+            if d.class_name.lower() == "person"
+            or d.track_id in keep_ids
+            or d.track_id not in by_id
+        ]
+        logger.warning(
+            "FRAME PRODUCTS clustered: n=%d skus=%s (dropped duplicates)",
+            len(products),
+            [s for _, s in products],
+        )
 
     logger.warning(
         "FRAME PRODUCTS: n=%d skus=%s checkout_zone=%s scan_mode=%s manual=%s",

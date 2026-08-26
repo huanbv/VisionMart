@@ -23,19 +23,21 @@ const RETRY_DELAY_MS = 5_000;
  * Vẽ ROI overlay theo toạ độ phân số (0–1) như ở trang Cameras, và dùng
  * objectFit "contain" để vùng vẽ không lệch khỏi vị trí thật.
  *
- * `paused`: khi true, không mở luồng (và không tự thử lại) — dùng cho nút
- * Tạm dừng nhận diện AI ở trang giỏ hàng live. Khi chuyển paused false lại,
- * luồng được mở lại ngay.
+ * `paused`: when true, do not open the stream (and do not auto-retry).
+ * Pausing auto-cart on Live Cart does NOT set this — the feed stays up
+ * so product boxes in the checkout zone remain visible.
  */
 export default function LiveCameraView({
   camera,
   detect = true,
+  detectEveryN = 3,
   showLabels = true,
   paused = false,
   onStatusChange,
 }: {
   camera: Camera;
   detect?: boolean;
+  detectEveryN?: number;
   showLabels?: boolean;
   paused?: boolean;
   onStatusChange?: (status: LiveStreamStatus) => void;
@@ -75,7 +77,7 @@ export default function LiveCameraView({
             retryTimer = setTimeout(connect, RETRY_DELAY_MS);
           }
         },
-        { detect, detectEveryN: 3 },
+        { detect, detectEveryN },
       );
     };
     connect();
@@ -85,7 +87,7 @@ export default function LiveCameraView({
       if (retryTimer) clearTimeout(retryTimer);
       handle?.stop();
     };
-  }, [camera.id, detect, paused]);
+  }, [camera.id, detect, detectEveryN, paused]);
 
   if (paused) {
     return (

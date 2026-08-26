@@ -111,5 +111,28 @@ class YoloDetector:
                 )
         return detections
 
+    def detect_dense_bgr(self, frame_bgr, layout: str = "overlay") -> list[dict[str, Any]]:
+        """Tiled predict on a BGR OpenCV frame — used by the live MJPEG HUD.
+
+        Uses this detector's own weights (not the ByteTrack instance) so
+        overlay tiling cannot clobber checkout track ids.
+        """
+        from app.services.person_tracker import dense_detect_on_model
+
+        objs = dense_detect_on_model(self._model, frame_bgr, layout=layout)
+        return [
+            {
+                "class_name": d.class_name,
+                "confidence": d.confidence,
+                "bbox": {
+                    "x1": int(d.x1),
+                    "y1": int(d.y1),
+                    "x2": int(d.x2),
+                    "y2": int(d.y2),
+                },
+            }
+            for d in objs
+        ]
+
     async def detect(self, content: bytes) -> list[dict[str, Any]]:
         return await asyncio.to_thread(self._detect_sync, content)

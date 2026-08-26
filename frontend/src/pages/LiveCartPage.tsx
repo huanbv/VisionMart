@@ -272,6 +272,7 @@ export default function LiveCartPage() {
   const [liveCameraId, setLiveCameraId] = useState<string | undefined>();
   const [showLive, setShowLive] = useState(true);
   const [liveDetect, setLiveDetect] = useState(true);
+  const [showAiProgress, setShowAiProgress] = useState(true);
   const [aiPaused, setAiPaused] = useState(false);
   const [aiPauseSaving, setAiPauseSaving] = useState(false);
   const [streamStatus, setStreamStatus] = useState<LiveStreamStatus>("connecting");
@@ -339,8 +340,8 @@ export default function LiveCartPage() {
       const res = await setAiAutoScan(branchId, nextPaused);
       setAiPaused(res.paused);
       if (res.paused) {
-        message.info("Đã tắt nhận diện tự động — Chụp & Quét / upload vẫn dùng để test");
-        addLog("info", "⏸️ Tắt AI tự động", "Celery không còn thêm giỏ; quét thủ công vẫn chạy");
+        message.info("Đã tắt AI tự động thêm giỏ — live vẫn vẽ box sản phẩm trong vùng thanh toán");
+        addLog("info", "⏸️ Tắt AI tự động", "Không tự thêm giỏ; live overlay và Chụp & Quét vẫn chạy");
       } else {
         message.success("Đã bật lại nhận diện AI tự động");
         addLog("info", "▶️ Bật AI tự động", "Luồng live lại thêm SKU vào giỏ");
@@ -497,6 +498,9 @@ export default function LiveCartPage() {
       const detections = res.detections ?? [];
       const withSku = detections.filter((d) => d.sku);
       const events = res.emitted_events ?? [];
+      const newlyAdded = events.filter(
+        (e) => e.backend?.body?.accepted && !e.backend?.body?.reason,
+      );
       const accepted = events.filter((e) => e.backend?.body?.accepted);
       const reasons = [
         ...new Set(
@@ -505,12 +509,22 @@ export default function LiveCartPage() {
             .filter((r): r is string => Boolean(r)),
         ),
       ];
-      const skuList = withSku.map((d) => d.sku).join(", ");
+      const addedSkus = [
+        ...new Set(
+          newlyAdded
+            .map((e) => e.event?.product_sku)
+            .filter((s): s is string => Boolean(s)),
+        ),
+      ];
+      const skuList = addedSkus.join(", ") || [...new Set(withSku.map((d) => d.sku))].join(", ");
 
-      if (accepted.length > 0) {
-        const n = accepted.length;
+      if (newlyAdded.length > 0) {
+        const n = addedSkus.length || newlyAdded.length;
         message.success(`Đã thêm ${n} sản phẩm vào giỏ AI${skuList ? ` (${skuList})` : ""}`);
         addLog("add", "📸 Quét thủ công — đã tạo/cập nhật giỏ", skuList || `${n} SKU`);
+      } else if (accepted.length > 0) {
+        message.info(`Sản phẩm đã có trong giỏ AI${skuList ? ` (${skuList})` : ""}`);
+        addLog("info", "📸 Quét thủ công — SKU đã có trong giỏ", skuList);
       } else if (events.length > 0) {
         const why = reasons.join(", ") || `HTTP ${events[0]?.backend?.status ?? "?"}`;
         const hint =
@@ -696,7 +710,7 @@ export default function LiveCartPage() {
             </Space>
             <Space>
               <Typography.Text type="secondary">Khung nhận diện</Typography.Text>
-              <Switch checked={liveDetect} onChange={setLiveDetect} size="small" disabled={aiPaused} />
+              <Switch checked={liveDetect} onChange={setLiveDetect} size="small" />
             </Space>
             <Space>
               <Typography.Text type="secondary">Hiện camera</Typography.Text>
@@ -713,7 +727,7 @@ export default function LiveCartPage() {
                   type="warning"
                   showIcon
                   message="AI tự động đang tắt"
-                  description="Luồng live không thêm sản phẩm vào giỏ. Dùng Chụp & Quét khung hình này hoặc Phân tích khung hình (trang Camera) để test. Bật lại công tắc AI tự động khi xong."
+                  description="Luồng live vẫn nhận diện và vẽ box sản phẩm trong vùng thanh toán. Chỉ không tự thêm vào giỏ — dùng Chụp & Quét khi cần nhập đơn. Bật lại công tắc AI tự động khi xong."
                 />
               </Col>
             )}
@@ -749,25 +763,24 @@ export default function LiveCartPage() {
                       ⚡ Tiến độ nhận diện AI
                     </Typography.Text>
                     <Switch
-                      checked={!aiPaused}
-                      loading={aiPauseSaving}
-                      disabled={!branchId}
-                      checkedChildren="Bật"
-                      unCheckedChildren="Tắt"
-                      onChange={onToggleAiAutoScan}
+                      checked={showAiProgress}
+                      checkedChildren="Hiện"
+                      unCheckedChildren="Ẩn"
+                      onChange={setShowAiProgress}
                     />
                   </Space>
-                  {aiPaused ? (
+                  {!liveDetect ? (
                     <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                      AI tự động đang tắt. Camera vẫn xem được; dùng{" "}
-                      <Typography.Text strong style={{ fontSize: 12 }}>
-                        Chụp & Quét
-                      </Typography.Text>{" "}
-                      hoặc upload ảnh để test từng khung. Bật lại công tắc khi xong.
+                      Khung nhận diện đang tắt — bật công tắc <Typography.Text strong style={{ fontSize: 12 }}>Khung nhận diện</Typography.Text> để vẽ box sản phẩm trên live.
                     </Typography.Text>
                   ) : streamStatus === "error" ? (
                     <Typography.Text type="warning" style={{ fontSize: 12 }}>
                       ⚠️ Mất luồng camera — đang tự động thử kết nối lại…
+                    </Typography.Text>
+                  ) : !showAiProgress ? (
+                    <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                      Ẩn bước tiến độ. Camera live vẫn nhận diện và hiển thị sản phẩm trong vùng thanh toán
+                      {aiPaused ? " (không tự thêm vào giỏ)." : "."}
                     </Typography.Text>
                   ) : (
                     <Steps
@@ -839,11 +852,12 @@ export default function LiveCartPage() {
                   <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
                     <LiveCameraView
                       camera={liveCamera}
-                      detect={liveDetect && !aiPaused}
+                      detect={liveDetect}
+                      detectEveryN={6}
                       paused={false}
                       onStatusChange={setStreamStatus}
                     />
-                    <ActivePersonsPanel camera={liveCamera} paused={aiPaused} />
+                    <ActivePersonsPanel camera={liveCamera} paused={false} />
                   </div>
                 ) : (
                   <Empty description="Chưa chọn camera" />
