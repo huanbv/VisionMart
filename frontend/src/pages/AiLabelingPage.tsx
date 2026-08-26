@@ -192,7 +192,7 @@ export default function AiLabelingPage() {
       try {
         const detail = await getLabelImage(id);
         setCurrentId(id);
-        setPreviewUrl(`${detail.preview_url}${detail.preview_url.includes("?") ? "&" : "?"}t=${Date.now()}`);
+        setPreviewUrl(detail.preview_url);
         setBoxes(
           detail.boxes.map((b) =>
             yoloToDraft(
@@ -303,7 +303,7 @@ export default function AiLabelingPage() {
     setCropping(true);
     try {
       const detail = await cropLabelImage(currentId, cropRect);
-      setPreviewUrl(`${detail.preview_url}${detail.preview_url.includes("?") ? "&" : "?"}t=${Date.now()}`);
+      setPreviewUrl(detail.preview_url);
       setBoxes(
         detail.boxes.map((b) =>
           yoloToDraft(
