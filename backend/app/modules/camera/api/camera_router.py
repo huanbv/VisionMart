@@ -592,9 +592,9 @@ async def trigger_camera_scan(
             organization_id=str(current.organization_id),
             branch_id=str(camera.branch_id),
             camera_id=str(camera_id),
-            # Checkout-zone camera: same live cart session. Other cameras:
-            # one-shot order so the button still adds SKUs without grab-and-go.
-            manual_scan=not bool(camera.is_checkout_zone),
+            # Nút "Chụp & Quét" = nhập đơn thủ công 1 khung: luôn emit
+            # product_scanned ngay, không đi nhánh checkout (grace/người).
+            manual_scan=True,
             min_confidence=0.25,
         )
     except Exception as exc:
@@ -612,6 +612,7 @@ async def trigger_camera_scan(
         "frame_base64": image_b64,
         "emitted_events": frame_res.get("emitted_events", []),
         "detections": frame_res.get("detections", []),
+        "products": frame_res.get("products", 0),
     }
 
 

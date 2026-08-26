@@ -55,7 +55,15 @@ class AiCartEventService:
     async def apply_ai_event(
         self, event: AICartEventRequest
     ) -> tuple[str, ShoppingCart | None, Order | None]:
-        if event.confidence < self._settings.CART_AI_MIN_CONFIDENCE:
+        # Automatic grab-and-go (product_picked_up) is gated so a shaky
+        # detection does not spawn a cart. product_scanned is an explicit
+        # checkout/manual scan — the operator (or CHECKOUT_SCAN_MODE) already
+        # decided to add the SKU, so a YOLO score of 0.3 must not silently
+        # drop the event after the UI said "detected".
+        if (
+            event.event_type != AICartEventType.PRODUCT_SCANNED
+            and event.confidence < self._settings.CART_AI_MIN_CONFIDENCE
+        ):
             return "rejected_low_confidence", None, None
 
         # `event.track_id` from the real /ai/frame pipeline is already
@@ -197,6 +205,11 @@ class AiCartEventService:
         if event.product_id is not None:
             return await self._products.get_by_id(event.organization_id, event.product_id)
         if event.product_sku:
+            exact = await self._products.get_by_sku(
+                event.organization_id, event.product_sku
+            )
+            if exact is not None:
+                return exact
             items, _ = await self._products.list_for_org(
                 event.organization_id,
                 skip=0,

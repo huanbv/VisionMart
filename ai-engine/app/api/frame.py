@@ -1054,12 +1054,22 @@ async def process_frame(
                 "product_id": None,
                 "product_sku": sku,
                 "quantity": 1,
-                "confidence": conf,
+                # Operator clicked scan / uploaded a frame — do not forward
+                # a low YOLO score that CART_AI_MIN_CONFIDENCE would drop.
+                "confidence": max(float(conf), 0.99),
                 "customer_id": str(customer_id) if customer_id else None,
                 "occurred_at": datetime.now(timezone.utc).isoformat(),
             }
             result = await _post_event(event)
+            logger.warning(
+                "CHECKOUT EVENT RESULT: sku=%s session=%s backend=%s",
+                sku, manual_track, result,
+            )
             emitted.append({"event": event, "backend": result})
+        if not products:
+            logger.warning(
+                "MANUAL SCAN: detections present but no mapped SKU — nothing to add to cart"
+            )
     elif (
         camera_info
         and camera_info.get("is_checkout_zone")

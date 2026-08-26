@@ -123,6 +123,16 @@ class SqlAlchemyProductRepository:
         )
         return (await self._session.execute(stmt)).scalar_one_or_none()
 
+    async def get_by_sku(
+        self, organization_id: uuid.UUID, sku: str
+    ) -> Product | None:
+        stmt = select(Product).where(
+            Product.organization_id == organization_id,
+            func.lower(Product.sku) == sku.strip().lower(),
+            Product.is_deleted.is_(False),
+        )
+        return (await self._session.execute(stmt)).scalar_one_or_none()
+
     async def sku_exists(
         self,
         organization_id: uuid.UUID,

@@ -446,8 +446,46 @@ export default function LiveCartPage() {
     setManualScanning(true);
     try {
       const res = await triggerCameraScan(liveCameraId);
-      message.success(`📸 Đã chụp & quét AI thành công! Phát hiện ${res.detections.length} sản phẩm`);
-      addLog("add", "📸 Quét thủ công 1 khung hình camera", `Phát hiện ${res.detections.length} sản phẩm`);
+      const detections = res.detections ?? [];
+      const withSku = detections.filter((d) => d.sku);
+      const events = res.emitted_events ?? [];
+      const accepted = events.filter((e) => e.backend?.body?.accepted);
+      const reasons = [
+        ...new Set(
+          events
+            .map((e) => e.backend?.body?.reason)
+            .filter((r): r is string => Boolean(r)),
+        ),
+      ];
+      const skuList = withSku.map((d) => d.sku).join(", ");
+
+      if (accepted.length > 0) {
+        const n = accepted.length;
+        message.success(`Đã thêm ${n} sản phẩm vào giỏ AI${skuList ? ` (${skuList})` : ""}`);
+        addLog("add", "📸 Quét thủ công — đã tạo/cập nhật giỏ", skuList || `${n} SKU`);
+      } else if (events.length > 0) {
+        const why = reasons.join(", ") || `HTTP ${events[0]?.backend?.status ?? "?"}`;
+        const hint =
+          why.includes("unknown_product")
+            ? " — SKU chưa có trong Danh mục sản phẩm"
+            : why.includes("low_confidence")
+              ? " — độ tin cậy thấp hơn ngưỡng giỏ"
+              : "";
+        message.warning(`Nhận diện được nhưng chưa vào giỏ: ${why}${hint}`);
+        addLog("remove", "📸 Quét được box nhưng backend từ chối", why);
+      } else if (detections.length > 0 && withSku.length === 0) {
+        const names = detections.map((d) => d.class_name).join(", ");
+        message.warning(`Phát hiện ${detections.length} đối tượng (${names}) nhưng chưa map được SKU`);
+        addLog("remove", "📸 Có detection nhưng không map SKU", names);
+      } else if (detections.length > 0) {
+        message.warning(
+          `Phát hiện ${withSku.length || detections.length} sản phẩm nhưng không phát sự kiện giỏ (camera quầy + CHECKOUT_SCAN_MODE?)`,
+        );
+        addLog("remove", "📸 Có SKU nhưng không emit product_scanned", skuList);
+      } else {
+        message.warning("Không phát hiện sản phẩm trong khung hình");
+        addLog("remove", "📸 Quét thủ công — không có detection", "");
+      }
       load();
     } catch (err) {
       const detail =

@@ -339,14 +339,28 @@ export async function updateRoiZones(
   return data;
 }
 
+export interface TriggerScanEmittedEvent {
+  event?: { product_sku?: string; event_type?: string };
+  backend?: {
+    status?: number;
+    body?: { accepted?: boolean; reason?: string | null; cart_id?: string | null };
+  };
+}
+
 export interface TriggerScanResponse {
   status: string;
   camera_id: string;
   camera_name: string;
   captured_at: string;
   frame_base64: string;
-  emitted_events: unknown[];
-  detections: Array<{ class_name: string; confidence: number; track_id: number }>;
+  emitted_events: TriggerScanEmittedEvent[];
+  detections: Array<{
+    class_name: string;
+    confidence: number;
+    track_id: number;
+    sku?: string | null;
+  }>;
+  products?: number;
 }
 
 export async function triggerCameraScan(cameraId: string): Promise<TriggerScanResponse> {
