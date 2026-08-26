@@ -37,7 +37,6 @@ import time
 from typing import Any
 
 import cv2  # type: ignore[import-not-found]
-import numpy as np
 from fastapi import APIRouter, Depends, Query, Request
 from fastapi.responses import StreamingResponse
 
@@ -48,6 +47,7 @@ from app.vision.classify import get_classifier
 from app.vision.crop.cropper import crop_detection
 from app.vision.overlay.live_markers import draw_live_detections
 from app.vision.overlay.presence import filter_overlay_ghosts
+from app.vision.overlay.trajectory import draw_trajectory_tails
 from app.vision.roi import (
     RoiZone,
     apply_roi,
@@ -211,14 +211,8 @@ def _draw_detections(frame, detections: list[dict]) -> None:
 
 
 def _draw_trajectories(frame, trajectories: dict[int, list[tuple[float, float]]]) -> None:
-    """Vẽ đường đi gần đây của từng người (mapped_id)."""
-    for mapped_id, points in trajectories.items():
-        if len(points) < 2:
-            continue
-        color = _TRAJECTORY_PALETTE[mapped_id % len(_TRAJECTORY_PALETTE)]
-        pts = np.array([[int(x), int(y)] for x, y in points], dtype=np.int32)
-        cv2.polylines(frame, [pts], isClosed=False, color=color, thickness=2)
-        cv2.circle(frame, tuple(pts[-1]), 5, color, -1)
+    """Draw a short smoothed tail for each mapped person."""
+    draw_trajectory_tails(frame, trajectories, _TRAJECTORY_PALETTE)
 
 
 def _draw_hud(

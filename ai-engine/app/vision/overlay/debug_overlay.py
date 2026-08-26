@@ -13,6 +13,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
+from app.vision.overlay.trajectory import draw_trajectory_tails
 from app.vision.quality.analyzer import FrameQuality
 from app.vision.roi.zones import RoiZone
 
@@ -72,14 +73,8 @@ def draw_debug_overlay(
     # người cùng lúc.
     if trajectories:
         from app.services.person_tracker import TRAJECTORY_PALETTE as palette
-        for mapped_id, points in trajectories.items():
-            if len(points) < 2:
-                continue
-            color = palette[mapped_id % len(palette)]
-            pts = np.array([[int(x), int(y)] for x, y in points], dtype=np.int32)
-            cv2.polylines(out, [pts], isClosed=False, color=color, thickness=2)
-            last = pts[-1]
-            cv2.circle(out, tuple(last), 5, color, -1)
+
+        draw_trajectory_tails(out, trajectories, palette)
 
     # Detections / track ids.
     for det in detections:

@@ -24,6 +24,7 @@ import base64
 import collections
 import logging
 import os
+import time
 from dataclasses import dataclass
 from typing import Any
 
@@ -77,6 +78,8 @@ _TRAJECTORY_MAXLEN = 60
 # Người không xuất hiện lại quá lâu thì dọn quỹ đạo của họ — tách biệt
 # với TTL của ReID (features_db) vì mục đích khác nhau.
 _TRAJECTORY_STALE_SECONDS = 300.0
+_TRAJECTORY_DISPLAY_SECONDS = 6.0
+_TRAJECTORY_DISPLAY_MAX_POINTS = 24
 # Bảng màu chung cho overlay quỹ đạo — dùng ở cả live.py lẫn debug_overlay.py
 # để màu nhất quán khi xem cả hai nơi cùng lúc.
 TRAJECTORY_PALETTE: list[tuple[int, int, int]] = [
@@ -125,15 +128,81 @@ def get_person_trajectory_px(
 def get_all_trajectories_xy(
     camera_key: str, frame_w: float, frame_h: float,
 ) -> dict[int, list[tuple[float, float]]]:
-    """(x, y) pixel theo kích thước khung hình của người gọi — dùng để vẽ
-    overlay, không cần timestamp."""
+    """Recent, smoothed pixel paths for display only.
+
+    Business matching keeps using the untouched raw history through
+    ``get_person_trajectory_px``. The display path removes stale points,
+    tracker jumps and stationary bbox jitter so the overlay stays readable.
+    """
     per_cam = _PERSON_TRAJECTORIES.get(camera_key)
     if not per_cam:
         return {}
-    return {
-        mid: [(fx * frame_w, fy * frame_h) for fx, fy, _ts in list(traj)]
-        for mid, traj in list(per_cam.items())
-    }
+    now = time.time()
+    result: dict[int, list[tuple[float, float]]] = {}
+    for mid, traj in list(per_cam.items()):
+        points = _prepare_display_trajectory(
+            list(traj),
+            frame_w,
+            frame_h,
+            now=now,
+        )
+        if len(points) >= 2:
+            result[mid] = points
+    return result
+
+
+def _prepare_display_trajectory(
+    raw: list[tuple[float, float, float]],
+    frame_w: float,
+    frame_h: float,
+    *,
+    now: float,
+) -> list[tuple[float, float]]:
+    """Build a short anti-jitter tail without changing tracking state."""
+    import math
+
+    cutoff = now - _TRAJECTORY_DISPLAY_SECONDS
+    recent = [point for point in raw if point[2] >= cutoff]
+    recent = recent[-_TRAJECTORY_DISPLAY_MAX_POINTS:]
+    if len(recent) < 2:
+        return []
+
+    pixels = [(fx * frame_w, fy * frame_h) for fx, fy, _ts in recent]
+    jump_limit = max(48.0, 0.12 * math.hypot(frame_w, frame_h))
+    segment_start = 0
+    for i in range(1, len(pixels)):
+        if math.dist(pixels[i - 1], pixels[i]) > jump_limit:
+            segment_start = i
+    pixels = pixels[segment_start:]
+    if len(pixels) < 2:
+        return []
+
+    alpha = 0.35
+    smoothed = [pixels[0]]
+    for x, y in pixels[1:]:
+        prev_x, prev_y = smoothed[-1]
+        smoothed.append(
+            (
+                alpha * x + (1.0 - alpha) * prev_x,
+                alpha * y + (1.0 - alpha) * prev_y,
+            )
+        )
+    # The tail may be smoothed, but its marker must stay on the latest
+    # measured person center rather than visibly lagging behind.
+    smoothed[-1] = pixels[-1]
+
+    simplified = [smoothed[0]]
+    for point in smoothed[1:-1]:
+        if math.dist(simplified[-1], point) >= 5.0:
+            simplified.append(point)
+    if math.dist(simplified[-1], smoothed[-1]) >= 2.0:
+        simplified.append(smoothed[-1])
+
+    path_length = sum(
+        math.dist(simplified[i - 1], simplified[i])
+        for i in range(1, len(simplified))
+    )
+    return simplified if path_length >= 12.0 else []
 
 
 def trajectory_last_near_ts(
