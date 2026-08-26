@@ -25,7 +25,7 @@ const RETRY_DELAY_MS = 5_000;
  *
  * `paused`: when true, do not open the stream (and do not auto-retry).
  * Pausing auto-cart on Live Cart does NOT set this — the feed stays up
- * so product boxes in the checkout zone remain visible.
+ * so product markers in the checkout zone remain visible.
  */
 export default function LiveCameraView({
   camera,

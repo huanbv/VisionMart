@@ -16,14 +16,15 @@ same "AI Engine isolation" boundary every other route here respects.
 
 Optional live YOLO overlay (`detect=true`, the default): every
 `detect_every_n`-th frame is run through the same `YoloDetector` used by
-`/detect` and `/capture`, and the resulting boxes/labels are burned
-directly into the frames sent to the browser, along with a small HUD
-(object count, inference time, achieved fps). Detection does NOT run on
+`/detect` and `/capture`. Products are marked with colored dots at each
+box center (not full rectangles — custom weights often emit giant boxes
+that bury the counter). Persons keep a thin box. A HUD shows object
+count, inference time, and achieved fps. Detection does NOT run on
 every frame — YOLO inference on CPU is far slower than the stream's
 target fps, so running it every frame would make the stream stutter
 badly. Instead the last detection result is held and redrawn on the
 frames in between, which is a fine trade-off for "watch it live and see
-boxes appear," not analytics (the persisted DetectionEvent pipeline in
+markers appear," not analytics (the persisted DetectionEvent pipeline in
 the backend — rtsp.scan_all — is the source of truth for that).
 """
 
@@ -45,6 +46,7 @@ from app.services.person_tracker import TRAJECTORY_PALETTE as _TRAJECTORY_PALETT
 from app.services.yolo_detector import YoloDetector
 from app.vision.classify import get_classifier
 from app.vision.crop.cropper import crop_detection
+from app.vision.overlay.live_markers import draw_live_detections
 from app.vision.roi import (
     RoiZone,
     apply_roi,
@@ -64,27 +66,8 @@ _MAX_FPS = 30.0
 _MIN_DETECT_EVERY_N = 1
 _MAX_DETECT_EVERY_N = 15
 
-# Sci-fi-HUD-ish palette — cycled by class name so the same class always
-# gets the same color within a stream (helps the eye track "that's the
-# person box, that's the bottle box" at a glance). BGR, since that's what
-# cv2 wants.
-_PALETTE: list[tuple[int, int, int]] = [
-    (80, 220, 60),   # green
-    (60, 200, 255),  # amber
-    (255, 190, 40),  # cyan-blue
-    (170, 90, 255),  # magenta
-    (60, 120, 255),  # orange
-    (255, 255, 90),  # light cyan
-    (120, 60, 255),  # red-violet
-]
-
-
 # Duoi nguong nay nhan SKU hien kem dau ? — xem muc _label_with_sku.
 _LIVE_SKU_MIN_CONFIDENCE = 0.55
-
-
-def _class_color(class_name: str) -> tuple[int, int, int]:
-    return _PALETTE[hash(class_name) % len(_PALETTE)]
 
 
 def _open_capture(stream_url: str, open_timeout_ms: int) -> cv2.VideoCapture:
@@ -222,39 +205,8 @@ def _filter_by_zones(
 
 
 def _draw_detections(frame, detections: list[dict]) -> None:
-    """Mutates `frame` in place, drawing a box + Unicode label per detection."""
-    from app.vision.overlay.unicode_text import draw_label, measure_text
-
-    for det in detections:
-        bbox = det.get("bbox") or {}
-        try:
-            x1, y1 = int(bbox["x1"]), int(bbox["y1"])
-            x2, y2 = int(bbox["x2"]), int(bbox["y2"])
-        except (KeyError, TypeError, ValueError):
-            continue
-        class_name = str(det.get("class_name") or "object")
-        confidence = float(det.get("confidence") or 0.0)
-        color = _class_color(class_name)
-
-        cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2, cv2.LINE_AA)
-
-        sku_label = det.get("sku_label")
-        if sku_label:
-            sku_conf = float(det.get("sku_confidence") or 0.0)
-            label = f"{sku_label} {sku_conf * 100:.0f}%"
-        else:
-            label = f"{class_name} {confidence * 100:.0f}%"
-        _tw, th = measure_text(label, 16)
-        label_y = max(0, y1 - th - 8)
-        draw_label(
-            frame,
-            label,
-            x=x1,
-            y=label_y,
-            fg_bgr=(20, 20, 20),
-            bg_bgr=color,
-            size=16,
-        )
+    """Mutates `frame` in place — product dots + thin person boxes."""
+    draw_live_detections(frame, detections)
 
 
 def _draw_trajectories(frame, trajectories: dict[int, list[tuple[float, float]]]) -> None:

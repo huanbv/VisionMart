@@ -409,7 +409,7 @@ export default function LiveCartPage() {
       const res = await setAiAutoScan(branchId, nextPaused);
       setAiPaused(res.paused);
       if (res.paused) {
-        message.info("Đã tắt AI tự động thêm giỏ — live vẫn vẽ box sản phẩm trong vùng thanh toán");
+        message.info("Đã tắt AI tự động thêm giỏ — live vẫn đánh dấu sản phẩm bằng chấm màu trong vùng thanh toán");
         addLog("info", "⏸️ Tắt AI tự động", "Không tự thêm giỏ; live overlay, Chụp & Quét và Tải ảnh vẫn chạy");
       } else {
         message.success("Đã bật lại nhận diện AI tự động");
@@ -813,7 +813,7 @@ export default function LiveCartPage() {
                   type="warning"
                   showIcon
                   message="AI tự động đang tắt"
-                  description="Luồng live vẫn nhận diện và vẽ box sản phẩm trong vùng thanh toán. Chỉ không tự thêm vào giỏ — dùng Chụp & Quét hoặc Tải ảnh & Quét khi cần nhập đơn. Bật lại công tắc AI tự động khi xong."
+                  description="Luồng live vẫn nhận diện và đánh dấu sản phẩm bằng chấm màu trong vùng thanh toán. Chỉ không tự thêm vào giỏ — dùng Chụp & Quét hoặc Tải ảnh & Quét khi cần nhập đơn. Bật lại công tắc AI tự động khi xong."
                 />
               </Col>
             )}
@@ -857,7 +857,7 @@ export default function LiveCartPage() {
                   </Space>
                   {!liveDetect ? (
                     <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                      Khung nhận diện đang tắt — bật công tắc <Typography.Text strong style={{ fontSize: 12 }}>Khung nhận diện</Typography.Text> để vẽ box sản phẩm trên live.
+                      Khung nhận diện đang tắt — bật công tắc <Typography.Text strong style={{ fontSize: 12 }}>Khung nhận diện</Typography.Text> để hiện chấm màu sản phẩm trên live.
                     </Typography.Text>
                   ) : streamStatus === "error" ? (
                     <Typography.Text type="warning" style={{ fontSize: 12 }}>
