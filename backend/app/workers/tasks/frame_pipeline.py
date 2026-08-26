@@ -11,12 +11,12 @@ before this task existed, the only callers were the manual
 "analyze one frame" button and the `/cart/simulate` demo endpoint — nothing
 watched real cameras continuously.
 
-Runs on Celery Beat when FRAME_PIPELINE_ENABLED is true. Off by default:
-each camera holds a full YOLO model instance in ai-engine's RAM (see
-person_tracker.py) and this task calls TWO ai-engine endpoints per camera
-per tick (grab-frame, then track+emit), so cost scales linearly with
-FRAME_PIPELINE_MAX_CAMERAS * (1 / FRAME_PIPELINE_INTERVAL_SECONDS). Tune
-both conservatively, especially on small RAM boxes.
+Runs on every Celery Beat tick, but each branch is skipped unless its Live
+Cart switch is on. ``FRAME_PIPELINE_ENABLED`` is the initial default for a
+branch that has never been toggled; an explicit UI choice is persisted in
+Redis and overrides it. Each camera holds a full YOLO model instance in
+ai-engine's RAM, so tune FRAME_PIPELINE_MAX_CAMERAS and the interval
+conservatively.
 """
 
 from __future__ import annotations
@@ -84,8 +84,6 @@ async def _process_one(ai_client: AIEngineClient, camera) -> tuple[str, str]:
 
 async def _run_scan() -> dict:
     settings = get_settings()
-    if not settings.FRAME_PIPELINE_ENABLED:
-        return {"skipped": "disabled"}
 
     # Celery beat fires this every FRAME_PIPELINE_INTERVAL_SECONDS regardless
     # of whether the previous run finished. At a 2-3s interval, a slow run
@@ -128,6 +126,10 @@ async def _run_scan() -> dict:
                         paused_cache[branch_key] = await is_paused_on(
                             redis_client, camera.branch_id
                         )
+                    # Branch-level state is authoritative. An explicit "on"
+                    # from Live Cart is persisted as Redis value ``0`` and
+                    # can enable this branch even when the deployment-wide
+                    # FRAME_PIPELINE_ENABLED default is false.
                     if paused_cache[branch_key]:
                         results[str(camera.id)] = "skipped:auto-scan-paused"
                         continue

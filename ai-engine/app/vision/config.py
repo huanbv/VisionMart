@@ -327,7 +327,11 @@ class VisionConfig:
     # không đánh dấu checkout vẫn chạy grab-and-go (người cầm sản phẩm) như
     # cũ — nhánh này hoàn toàn tách biệt.
     checkout_scan_mode: bool = field(
-        default_factory=lambda: _bool("CHECKOUT_SCAN_MODE", False)
+        # Marking a camera as ``is_checkout_zone`` is already an explicit
+        # operator choice. Default this path on so Live Cart's "AI tự động"
+        # switch does not appear enabled while checkout events are silently
+        # suppressed by a second, hidden environment flag.
+        default_factory=lambda: _bool("CHECKOUT_SCAN_MODE", True)
     )
 
     # ---- Bỏ phiếu nhiều khung (phân biệt sản phẩm giống nhau) ----
