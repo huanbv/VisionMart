@@ -481,16 +481,22 @@ def _collect_debug_steps(
             None,
         )
         if first is not None:
+            # CropResult exposes the padded box as a single `bbox` tuple
+            # (x1, y1, x2, y2) — there are no separate .x1/.y1 attributes,
+            # so referencing them raised AttributeError and lost the whole
+            # DEBUG_AI step set for every frame while DEBUG_AI was on.
             debug.add(
                 "crop",
                 first.crop.image,
-                box=[first.crop.x1, first.crop.y1, first.crop.x2, first.crop.y2],
+                box=list(first.crop.bbox),
             )
             debug.add(
                 "classifier",
                 first.crop.image,
                 sku=first.match.sku,
-                confidence=first.match.confidence,
+                # MatchResult's field is `final_confidence`; `.confidence`
+                # doesn't exist and would raise the same AttributeError.
+                confidence=first.match.final_confidence,
                 source=first.match.source,
                 reason=first.match.reason,
             )
