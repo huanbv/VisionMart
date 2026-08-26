@@ -12,6 +12,47 @@ from app.modules.detection.infrastructure.repositories import (
 )
 
 
+def archive_product_detections(
+    pipeline_detections: object,
+    fallback_detections: object,
+    sku_names: dict[str, str],
+) -> list[dict]:
+    """JSON stored on DetectionEvent: SKU + catalog name, no person boxes.
+
+    Live / Chụp & Quét / Tải ảnh run the cart pipeline (tiled + class→SKU).
+    `/detect` alone often emits one full-image box with no SKU — that is
+    what used to show up empty on /detections.
+    """
+    if isinstance(pipeline_detections, list):
+        raw = pipeline_detections
+    elif isinstance(fallback_detections, list):
+        raw = fallback_detections
+    else:
+        raw = []
+    out: list[dict] = []
+    for item in raw:
+        if not isinstance(item, dict):
+            continue
+        class_name = str(item.get("class_name") or "")
+        if class_name.lower() == "person":
+            continue
+        sku_raw = item.get("sku")
+        sku = str(sku_raw).strip() if sku_raw else None
+        if sku == "":
+            sku = None
+        bbox = item.get("bbox")
+        out.append(
+            {
+                "class_name": class_name,
+                "sku": sku,
+                "name": sku_names.get(sku) if sku else None,
+                "confidence": float(item.get("confidence") or 0.0),
+                "bbox": bbox,
+            }
+        )
+    return out
+
+
 class DetectionService:
     def __init__(self, repo: SqlAlchemyDetectionRepository) -> None:
         self._repo = repo

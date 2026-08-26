@@ -141,6 +141,8 @@ export interface Detection {
   class_name: string;
   confidence: number;
   bbox: DetectionBox;
+  sku?: string | null;
+  name?: string | null;
   stub?: boolean;
 }
 

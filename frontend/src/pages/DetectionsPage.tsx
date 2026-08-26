@@ -25,6 +25,9 @@ import {
   type DetectionEvent,
   type DetectionEventSummary,
 } from "@/api/detections";
+import DetectionFrameOverlay, {
+  detectionLabel,
+} from "@/components/DetectionFrameOverlay";
 
 const PAGE_SIZE = 50;
 
@@ -317,50 +320,31 @@ export default function DetectionsPage() {
                     objectFit: "contain",
                   }}
                 />
-                {detail.detections.map((d, i) => {
-                  const b = d.bbox;
-                  if (!b) return null;
-                  const left = (b.x1 / detail.image_width) * 100;
-                  const top = (b.y1 / detail.image_height) * 100;
-                  const width = ((b.x2 - b.x1) / detail.image_width) * 100;
-                  const height = ((b.y2 - b.y1) / detail.image_height) * 100;
-                  return (
-                    <div
-                      key={i}
-                      style={{
-                        position: "absolute",
-                        left: `${left}%`,
-                        top: `${top}%`,
-                        width: `${width}%`,
-                        height: `${height}%`,
-                        border: "2px solid #52c41a",
-                        boxSizing: "border-box",
-                        pointerEvents: "none",
-                      }}
-                    >
-                      <span
-                        style={{
-                          position: "absolute",
-                          top: -18,
-                          left: 0,
-                          background: "#52c41a",
-                          color: "#fff",
-                          fontSize: 11,
-                          padding: "1px 4px",
-                          borderRadius: 2,
-                          whiteSpace: "nowrap",
-                        }}
-                      >
-                        {d.class_name} {(d.confidence * 100).toFixed(0)}%
-                      </span>
-                    </div>
-                  );
-                })}
+                <DetectionFrameOverlay
+                  detections={detail.detections}
+                  imageWidth={detail.image_width}
+                  imageHeight={detail.image_height}
+                  camera={cameras.find((c) => c.id === detail.camera_id)}
+                />
               </div>
             )}
             <Typography.Title level={5}>
-              Detections ({detail.detections.length})
+              Sản phẩm ({detail.detections.length})
             </Typography.Title>
+            {detail.detections.length === 0 ? (
+              <Typography.Text type="secondary">
+                Không có sản phẩm trong bản ghi này. Sự kiện cũ có thể chưa lưu SKU
+                — Tải ảnh & Quét / Chụp & Quét mới sẽ kèm tên, mã SKU và chấm màu.
+              </Typography.Text>
+            ) : (
+              <Space wrap>
+                {detail.detections.map((d, i) => (
+                  <Tag key={i} color="blue">
+                    {detectionLabel(d)}
+                  </Tag>
+                ))}
+              </Space>
+            )}
             <pre
               style={{
                 margin: 0,
@@ -368,7 +352,7 @@ export default function DetectionsPage() {
                 background: "#fafafa",
                 borderRadius: 4,
                 fontSize: 12,
-                maxHeight: 300,
+                maxHeight: 220,
                 overflow: "auto",
               }}
             >

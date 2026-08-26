@@ -39,7 +39,10 @@ from app.modules.tenancy.infrastructure.models import Branch
 from app.modules.detection.application.alert_dispatcher import (
     DetectionAlertDispatcher,
 )
-from app.modules.detection.application.detection_service import DetectionService
+from app.modules.detection.application.detection_service import (
+    DetectionService,
+    archive_product_detections,
+)
 from app.modules.detection.infrastructure.repositories import (
     SqlAlchemyDetectionRepository,
 )
@@ -61,6 +64,23 @@ logger = logging.getLogger(__name__)
 
 def _service(session: AsyncSession) -> CameraService:
     return CameraService(SqlAlchemyCameraRepository(session))
+
+
+async def _catalog_sku_names(
+    session: AsyncSession, organization_id: uuid.UUID
+) -> dict[str, str]:
+    try:
+        from app.modules.catalog.infrastructure.repositories import (
+            SqlAlchemyProductRepository,
+        )
+
+        items, _ = await SqlAlchemyProductRepository(session).list_for_org(
+            organization_id, skip=0, limit=500, is_active=True
+        )
+        return {p.sku: p.name for p in items if p.sku}
+    except Exception:
+        logger.exception("could not load catalog names for detection archive")
+        return {}
 
 
 def _resolve(value: object, unset: bool) -> object:
@@ -372,21 +392,6 @@ async def analyze_camera_frame(
     except ObjectStorageError:
         image_key = None
 
-    detection_service = DetectionService(SqlAlchemyDetectionRepository(session))
-    event = await detection_service.record(
-        organization_id=current.organization_id,
-        camera_id=camera_id,
-        user_id=current.user_id,
-        result=result,
-        image_key=image_key,
-    )
-
-    notification_service = NotificationService(
-        SqlAlchemyNotificationRepository(session)
-    )
-    dispatcher = DetectionAlertDispatcher(notification_service, get_settings())
-    alerts_sent = await dispatcher.dispatch(event, camera, session=session)
-
     frame_pipeline: dict[str, Any] | None = None
     frame_error: str | None = None
     try:
@@ -411,6 +416,29 @@ async def analyze_camera_frame(
         frame_error = f"{type(exc).__name__}: {exc}"
         logger.exception("ai-engine frame pipeline crashed")
 
+    sku_names = await _catalog_sku_names(session, current.organization_id)
+    archived = archive_product_detections(
+        None if frame_error else (frame_pipeline or {}).get("detections"),
+        result.get("detections"),
+        sku_names,
+    )
+    record_payload = {**result, "detections": archived}
+
+    detection_service = DetectionService(SqlAlchemyDetectionRepository(session))
+    event = await detection_service.record(
+        organization_id=current.organization_id,
+        camera_id=camera_id,
+        user_id=current.user_id,
+        result=record_payload,
+        image_key=image_key,
+    )
+
+    notification_service = NotificationService(
+        SqlAlchemyNotificationRepository(session)
+    )
+    dispatcher = DetectionAlertDispatcher(notification_service, get_settings())
+    alerts_sent = await dispatcher.dispatch(event, camera, session=session)
+
     return {
         "camera_id": str(camera_id),
         "detection_event_id": str(event.id),
@@ -419,6 +447,7 @@ async def analyze_camera_frame(
         "frame_pipeline": frame_pipeline,
         "frame_pipeline_error": frame_error,
         **result,
+        "detections": archived,
     }
 
 
@@ -677,14 +706,49 @@ async def trigger_camera_scan(
             detail=f"AI frame pipeline failed: {exc}",
         ) from exc
 
+    image_key: str | None = None
+    try:
+        storage = MinioStorage(get_settings())
+        image_key = (
+            f"detections/{current.organization_id}/{camera_id}/"
+            f"{uuid.uuid4()}.jpg"
+        )
+        await storage.put(image_key, image_bytes, content_type="image/jpeg")
+    except ObjectStorageError:
+        image_key = None
+
+    sku_names = await _catalog_sku_names(session, current.organization_id)
+    archived = archive_product_detections(
+        frame_res.get("detections"),
+        None,
+        sku_names,
+    )
+    cap_image = cap_res.get("image") if isinstance(cap_res, dict) else {}
+    detection_service = DetectionService(SqlAlchemyDetectionRepository(session))
+    event = await detection_service.record(
+        organization_id=current.organization_id,
+        camera_id=camera_id,
+        user_id=current.user_id,
+        result={
+            "model": (cap_res.get("model") if isinstance(cap_res, dict) else None)
+            or "unknown",
+            "image": cap_image or {},
+            "elapsed_ms": (cap_res.get("elapsed_ms") if isinstance(cap_res, dict) else 0)
+            or 0,
+            "detections": archived,
+        },
+        image_key=image_key,
+    )
+
     return {
         "status": "ok",
         "camera_id": str(camera_id),
         "camera_name": camera.name,
         "captured_at": datetime.now(timezone.utc).isoformat(),
         "frame_base64": image_b64,
+        "detection_event_id": str(event.id),
         "emitted_events": frame_res.get("emitted_events", []),
-        "detections": frame_res.get("detections", []),
+        "detections": archived,
         "products": frame_res.get("products", 0),
     }
 
