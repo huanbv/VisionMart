@@ -718,6 +718,8 @@ export default function ImageScanPage() {
             qty: line.quantity,
             subtotal: line.subtotal,
             confidence: line.confidence,
+            lineId: line.line_id,
+            hasPhoto: Boolean(line.has_photo),
           })),
         })),
       });

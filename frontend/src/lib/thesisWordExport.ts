@@ -28,6 +28,7 @@ import {
   lookupAlgorithm,
   PARAM_GLOSSARY,
 } from "@/pages/imageScanAlgorithms";
+import { getCartLinePhotoUrl } from "@/api/carts";
 
 const FONT = "Times New Roman";
 /** 13pt — chuẩn luận văn VN (size trong OOXML tính bằng half-point). */
@@ -114,6 +115,9 @@ export type ThesisWordInput = {
       qty: number;
       subtotal: string;
       confidence?: number | null;
+      lineId?: string;
+      hasPhoto?: boolean;
+      photo?: ThesisImage | null;
     }>;
   }>;
 };
@@ -237,8 +241,8 @@ function fitImage(w: number, h: number, maxW = 480, maxH = 340): { width: number
   return { width: Math.max(1, Math.round(w * r)), height: Math.max(1, Math.round(h * r)) };
 }
 
-function imageParagraph(img: ThesisImage): Paragraph {
-  const size = fitImage(img.width, img.height);
+function imageParagraph(img: ThesisImage, maxW = 480, maxH = 340): Paragraph {
+  const size = fitImage(img.width, img.height, maxW, maxH);
   return new Paragraph({
     alignment: AlignmentType.CENTER,
     spacing: { before: 80, after: 80 },
@@ -247,7 +251,43 @@ function imageParagraph(img: ThesisImage): Paragraph {
         type: img.type,
         data: img.data,
         transformation: size,
-        altText: { title: "Minh họa giai đoạn", description: "Ảnh trung gian pipeline", name: "stage" },
+        altText: { title: "Minh họa", description: "Ảnh thực nghiệm VisionMart", name: "figure" },
+      }),
+    ],
+  });
+}
+
+function codeBlock(code: string): Table {
+  const lines = code.trim().split("\n");
+  return new Table({
+    width: { size: convertMillimetersToTwip(CONTENT_MM), type: WidthType.DXA },
+    rows: [
+      new TableRow({
+        children: [
+          new TableCell({
+            borders: {
+              top: { style: BorderStyle.SINGLE, size: 4, color: "D0D7DE" },
+              bottom: { style: BorderStyle.SINGLE, size: 4, color: "D0D7DE" },
+              left: { style: BorderStyle.SINGLE, size: 4, color: "D0D7DE" },
+              right: { style: BorderStyle.SINGLE, size: 4, color: "D0D7DE" },
+            },
+            shading: { type: ShadingType.CLEAR, fill: "F6F8FA" },
+            margins: { top: 80, bottom: 80, left: 100, right: 100 },
+            children: lines.map(
+              (line) =>
+                new Paragraph({
+                  spacing: { after: 0, line: 240 },
+                  children: [
+                    new TextRun({
+                      text: line.length ? line : " ",
+                      font: "Courier New",
+                      size: 20,
+                    }),
+                  ],
+                }),
+            ),
+          }),
+        ],
       }),
     ],
   });
@@ -401,6 +441,12 @@ function appendStage(
     figure.n += 1;
     children.push(imageParagraph(stage.image));
     children.push(pCaption(`Hình ${figure.n}. Ảnh trung gian — ${stage.title}`));
+  }
+  if (def) {
+    children.push(pPlain("Mã nguồn + tài liệu", { bold: true }));
+    children.push(pPlain(`Tài liệu: ${def.citation}`, { italics: true, size: PT12 }));
+    children.push(pPlain(`File nguồn: ${def.file}`, { size: PT12 }));
+    children.push(codeBlock(def.code));
   }
 }
 
@@ -582,6 +628,38 @@ function buildDocument(input: ThesisWordInput): Document {
     input.carts.forEach((c, i) => {
       children.push(heading2(`6.${i + 1}. Giỏ ${c.id.slice(0, 8)} — ${cartStatusVi(c.status)}`));
       if (c.sessionId) children.push(pPlain(`Phiên: ${c.sessionId}`, { italics: true, size: PT12 }));
+      children.push(
+        pBody(
+          "Mỗi dòng dưới đây kèm ảnh crop cận cảnh (nếu pipeline đã cắt vùng bbox lúc nhận diện) để đối chiếu SKU khi viết báo cáo.",
+        ),
+      );
+      if (!c.lines.length) {
+        children.push(pBody("Giỏ không có dòng hàng (SKU chưa có trong catalog hoặc dòng đã bị xoá)."));
+      }
+      c.lines.forEach((l, j) => {
+        children.push(
+          pPlain(
+            `${j + 1}) ${l.name} — SKU ${l.sku} · số lượng ${l.qty} · thành tiền ${l.subtotal}${
+              l.confidence != null ? ` · tin cậy AI ${(l.confidence * 100).toFixed(0)}%` : ""
+            }`,
+            { bold: true },
+          ),
+        );
+        if (l.photo) {
+          figure.n += 1;
+          children.push(imageParagraph(l.photo, 280, 280));
+          children.push(
+            pCaption(`Hình ${figure.n}. Crop sản phẩm trên giỏ — ${l.name} (${l.sku})`),
+          );
+        } else {
+          children.push(
+            pPlain(
+              "Không có ảnh crop cho dòng này (pipeline không lưu photo_key, hoặc ảnh đã hết hạn).",
+              { italics: true, size: PT12 },
+            ),
+          );
+        }
+      });
       if (c.lines.length) {
         children.push(
           simpleTable(
@@ -590,8 +668,6 @@ function buildDocument(input: ThesisWordInput): Document {
             [70, 35, 20, 35],
           ),
         );
-      } else {
-        children.push(pBody("Giỏ không có dòng hàng (SKU chưa có trong catalog hoặc dòng đã bị xoá)."));
       }
       children.push(pPlain(`Tổng cộng: ${c.total} ${c.currency}.`, { bold: true }));
     });
@@ -607,9 +683,38 @@ function buildDocument(input: ThesisWordInput): Document {
   const nCart = input.carts.length;
   children.push(
     pBody(
-      `Tóm tắt định lượng: ${nBox} hộp nhận diện, ${nSku} hộp có SKU, ${nCart} giỏ được ghi nhận, ${input.opencvStages.length} ảnh trung gian OpenCV và ${input.aiStages.length} ảnh DEBUG AI. Các công thức ở mục 4–5 đủ để trích vào chương phương pháp (gamma, CLAHE, Laplacian, IoU/NMS, softmax, fusion). Ảnh «Hình n» là minh họa thực nghiệm, không phải ảnh minh hoạ giả lập.`,
+      `Tóm tắt định lượng: ${nBox} hộp nhận diện, ${nSku} hộp có SKU, ${nCart} giỏ được ghi nhận, ${input.opencvStages.length} ảnh trung gian OpenCV và ${input.aiStages.length} ảnh DEBUG AI. Mục 4–5 kèm công thức, mã nguồn và tài liệu gốc; mục 6 đính crop cận cảnh từng dòng giỏ (nếu pipeline đã lưu). Ảnh «Hình n» là minh họa thực nghiệm.`,
     ),
   );
+
+  const extraKeys: string[] = [];
+  const seenKeys = new Set([...input.opencvStages, ...input.aiStages].map((s) => s.key));
+  const extras = isVideo
+    ? ["video_capture", "scan_session", "cart_order"]
+    : ["cart_order"];
+  for (const key of extras) {
+    if (!seenKeys.has(key) && lookupAlgorithm(key)) extraKeys.push(key);
+  }
+  if (extraKeys.length) {
+    children.push(heading1("8. Mã nguồn bổ sung (luồng phiên và giỏ hàng)"));
+    children.push(
+      pBody(
+        "Các đoạn dưới đây không có ảnh trung gian riêng trên lần chạy, nhưng thuộc pipeline tạo giỏ/đơn — đưa vào phụ lục mã nguồn của báo cáo.",
+      ),
+    );
+    extraKeys.forEach((key, i) => {
+      const def = lookupAlgorithm(key)!;
+      children.push(heading2(`8.${i + 1}. ${def.algorithm}`));
+      children.push(pBody(def.purpose));
+      children.push(pPlain(`Tài liệu: ${def.citation}`, { italics: true, size: PT12 }));
+      children.push(pPlain(`File nguồn: ${def.file}`, { size: PT12 }));
+      def.formulas.forEach((f) => {
+        children.push(formulaBox(f.expr));
+        children.push(pBody(f.purpose));
+      });
+      children.push(codeBlock(def.code));
+    });
+  }
 
   return new Document({
     creator: "VisionMart",
@@ -684,8 +789,41 @@ function buildDocument(input: ThesisWordInput): Document {
   });
 }
 
+export async function loadThesisImageFromCartLine(
+  cartId: string,
+  lineId: string,
+): Promise<ThesisImage | null> {
+  try {
+    const url = await getCartLinePhotoUrl(cartId, lineId);
+    try {
+      return await loadThesisImageFromUrl(url);
+    } finally {
+      URL.revokeObjectURL(url);
+    }
+  } catch {
+    return null;
+  }
+}
+
+async function withCartLinePhotos(input: ThesisWordInput): Promise<ThesisWordInput> {
+  const carts = await Promise.all(
+    input.carts.map(async (c) => ({
+      ...c,
+      lines: await Promise.all(
+        c.lines.map(async (l) => {
+          if (l.photo) return l;
+          if (!l.hasPhoto || !l.lineId) return l;
+          return { ...l, photo: await loadThesisImageFromCartLine(c.id, l.lineId) };
+        }),
+      ),
+    })),
+  );
+  return { ...input, carts };
+}
+
 export async function downloadThesisWord(input: ThesisWordInput): Promise<string> {
-  const doc = buildDocument(input);
+  const ready = await withCartLinePhotos(input);
+  const doc = buildDocument(ready);
   const blob = await Packer.toBlob(doc);
   const filename = `VisionMart_PhuLuc_${input.kind === "video" ? "Video" : "TaiAnh"}_${stampFile()}.docx`;
   triggerDownload(blob, filename);
