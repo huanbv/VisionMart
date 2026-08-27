@@ -46,6 +46,8 @@ import {
   type TraceStage,
 } from "@/api/cameras";
 import { getCart, listCarts, type Cart } from "@/api/carts";
+import { listTrainingJobs, type TrainingJob } from "@/api/aiTraining";
+import { listModels } from "@/api/aiReview";
 import CartLinePhoto from "@/components/CartLinePhoto";
 import {
   formatAlgorithmMarkdown,
@@ -62,6 +64,71 @@ const PHASES = [
   "Tạo giỏ hàng",
   "Hoàn tất",
 ] as const;
+
+function trainingJobKind(job: TrainingJob): "bbox" | "crop" {
+  return job.class_map?.["mode"] === "labeled_scenes" ? "bbox" : "crop";
+}
+
+function jobMetricHint(job: TrainingJob): string {
+  const metrics = job.metrics || {};
+  const entry = Object.entries(metrics).find(([k]) => /map50/i.test(k));
+  if (!entry || typeof entry[1] !== "number") return "";
+  const value = entry[1] <= 1 ? entry[1] * 100 : entry[1];
+  return ` · mAP50 ${value.toFixed(0)}%`;
+}
+
+function jobSelectLabel(job: TrainingJob): string {
+  const date = new Date(job.created_at).toLocaleDateString("vi-VN");
+  const live = job.deployed_at ? " · đang live" : "";
+  return `${job.name}${jobMetricHint(job)}${live} — ${date}`;
+}
+
+function fileName(path: string | null | undefined): string {
+  if (!path) return "";
+  return path.split(/[\\/]/).pop() || path;
+}
+
+function describeDetector(
+  weightKey: string,
+  jobs: TrainingJob[],
+  liveFile: string,
+): { kind: "bbox" | "crop" | "live" | "stock"; title: string; detail: string; color: string } {
+  if (weightKey && weightKey !== "live") {
+    const job = jobs.find((j) => j.weight_key === weightKey);
+    const kind = job ? trainingJobKind(job) : "crop";
+    const title = kind === "bbox" ? "Train từ nhãn bbox (Gán nhãn bbox)" : "Train AI (crop 1 SKU)";
+    return {
+      kind,
+      title,
+      detail: job ? `${job.name} · ${weightKey}` : weightKey,
+      color: kind === "bbox" ? "purple" : "cyan",
+    };
+  }
+  const deployed = jobs
+    .filter((j) => j.deployed_at)
+    .sort((a, b) => +new Date(b.deployed_at || 0) - +new Date(a.deployed_at || 0))[0];
+  const liveBase = fileName(liveFile) || "yolov8n.pt";
+  if (deployed) {
+    const kind = trainingJobKind(deployed);
+    const title =
+      kind === "bbox"
+        ? "Model live — Train từ nhãn bbox"
+        : "Model live — Train AI (crop 1 SKU)";
+    return {
+      kind: "live",
+      title,
+      detail: `${deployed.name} · ${deployed.weight_key || liveBase}`,
+      color: kind === "bbox" ? "purple" : "cyan",
+    };
+  }
+  const stock = !liveBase || liveBase === "yolov8n.pt";
+  return {
+    kind: stock ? "stock" : "live",
+    title: stock ? "Model live — YOLOv8n COCO (chưa deploy job)" : "Model đang triển khai (live)",
+    detail: liveBase,
+    color: stock ? "default" : "blue",
+  };
+}
 
 type LogKind = "info" | "ok" | "warn" | "err";
 interface ScanLog {
@@ -173,6 +240,9 @@ export default function ImageScanPage() {
   const [logs, setLogs] = useState<ScanLog[]>([]);
   const [traceHint, setTraceHint] = useState<string | null>(null);
   const [failed, setFailed] = useState(false);
+  const [trainingJobs, setTrainingJobs] = useState<TrainingJob[]>([]);
+  const [weightKey, setWeightKey] = useState("live");
+  const [liveModelFile, setLiveModelFile] = useState("");
   const stageUrlsRef = useRef<string[]>([]);
   const previewRef = useRef<string | null>(null);
 
@@ -202,6 +272,17 @@ export default function ImageScanPage() {
       if (previewRef.current) URL.revokeObjectURL(previewRef.current);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    listTrainingJobs()
+      .then((res) => {
+        setTrainingJobs(res.items.filter((j) => j.status === "succeeded" && Boolean(j.weight_key)));
+      })
+      .catch(() => setTrainingJobs([]));
+    listModels()
+      .then((res) => setLiveModelFile(res.active || "yolov8n.pt"))
+      .catch(() => setLiveModelFile("yolov8n.pt"));
   }, []);
 
   useEffect(() => {
@@ -298,8 +379,12 @@ export default function ImageScanPage() {
       }
 
       setPhase(2);
-      addLog(PHASES[2], "info", "Đang nhận diện YOLO, crop và gán SKU…");
-      const analyzed = await analyzeCameraFrame(cameraId, file, { includeDebugSteps: true });
+      const detector = describeDetector(weightKey, trainingJobs, liveModelFile);
+      addLog(PHASES[2], "info", "Đang nhận diện YOLO, crop và gán SKU…", detector.title);
+      const analyzed = await analyzeCameraFrame(cameraId, file, {
+        includeDebugSteps: true,
+        weightKey: weightKey !== "live" ? weightKey : undefined,
+      });
       setAnalyze(analyzed);
       const steps = analyzed.frame_pipeline?.debug_steps ?? [];
       setDebugSteps(steps);
@@ -315,7 +400,7 @@ export default function ImageScanPage() {
         PHASES[2],
         dets.length ? "ok" : "warn",
         skus ? `SKU: ${skus}` : `${dets.length} box, chưa map SKU`,
-        `model=${analyzed.model} · ${analyzed.elapsed_ms} ms · ${steps.length} ảnh giai đoạn AI`,
+        `model=${fileName(analyzed.model)} · ${detector.title} · ${analyzed.elapsed_ms} ms · ${steps.length} ảnh giai đoạn AI`,
       );
       for (const step of steps) {
         addLog(
@@ -403,6 +488,24 @@ export default function ImageScanPage() {
   const percent = busy ? Math.min(95, 12 + phase * 22) : phase >= 4 ? 100 : failed ? 100 : 0;
   const camera = useMemo(() => cameras.find((c) => c.id === cameraId), [cameras, cameraId]);
   const stepStatus = busy ? "process" : failed ? "error" : phase >= 4 ? "finish" : "wait";
+  const detectorDesc = useMemo(
+    () => describeDetector(weightKey, trainingJobs, liveModelFile),
+    [weightKey, trainingJobs, liveModelFile],
+  );
+  const modelSelectOptions = useMemo(() => {
+    const bbox = trainingJobs.filter((j) => trainingJobKind(j) === "bbox");
+    const crop = trainingJobs.filter((j) => trainingJobKind(j) === "crop");
+    const toOpts = (jobs: TrainingJob[]) =>
+      jobs.map((j) => ({
+        label: jobSelectLabel(j),
+        value: j.weight_key as string,
+      }));
+    return [
+      { label: "Model đang triển khai (live)", value: "live" },
+      ...(bbox.length ? [{ label: "Train từ nhãn bbox (Gán nhãn bbox)", options: toOpts(bbox) }] : []),
+      ...(crop.length ? [{ label: "Train AI (crop 1 SKU)", options: toOpts(crop) }] : []),
+    ];
+  }, [trainingJobs]);
 
   const appendixSections = useMemo(() => {
     const fromTrace = (trace?.stages ?? []).map((s) => ({
@@ -464,8 +567,9 @@ export default function ImageScanPage() {
           Tải ảnh &amp; Quét — nhật ký giai đoạn (luận văn)
         </Title>
         <Paragraph type="secondary" style={{ marginBottom: 0 }}>
-          Tải một ảnh quầy (hoặc chụp live). Hệ thống ghi từng bước OpenCV rồi YOLO / crop / SKU
-          kèm ảnh, <strong>tên thuật toán và mã nguồn</strong>. Sao chép từng mục hoặc cả phụ lục Markdown để dán Word.
+          Tải một ảnh quầy (hoặc chụp live). Chọn <strong>Train AI</strong> (crop 1 SKU) hoặc{" "}
+          <strong>Train từ nhãn bbox</strong> để so sánh; mặc định là model đang triển khai (live).
+          Hệ thống ghi từng bước OpenCV rồi YOLO / crop / SKU kèm ảnh, tên thuật toán và mã nguồn.
         </Paragraph>
       </div>
 
@@ -488,6 +592,17 @@ export default function ImageScanPage() {
               value: c.id,
             }))}
           />
+          <Select
+            style={{ minWidth: 320 }}
+            placeholder="Model YOLO"
+            value={weightKey}
+            onChange={setWeightKey}
+            disabled={busy}
+            options={modelSelectOptions}
+            showSearch
+            optionFilterProp="label"
+          />
+          <Tag color={detectorDesc.color}>{detectorDesc.title}</Tag>
           <Upload
             accept="image/jpeg,image/png,image/webp,image/bmp"
             showUploadList={false}
@@ -518,6 +633,20 @@ export default function ImageScanPage() {
             Sao chép phụ lục thuật toán
           </Button>
         </Space>
+        <Alert
+          style={{ marginTop: 12 }}
+          type="info"
+          showIcon
+          message={detectorDesc.title}
+          description={
+            <>
+              {detectorDesc.detail}
+              {weightKey === "live"
+                ? " — quét dùng đúng weight đang chạy trên camera live (sau khi Deploy tại Train AI / Gán nhãn bbox)."
+                : " — chỉ lần quét này; camera live không đổi."}
+            </>
+          }
+        />
       </Card>
 
       <Card size="small">
@@ -555,7 +684,7 @@ export default function ImageScanPage() {
             {camera && (
               <Text type="secondary" style={{ display: "block", marginTop: 8 }}>
                 Camera: {camera.name}
-                {analyze ? ` · ${analyze.elapsed_ms} ms · ${analyze.model}` : ""}
+                {analyze ? ` · ${analyze.elapsed_ms} ms · ${fileName(analyze.model)}` : ""}
               </Text>
             )}
           </Card>
@@ -688,6 +817,11 @@ export default function ImageScanPage() {
 
       {analyze && (
         <Card title="Kết quả nhận diện / giỏ" className="print-break">
+          <Space wrap style={{ marginBottom: 12 }}>
+            <Tag color={detectorDesc.color}>{detectorDesc.title}</Tag>
+            <Text type="secondary">{detectorDesc.detail}</Text>
+            {analyze.model && <Text code>{fileName(analyze.model)}</Text>}
+          </Space>
           <Row gutter={16} style={{ marginBottom: 12 }}>
             <Col span={8}>
               <Statistic title="Box" value={(analyze.detections ?? []).length} />

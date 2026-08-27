@@ -196,18 +196,20 @@ export interface AnalyzeResult {
   elapsed_ms: number;
   frame_pipeline?: FramePipelineResult | null;
   frame_pipeline_error?: string | null;
+  weight_key?: string | null;
 }
 
 export async function analyzeCameraFrame(
   id: string,
   file: File,
-  options?: { model?: string; includeDebugSteps?: boolean },
+  options?: { model?: string; includeDebugSteps?: boolean; weightKey?: string },
 ): Promise<AnalyzeResult> {
   const form = new FormData();
   form.append("image", file);
   const params: Record<string, string> = {};
   if (options?.model) params.model = options.model;
   if (options?.includeDebugSteps) params.include_debug_steps = "true";
+  if (options?.weightKey) params.weight_key = options.weightKey;
   const { data } = await apiClient.post<AnalyzeResult>(
     `/cameras/${id}/analyze`,
     form,

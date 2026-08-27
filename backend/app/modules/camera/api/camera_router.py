@@ -379,6 +379,10 @@ async def analyze_camera_frame(
         False,
         description="Return JPEG of each AI stage (lab / thesis). Slow; not for cashier live.",
     ),
+    weight_key: str | None = Query(
+        None,
+        description="Optional Train AI / bbox job object key (models/<job>.pt). Empty = live deploy.",
+    ),
     current: CurrentUser = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
 ) -> dict:
@@ -449,6 +453,7 @@ async def analyze_camera_frame(
             skip_roi=True,
             min_confidence=0.35,
             include_debug_steps=include_debug_steps,
+            weight_key=weight_key,
         )
     except AIEngineError as exc:
         frame_error = str(exc)
@@ -524,6 +529,7 @@ async def analyze_camera_frame(
         "alerts_sent": alerts_sent,
         "frame_pipeline": frame_pipeline,
         "frame_pipeline_error": frame_error,
+        "weight_key": weight_key,
         **result,
         "detections": archived,
     }

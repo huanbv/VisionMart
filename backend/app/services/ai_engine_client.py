@@ -227,6 +227,7 @@ class AIEngineClient:
         manual_scan: bool = False,
         skip_roi: bool = False,
         include_debug_steps: bool = False,
+        weight_key: str | None = None,
     ) -> dict[str, Any]:
         url = f"{self._base_url}/ai/frame"
         files = {"image": (filename, content, content_type)}
@@ -241,6 +242,8 @@ class AIEngineClient:
         }
         if camera_id:
             data["camera_id"] = camera_id
+        if weight_key:
+            data["weight_key"] = weight_key
         try:
             async with httpx.AsyncClient(timeout=self._timeout) as client:
                 resp = await client.post(
