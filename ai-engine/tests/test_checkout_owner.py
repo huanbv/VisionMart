@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from app.api.frame import (
+    _closest_person_by_centroid,
     _collapse_duplicate_persons,
     _nearest_person_for_product,
     _person_by_hand_near_product,
@@ -136,3 +137,26 @@ def test_two_separated_shoppers_are_not_merged():
     )
     kept = _collapse_duplicate_persons([left, right])
     assert {p.track_id for p in kept} == {1, 2}
+
+
+def test_pay_zone_product_goes_to_nearest_shopper_without_waiting_for_wrist():
+    bystander = TrackedObject(
+        track_id=2,
+        class_name="person",
+        confidence=0.9,
+        x1=40,
+        y1=80,
+        x2=160,
+        y2=480,
+    )
+    placer = TrackedObject(
+        track_id=1,
+        class_name="person",
+        confidence=0.9,
+        x1=180,
+        y1=80,
+        x2=300,
+        y2=480,
+    )
+    chosen = _closest_person_by_centroid(220, 200, [bystander, placer])
+    assert chosen is placer

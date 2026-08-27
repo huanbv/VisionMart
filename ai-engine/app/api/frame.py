@@ -696,6 +696,28 @@ def _person_overlap_is_legs_only(person: Any, product_cy: float) -> bool:
     return rel_y >= 0.62
 
 
+def _closest_person_by_centroid(
+    product_cx: float,
+    product_cy: float,
+    persons: list[TrackedObject],
+) -> TrackedObject | None:
+    """Nearest shopper to a pay-zone SKU when wrists are not visible yet.
+
+    Checkout must still put the item in a cart immediately; waiting for a
+    hand keypoint left bottles on the counter with an empty cart.
+    """
+    best: TrackedObject | None = None
+    best_d = float("inf")
+    for person in persons:
+        if _person_overlap_is_legs_only(person, product_cy):
+            continue
+        dist = math.hypot(person.cx - product_cx, person.cy - product_cy)
+        if dist < best_d:
+            best_d = dist
+            best = person
+    return best
+
+
 def _person_by_hand_near_product(
     persons: list[Any], product_cx: float, product_cy: float
 ) -> Any | None:
@@ -1054,24 +1076,25 @@ async def process_frame(
         logger.exception("tracking failed")
         raise HTTPException(status.HTTP_500_INTERNAL_SERVER_ERROR, str(exc)) from exc
 
-    # Active learning: the detections dropped just below the threshold are
-    # the ones a human label is worth the most on, so a rate-limited sample
-    # is forwarded to the review queue. Fire-and-forget and disabled by
-    # default — see app/services/review_capture.py.
-    if review_capture.should_capture(camera_key):
-        uncertain_det = review_capture.pick_uncertain(detections, min_confidence)
-        if uncertain_det is not None:
-            # Truyen frame DA tien xu ly (tracking.frame_bgr) chu khong phai
-            # anh goc: bbox nam trong he toa do cua frame nay — ve khung do
-            # len anh goc khi ROI/resize da chay se khoanh lech vung.
+    # Active learning: crop a product blob in the pay zone so admin can
+    # assign the catalog SKU. Do not gate on YOLO class names — furniture
+    # guesses on empty wood, or a miss on a real bottle, both fail that
+    # filter. Rate-limit only after a real product crop is found.
+    if review_capture.is_enabled():
+        review_det = review_capture.pick_product_for_review(
+            tracking.frame_bgr, detections, min_confidence
+        )
+        if review_det is not None and review_capture.should_capture(camera_key):
+            cls = str(getattr(review_det, "class_name", "") or "").strip() or None
+            conf = getattr(review_det, "confidence", None)
             review_capture.capture_async(
                 content=content,
                 organization_id=str(organization_id),
                 camera_id=str(camera_id) if camera_id else None,
-                predicted_class=str(uncertain_det.class_name),
-                confidence=float(uncertain_det.confidence),
+                predicted_class=cls,
+                confidence=float(conf) if conf is not None else None,
                 frame_bgr=tracking.frame_bgr,
-                detection=uncertain_det,
+                detection=review_det,
             )
 
     persons: list[TrackedObject] = []
@@ -1402,7 +1425,6 @@ async def process_frame(
         # đã gán (sticky), các khung sau KHÔNG tính lại dù người khác đứng
         # gần hơn — trừ khi physical product này thực sự kết thúc lifecycle
         # (bị GC ở bước 4) và một logical_id mới được tạo.
-        grace = _unassigned_grace_seconds()
         # Khung THẬT SỰ mà YOLO/pose thấy (raw_frame nếu có, khớp đúng cái
         # person_tracker.py dùng khi ghi quỹ đạo) — cx/cy của person lẫn pp
         # đều tính trên khung này, nên quy đổi quỹ đạo ngược lại cũng phải
@@ -1419,6 +1441,10 @@ async def process_frame(
             )
             if nearest is None and len(persons_for_cart) == 1:
                 nearest = persons_for_cart[0]
+            if nearest is None and persons_for_cart:
+                nearest = _closest_person_by_centroid(
+                    pp["cx"], pp["cy"], persons_for_cart
+                )
             if nearest is not None:
                 session_key = person_sessions.get(nearest.track_id)
                 if session_key is None:
@@ -1433,39 +1459,19 @@ async def process_frame(
                     logical_id, pp["sku"], nearest.track_id, session_key,
                 )
                 continue
-            # Chưa thấy người nào đủ gần — CANDIDATE, thử ghép lại ở khung
-            # sau thay vì rơi ngay về "không xác định người".
+            # Không có người trong khung — vào giỏ quầy ngay, không đợi grace.
             if pp["unassigned_since"] is None:
                 pp["unassigned_since"] = now
-            # Close-up scan / empty counter: CHECKOUT_SCAN_MODE means add
-            # the SKU without a person. Grace only helps when someone IS in
-            # the scene and might associate on the next live frames. A
-            # single trigger-scan (or a product filling the frame) would
-            # otherwise sit in CANDIDATE forever and never emit.
-            if not persons_for_cart:
-                logger.warning(
-                    "CHECKOUT NO PERSON: logical=%s sku=%s — fallback ngay (không đợi grace %.0fs)",
-                    logical_id, pp["sku"], grace,
-                )
-            elif now - pp["unassigned_since"] < grace:
-                continue
-            else:
-                # Còn >= 2 khách phân biệt, chưa thấy cổ tay — không mở giỏ
-                # noperson thứ hai (tách một đơn thành Phiên quầy + Khách hàng).
-                logger.warning(
-                    "CHECKOUT WAIT: logical=%s sku=%s — %d người, chưa ghép cổ tay",
-                    logical_id, pp["sku"], len(persons_for_cart),
-                )
-                continue
+            logger.warning(
+                "CHECKOUT NO PERSON: logical=%s sku=%s — vào giỏ ngay",
+                logical_id, pp["sku"],
+            )
             fallback_track, _fb_prev = _checkout_session_track(camera_key, now, True)
-            # fallback_track đã có dạng "checkout-<epoch>" (xem
-            # _checkout_session_track) — KHÔNG nối thêm tiền tố "checkout-"
-            # lần nữa, kẻo ra "checkout-noperson-checkout-3".
             pp["session_key"] = f"checkout-noperson-{fallback_track.removeprefix('checkout-')}"
             pp["state"] = "FALLBACK"
             logger.warning(
-                "CHECKOUT FALLBACK: logical=%s sku=%s -> %s (không tìm được người sau %.0fs grace)",
-                logical_id, pp["sku"], pp["session_key"], grace,
+                "CHECKOUT FALLBACK: logical=%s sku=%s -> %s",
+                logical_id, pp["sku"], pp["session_key"],
             )
 
         # 3) Phát product_scanned cho sản phẩm VỪA được gán session lần đầu

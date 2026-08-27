@@ -171,11 +171,10 @@ export default function AiReviewPage() {
           Duyệt dữ liệu huấn luyện
         </Title>
         <Paragraph type="secondary" style={{ marginBottom: 0 }}>
-          Những khung hình AI đoán không chắc, hoặc bị người sửa lại ở khâu
-          thanh toán, được đưa vào đây — chỉ khi crop có sản phẩm thật. Ảnh
-          quầy trống / bàn ghế (ví dụ “dining table”) không còn được lưu.
-          Ảnh <b>chỉ trở thành dữ liệu huấn luyện sau khi có người xác nhận
-          nhãn</b>.
+          Hệ thống lọc theo <b>vùng thanh toán có sản phẩm</b> (blob màu /
+          bao bì), không theo tên class YOLO. Admin chọn SKU đúng rồi bấm
+          Duyệt — nhãn nhận diện do người gán, không lấy “dining table”
+          hay đoán sai của model. Ảnh quầy trống bị bỏ.
         </Paragraph>
       </div>
 
@@ -352,10 +351,21 @@ export default function AiReviewPage() {
 
                   <div style={{ marginTop: 8 }}>
                     <Text type="secondary" style={{ fontSize: 12 }}>
-                      AI đoán:{" "}
-                      {productName(c.predicted_product_id) ??
-                        c.predicted_class ??
-                        "không nhận ra"}
+                      {(() => {
+                        const catalog = productName(c.predicted_product_id);
+                        const raw = (c.predicted_class ?? "").trim();
+                        const junk = new Set([
+                          "dining table",
+                          "chair",
+                          "person",
+                          "couch",
+                        ]);
+                        if (catalog) return `Gợi ý model: ${catalog}`;
+                        if (raw && !junk.has(raw.toLowerCase())) {
+                          return `Gợi ý model: ${raw}`;
+                        }
+                        return "Chưa có nhãn SKU — chọn sản phẩm bên dưới để gán";
+                      })()}
                     </Text>
                   </div>
 
@@ -364,11 +374,14 @@ export default function AiReviewPage() {
                       <Select
                         showSearch
                         style={{ width: "100%" }}
-                        placeholder="Chọn sản phẩm ĐÚNG"
+                        placeholder="Chọn sản phẩm ĐÚNG (gõ SKU hoặc tên)"
                         optionFilterProp="label"
                         value={choice[c.id]}
                         onChange={(v) => setChoice((s) => ({ ...s, [c.id]: v }))}
-                        options={products.map((p) => ({ label: p.name, value: p.id }))}
+                        options={products.map((p) => ({
+                          label: `${p.sku} — ${p.name}`,
+                          value: p.id,
+                        }))}
                       />
                       <Input
                         placeholder="Ghi chú (không bắt buộc)"

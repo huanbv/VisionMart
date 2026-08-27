@@ -70,7 +70,7 @@ const GROUPS: Group[] = [
   },
   {
     title: "Chế độ quét quầy thanh toán",
-    note: "Bật để sản phẩm nhận diện được tự thêm vào đơn ở camera quầy (đánh dấu \"Khu vực thanh toán\") mà không cần người trong khung. Cần bật cái này thì việc quét ảnh/luồng quầy mới tạo được đơn.",
+    note: "Bật để sản phẩm trong vùng thanh toán được thêm vào giỏ ngay khi nhận ra SKU (không đợi cổ tay / 5 giây). Camera phải đánh dấu \"Khu vực thanh toán\".",
     toggle: {
       key: "CHECKOUT_SCAN_MODE",
       label: "Bật chế độ quét quầy",
@@ -79,7 +79,7 @@ const GROUPS: Group[] = [
   },
   {
     title: "Bật phân loại SKU (tầng 2)",
-    note: "Model tầng 2 phân loại ảnh cắt (crop) của vật thể thành SKU thật — cần khi YOLO chỉ cho ra lớp COCO chung chung (bottle, cup…). Cần có file model tại đường dẫn bên dưới; nếu chưa train thì để tắt và dùng bảng ánh xạ Lớp → SKU.",
+    note: "Model tầng 2 phân loại crop thành SKU — chỉ khi YOLO ra lớp COCO chung (bottle, cup…). Cần file model. Nếu tắt (đang tắt): quầy dùng YOLO + bảng Lớp → SKU; hai số “Ngưỡng phân loại SKU” bên dưới KHÔNG chạy.",
     toggle: {
       key: "ENABLE_SKU_CLASSIFIER",
       label: "Bật SKU classifier",
@@ -100,7 +100,7 @@ const GROUPS: Group[] = [
   },
   {
     title: "Ngưỡng phân loại SKU (Classifier)",
-    note: "Ngưỡng tin cậy tối thiểu để chấp nhận kết quả phân loại SKU (tầng 2, sau YOLO). Áp dụng cho MỌI đối tượng, kể cả vùng đề xuất contour (lớp \"region\" — sản phẩm YOLO không có lớp riêng, ví dụ gói mì) vốn trước đây bị khoá cứng ngưỡng riêng 0.68 không chỉnh được ở đây.",
+    note: "Chỉ khi Bật phân loại SKU. Đang tắt thì chỉnh 0.50 ở đây không làm quầy nhận thêm sản phẩm. Quầy nhận SKU khi YOLO + bảng Lớp → SKU khớp, rồi thêm vào giỏ ngay.",
     numbers: [
       {
         key: "CLASSIFIER_MIN_CONFIDENCE",
@@ -138,7 +138,7 @@ const GROUPS: Group[] = [
         min: 0,
         max: 60,
         step: 1,
-        hint: "Sản phẩm chưa ghép được người thì đợi ngần này trước khi rơi vào giỏ chung \"không xác định người\". Mặc định 5.",
+        hint: "Trước đây sản phẩm chờ ngần này trước khi vào giỏ nếu chưa ghép được người. Hiện quầy thêm SKU ngay; số này không còn chặn giỏ.",
       },
       {
         key: "PRODUCT_REACQUIRE_WINDOW_SECONDS",

@@ -1,10 +1,10 @@
-"""Auto-capture of uncertain frames for the active-learning queue.
+"""Auto-capture of pay-zone product crops for the active-learning queue.
 
-Detections below ``min_confidence`` are dropped by the frame endpoint —
-which is correct for business logic, but those are precisely the frames a
-new label is worth the most on. This module forwards a sample of them to
-the backend review queue, where a human confirms the label before it
-becomes training data.
+YOLO class names are not the filter. Stock weights call empty wood
+``dining table``; custom weights may miss a bottle entirely — neither
+gives admin a SKU to confirm. This module samples frames where a color
+blob in the ROI-masked pay zone looks like packaging, then a human
+assigns the catalog SKU before it becomes training data.
 
 Three properties matter more than completeness here, because this runs on
 the frame hot path:
@@ -119,6 +119,114 @@ def is_product_review_class(class_name: str) -> bool:
     if name not in coco:
         return True
     return name in _COCO_PRODUCTISH
+
+
+def is_enabled() -> bool:
+    return _enabled()
+
+
+def _box_iou(a: Any, b: Any) -> float:
+    ix1 = max(float(a.x1), float(b.x1))
+    iy1 = max(float(a.y1), float(b.y1))
+    ix2 = min(float(a.x2), float(b.x2))
+    iy2 = min(float(a.y2), float(b.y2))
+    inter = max(0.0, ix2 - ix1) * max(0.0, iy2 - iy1)
+    if inter <= 0:
+        return 0.0
+    area_a = max(1.0, (float(a.x2) - float(a.x1)) * (float(a.y2) - float(a.y1)))
+    area_b = max(1.0, (float(b.x2) - float(b.x1)) * (float(b.y2) - float(b.y1)))
+    return inter / (area_a + area_b - inter)
+
+
+def _crop_is_product(frame_bgr: Any, x1: float, y1: float, x2: float, y2: float) -> bool:
+    from app.vision.crop.cropper import crop_detection, is_degenerate_box
+    from app.vision.region_proposal import looks_like_product_blob, median_background
+
+    h, w = frame_bgr.shape[:2]
+    if is_degenerate_box(x1, y1, x2, y2, w, h):
+        return False
+    crop = crop_detection(frame_bgr, x1, y1, x2, y2)
+    if crop is None:
+        return False
+    return looks_like_product_blob(
+        crop.image, bg_median=median_background(frame_bgr)
+    )
+
+
+def pick_product_for_review(
+    frame_bgr: Any,
+    detections: list[Any],
+    min_confidence: float,
+) -> Any | None:
+    """Pay-zone crop that actually contains a product, for admin SKU labeling.
+
+    YOLO class names are *not* the filter. Stock weights call empty wood
+    ``dining table``; custom weights may miss the bottle entirely. Admin
+    then has nothing to label. Filter is: color blob on the ROI-masked
+    counter that looks like packaging. The catalog SKU is chosen later
+    on the review screen.
+    """
+    if frame_bgr is None or getattr(frame_bgr, "size", 0) == 0:
+        return None
+
+    yolo = pick_uncertain(detections, min_confidence)
+    if yolo is not None and _crop_is_product(frame_bgr, yolo.x1, yolo.y1, yolo.x2, yolo.y2):
+        return yolo
+
+    from types import SimpleNamespace
+
+    import numpy as np
+
+    from app.services.region_detect import _without_person_torsos
+    from app.vision.region_proposal import looks_like_product_blob, median_background, propose_regions
+
+    persons = [
+        d for d in detections
+        if str(getattr(d, "class_name", "")).lower() == "person"
+    ]
+    work = _without_person_torsos(frame_bgr, persons, 0, 0)
+    regions = propose_regions(
+        work,
+        min_area_frac=0.0012,
+        max_area_frac=0.22,
+        max_regions=12,
+        bg_tolerance=38,
+    )
+    bg = median_background(work)
+    accepted = [
+        d for d in detections
+        if getattr(d, "confidence", 0) is not None
+        and float(d.confidence) >= min_confidence
+        and is_product_review_class(str(getattr(d, "class_name", "")))
+    ]
+    # Wood grain at the ROI edge can pass the generic blob check (sat is
+    # high on brown counter). Packaging is much further from the median
+    # counter colour than that edge artifact (~50 vs 140+).
+    min_bg_delta = 70.0
+    best: Any | None = None
+    best_delta = -1.0
+    for r in regions:
+        blob = work[
+            max(0, r.y1) : min(work.shape[0], r.y2),
+            max(0, r.x1) : min(work.shape[1], r.x2),
+        ]
+        if not looks_like_product_blob(blob, bg_median=bg):
+            continue
+        delta = 0.0
+        if bg is not None and getattr(blob, "size", 0):
+            delta = float(np.abs(blob.reshape(-1, 3).mean(axis=0) - bg).sum())
+        if delta < min_bg_delta:
+            continue
+        probe = SimpleNamespace(
+            x1=float(r.x1), y1=float(r.y1), x2=float(r.x2), y2=float(r.y2),
+            class_name="", confidence=None,
+        )
+        if any(_box_iou(probe, d) >= 0.4 for d in accepted):
+            continue
+        if delta > best_delta:
+            best_delta = delta
+            best = probe
+    return best
 
 
 def pick_uncertain(detections: list[Any], min_confidence: float) -> Any | None:
@@ -292,7 +400,8 @@ def capture_async(
     crop_content: bytes | None = None
     bbox: dict[str, float] | None = None
     if frame_bgr is not None and detection is not None:
-        if not is_product_review_class(str(getattr(detection, "class_name", ""))):
+        cls = str(getattr(detection, "class_name", "") or "").strip()
+        if cls and not is_product_review_class(cls):
             return
         annotated, crop_content = _annotate_and_crop(frame_bgr, detection)
         if crop_content is None:
