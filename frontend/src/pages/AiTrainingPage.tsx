@@ -324,9 +324,19 @@ export default function AiTrainingPage() {
     <div>
       <Title level={3}>Huấn luyện AI nhận diện sản phẩm</Title>
       <Paragraph type="secondary">
-        Tải ít nhất 5 ảnh mỗi sản phẩm (khuyến nghị 20–50 ảnh với nhiều góc chụp
-        khác nhau). Chọn tối thiểu 2 sản phẩm để bắt đầu train.
+        Tải ít nhất 5 ảnh crop mỗi sản phẩm (khuyến nghị 20–50 ảnh, nhiều góc).
+        Ảnh ở đây là cận cảnh 1 SKU — khi bấm <b>Train từ nhãn bbox</b> chúng
+        được gộp vào cùng job với ảnh cảnh đã khoanh khung. Quầy live chỉ
+        triển khai được 1 file .pt: hãy deploy weight train bbox (scene
+        detector), không dùng weight train-crop-cả-khung từ nút bên dưới.
       </Paragraph>
+      <Alert
+        type="info"
+        showIcon
+        style={{ marginBottom: 16 }}
+        message="Hai nguồn dữ liệu, một weight triển khai"
+        description="Gán nhãn bbox = ảnh cảnh nhiều sản phẩm. Train AI = crop 1 sản phẩm. Chỉ job “Train từ nhãn bbox” gộp cả hai. Nút train trên trang này chỉ học crop cả khung — dễ nhận nhầm mặt gỗ quầy trống."
+      />
 
       <Row gutter={16}>
         <Col span={14}>

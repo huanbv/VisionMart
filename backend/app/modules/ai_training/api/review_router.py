@@ -252,3 +252,20 @@ async def reject_candidate(
     except ReviewError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
     return await _attach_preview(service, candidate)
+
+
+@router.post(
+    "/discard-non-product",
+    dependencies=[Depends(require_roles(*_REVIEWER_ROLES))],
+)
+async def discard_non_product(
+    current: CurrentUser = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """Reject pending furniture / empty-counter captures (not trainable SKUs)."""
+    service = _service(session)
+    discarded = await service.discard_non_product_pending(
+        organization_id=current.organization_id,
+        reviewed_by=current.user_id,
+    )
+    return {"discarded": discarded}

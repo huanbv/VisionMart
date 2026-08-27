@@ -22,11 +22,13 @@ import {
 import {
   CheckOutlined,
   CloseOutlined,
+  DeleteOutlined,
   ReloadOutlined,
 } from "@ant-design/icons";
 
 import {
   approveCandidate,
+  discardNonProductPending,
   getReviewStats,
   listReviewCandidates,
   rejectCandidate,
@@ -68,6 +70,7 @@ export default function AiReviewPage() {
   const [choice, setChoice] = useState<Record<string, string>>({});
   const [note, setNote] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState<string | null>(null);
+  const [discardingJunk, setDiscardingJunk] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -141,6 +144,23 @@ export default function AiReviewPage() {
     }
   };
 
+  const doDiscardJunk = async () => {
+    setDiscardingJunk(true);
+    try {
+      const { discarded } = await discardNonProductPending();
+      message.success(
+        discarded > 0
+          ? `Đã bỏ ${discarded} ảnh quầy trống / bàn ghế`
+          : "Không còn ảnh rác loại này trong hàng chờ",
+      );
+      await load();
+    } catch {
+      message.error("Không bỏ được hàng rác");
+    } finally {
+      setDiscardingJunk(false);
+    }
+  };
+
   const productName = (id: string | null) =>
     id ? (products.find((p) => p.id === id)?.name ?? id.slice(0, 8)) : null;
 
@@ -152,9 +172,10 @@ export default function AiReviewPage() {
         </Title>
         <Paragraph type="secondary" style={{ marginBottom: 0 }}>
           Những khung hình AI đoán không chắc, hoặc bị người sửa lại ở khâu
-          thanh toán, được đưa vào đây. Ảnh <b>chỉ trở thành dữ liệu huấn
-          luyện sau khi có người xác nhận nhãn</b> — nhờ vậy model học từ nhãn
-          đúng thay vì học lại chính sai lầm của nó.
+          thanh toán, được đưa vào đây — chỉ khi crop có sản phẩm thật. Ảnh
+          quầy trống / bàn ghế (ví dụ “dining table”) không còn được lưu.
+          Ảnh <b>chỉ trở thành dữ liệu huấn luyện sau khi có người xác nhận
+          nhãn</b>.
         </Paragraph>
       </div>
 
@@ -232,6 +253,22 @@ export default function AiReviewPage() {
           <Button icon={<ReloadOutlined />} onClick={() => void load()}>
             Tải lại
           </Button>
+          <Popconfirm
+            title="Bỏ toàn bộ ảnh quầy trống / bàn ghế đang chờ?"
+            description="Chỉ loại class không phải SKU (dining table, chair, …). Ảnh có sản phẩm giữ nguyên."
+            okText="Bỏ hàng rác"
+            cancelText="Huỷ"
+            onConfirm={() => void doDiscardJunk()}
+          >
+            <Button
+              danger
+              icon={<DeleteOutlined />}
+              loading={discardingJunk}
+              disabled={status !== "pending" || (stats?.pending ?? 0) === 0}
+            >
+              Bỏ ảnh quầy trống
+            </Button>
+          </Popconfirm>
         </Space>
       </Card>
 

@@ -29,7 +29,7 @@ import logging
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.modules.ai_training.infrastructure.models import (
@@ -47,6 +47,52 @@ _MAX_IMAGE_BYTES = 12 * 1024 * 1024
 
 VALID_SOURCES = {"low_confidence", "checkout_mismatch", "manual"}
 VALID_STATUSES = {"pending", "approved", "rejected"}
+
+# Stock YOLO furniture/scene names that fire on an empty pay-zone (wood +
+# black mask). These must never enter the review queue or train set.
+_NON_PRODUCT_CLASSES = frozenset(
+    {
+        "person",
+        "dining table",
+        "chair",
+        "couch",
+        "bed",
+        "toilet",
+        "tv",
+        "laptop",
+        "mouse",
+        "remote",
+        "keyboard",
+        "cell phone",
+        "microwave",
+        "oven",
+        "toaster",
+        "sink",
+        "refrigerator",
+        "book",
+        "clock",
+        "vase",
+        "potted plant",
+        "bench",
+        "parking meter",
+        "traffic light",
+        "stop sign",
+        "fire hydrant",
+        "teddy bear",
+        "hair drier",
+        "toothbrush",
+        "scissors",
+        "umbrella",
+        "backpack",
+        "handbag",
+        "suitcase",
+        "tie",
+    }
+)
+
+
+def is_non_product_class(name: str | None) -> bool:
+    return bool(name) and str(name).strip().lower() in _NON_PRODUCT_CLASSES
 
 
 class ReviewError(RuntimeError):
@@ -81,6 +127,10 @@ class ReviewService:
         """
         if source not in VALID_SOURCES:
             raise ReviewError(f"Unknown source: {source}")
+        if is_non_product_class(predicted_class):
+            raise ReviewError("skip non-product class")
+        if source == "low_confidence" and not crop_content:
+            raise ReviewError("product crop required")
         if content_type not in _ALLOWED_TYPES:
             raise ReviewError(f"Unsupported content type: {content_type}")
         if len(content) > _MAX_IMAGE_BYTES:
@@ -259,6 +309,38 @@ class ReviewService:
         await self._session.commit()
         await self._session.refresh(candidate)
         return candidate
+
+    async def discard_non_product_pending(
+        self,
+        *,
+        organization_id: uuid.UUID,
+        reviewed_by: uuid.UUID | None,
+    ) -> int:
+        """Reject pending furniture/empty-counter captures in one pass.
+
+        These were never trainable SKUs; bulk-reject is safe because it
+        does not promote any model guess into training data.
+        """
+        now = datetime.now(timezone.utc)
+        result = await self._session.execute(
+            update(ReviewCandidate)
+            .where(
+                ReviewCandidate.organization_id == organization_id,
+                ReviewCandidate.status == "pending",
+                ReviewCandidate.is_deleted.is_(False),
+                func.lower(ReviewCandidate.predicted_class).in_(
+                    list(_NON_PRODUCT_CLASSES)
+                ),
+            )
+            .values(
+                status="rejected",
+                reviewed_by=reviewed_by,
+                reviewed_at=now,
+                review_note="auto-discard: empty counter / furniture class",
+            )
+        )
+        await self._session.commit()
+        return int(result.rowcount or 0)
 
     async def _get(
         self, organization_id: uuid.UUID, candidate_id: uuid.UUID

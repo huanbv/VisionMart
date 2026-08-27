@@ -39,6 +39,49 @@ from app.vision.config import get_vision_config
 
 logger = logging.getLogger("ai-engine.review_capture")
 
+# COCO furniture/scene classes that fire on an empty pay-zone mask
+# (black + wood). They must never enter the review queue as "training crops".
+_SKIP_REVIEW_CLASSES = frozenset(
+    {
+        "person",
+        "dining table",
+        "chair",
+        "couch",
+        "bed",
+        "toilet",
+        "tv",
+        "laptop",
+        "mouse",
+        "remote",
+        "keyboard",
+        "cell phone",
+        "microwave",
+        "oven",
+        "toaster",
+        "sink",
+        "refrigerator",
+        "book",
+        "clock",
+        "vase",
+        "potted plant",
+        "bench",
+        "parking meter",
+        "traffic light",
+        "stop sign",
+        "fire hydrant",
+        "teddy bear",
+        "hair drier",
+        "toothbrush",
+        "scissors",
+        "umbrella",
+        "backpack",
+        "handbag",
+        "suitcase",
+        "tie",
+    }
+)
+_COCO_PRODUCTISH = frozenset({"bottle", "cup", "wine glass", "bowl"})
+
 # camera_key -> monotonic timestamp of the last capture
 _LAST_CAPTURE: dict[str, float] = {}
 
@@ -65,6 +108,19 @@ def _api_key() -> str:
     return os.getenv("AI_ENGINE_API_KEY", "change-me-ai-engine-key")
 
 
+def is_product_review_class(class_name: str) -> bool:
+    """True when this detector class can be a shop SKU, not empty furniture."""
+    name = str(class_name).strip().lower()
+    if not name or name in _SKIP_REVIEW_CLASSES:
+        return False
+    from app.services.product_mapper import list_coco_classes
+
+    coco = {c.lower() for c in list_coco_classes()}
+    if name not in coco:
+        return True
+    return name in _COCO_PRODUCTISH
+
+
 def pick_uncertain(detections: list[Any], min_confidence: float) -> Any | None:
     """Best candidate from this frame, or ``None``.
 
@@ -86,6 +142,8 @@ def pick_uncertain(detections: list[Any], min_confidence: float) -> Any | None:
             continue
         if str(name).lower() == "person":
             continue  # people aren't a trainable product class here
+        if not is_product_review_class(str(name)):
+            continue
         if floor <= conf < min_confidence and (best_conf is None or conf > best_conf):
             best, best_conf = det, float(conf)
     return best
@@ -151,6 +209,15 @@ def _annotate_and_crop(frame_bgr: Any, det: Any) -> tuple[bytes | None, bytes | 
         else:
             crop = crop_detection(frame_bgr, det.x1, det.y1, det.x2, det.y2)
             if crop is not None:
+                from app.vision.region_proposal import looks_like_product_blob, median_background
+
+                bg = median_background(frame_bgr)
+                if not looks_like_product_blob(crop.image, bg_median=bg):
+                    logger.warning(
+                        "review: crop looks like empty counter, skip class=%s",
+                        getattr(det, "class_name", "?"),
+                    )
+                    return annotated_jpg, None
                 ok, buf = cv2.imencode(".jpg", crop.image, [int(cv2.IMWRITE_JPEG_QUALITY), 92])
                 if ok:
                     crop_jpg = buf.tobytes()
@@ -225,7 +292,11 @@ def capture_async(
     crop_content: bytes | None = None
     bbox: dict[str, float] | None = None
     if frame_bgr is not None and detection is not None:
+        if not is_product_review_class(str(getattr(detection, "class_name", ""))):
+            return
         annotated, crop_content = _annotate_and_crop(frame_bgr, detection)
+        if crop_content is None:
+            return
         if annotated is not None:
             content = annotated  # nguoi duyet xem ban co khung do
         bbox = {

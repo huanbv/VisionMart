@@ -14,7 +14,12 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.modules.ai_training.application.service import TrainingError, _safe_zip_name, _slug
-from app.modules.ai_training.infrastructure.models import LabelBox, LabelImage, TrainingJob
+from app.modules.ai_training.infrastructure.models import (
+    LabelBox,
+    LabelImage,
+    TrainingImage,
+    TrainingJob,
+)
 from app.modules.catalog.infrastructure.models import Product
 from app.services.ai_engine_client import AIEngineClient, AIEngineError
 from app.services.object_storage import MinioStorage, ObjectStorageError
@@ -30,6 +35,26 @@ _MIN_LABELED_IMAGES = 10
 _MIN_BOXES_PER_CLASS = 5
 _MIN_CROP_NORM = 0.02
 _MIN_CROP_PX = 16
+# Crop Train AI / review is already one product. YOLO still needs a box;
+# keep it slightly inside the image so the detector does not learn a
+# degenerate "whole frame" box (which then fires on empty counters).
+_CROP_BOX_FRAC = 0.92
+
+
+def training_crop_as_labeled_item(storage_key: str, class_name: str) -> dict:
+    """Turn a single-SKU crop into a one-object scene for the bbox trainer."""
+    return {
+        "storage_key": storage_key,
+        "labels": [
+            {
+                "class_name": class_name,
+                "cx": 0.5,
+                "cy": 0.5,
+                "w": _CROP_BOX_FRAC,
+                "h": _CROP_BOX_FRAC,
+            }
+        ],
+    }
 
 
 def _normalize_rect(x1: float, y1: float, x2: float, y2: float) -> tuple[float, float, float, float]:
@@ -661,6 +686,27 @@ class LabelingService:
                     {"storage_key": img.storage_key, "labels": labels}
                 )
 
+        scene_count = len(labeled_dataset)
+        crop_stmt = (
+            select(TrainingImage, Product)
+            .join(Product, Product.id == TrainingImage.product_id)
+            .where(
+                TrainingImage.organization_id == organization_id,
+                TrainingImage.deleted_at.is_(None),
+                TrainingImage.is_deleted.is_(False),
+                Product.deleted_at.is_(None),
+            )
+        )
+        crop_count = 0
+        for crop_img, product in (await self._session.execute(crop_stmt)).all():
+            class_name = _slug(product.sku)
+            class_to_sku.setdefault(class_name, product.sku)
+            product_by_class.setdefault(class_name, str(product.id))
+            labeled_dataset.append(
+                training_crop_as_labeled_item(crop_img.storage_key, class_name)
+            )
+            crop_count += 1
+
         job = TrainingJob(
             organization_id=organization_id,
             branch_id=branch_id,
@@ -672,7 +718,8 @@ class LabelingService:
                 "mode": "labeled_scenes",
                 "classes": class_to_sku,
                 "product_by_class": product_by_class,
-                "labeled_image_count": len(labeled_dataset),
+                "labeled_image_count": scene_count,
+                "training_crop_count": crop_count,
             },
         )
         self._session.add(job)

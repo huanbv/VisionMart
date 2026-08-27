@@ -87,6 +87,13 @@ export async function rejectCandidate(
   return data;
 }
 
+export async function discardNonProductPending(): Promise<{ discarded: number }> {
+  const { data } = await apiClient.post<{ discarded: number }>(
+    "/ai/review/discard-non-product",
+  );
+  return data;
+}
+
 // ---------------- Runtime vision config ----------------
 
 export interface VisionConfigResponse {

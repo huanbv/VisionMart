@@ -3,8 +3,10 @@
 from types import SimpleNamespace
 
 from app.modules.ai_training.application.labeling_service import (
+    _CROP_BOX_FRAC,
     _normalize_rect,
     _transform_box_after_crop,
+    training_crop_as_labeled_item,
 )
 
 
@@ -45,3 +47,13 @@ def test_transform_box_clipped_outside_crop():
         )
         is None
     )
+
+
+def test_training_crop_becomes_single_object_scene():
+    item = training_crop_as_labeled_item("train/sku/a.jpg", "du_7u")
+    assert item["storage_key"] == "train/sku/a.jpg"
+    box = item["labels"][0]
+    assert box["class_name"] == "du_7u"
+    assert box["cx"] == 0.5
+    assert box["w"] == _CROP_BOX_FRAC
+    assert box["w"] < 1.0

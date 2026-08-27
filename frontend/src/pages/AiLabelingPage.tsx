@@ -753,8 +753,9 @@ export default function AiLabelingPage() {
               </Button>
             </Form>
             <Paragraph type="secondary" style={{ marginTop: 12, fontSize: 12 }}>
-              Yêu cầu: ≥10 ảnh đã gán, ≥2 SKU, mỗi SKU ≥5 bbox. Sau khi train xong, deploy tại
-              trang Train AI.
+              Yêu cầu: ≥10 ảnh đã gán bbox, ≥2 SKU, mỗi SKU ≥5 bbox. Job này
+              tự kèm ảnh crop từ trang Train AI / duyệt dữ liệu vào cùng một
+              weight — triển khai weight đó cho quầy (chỉ chọn được 1 model).
             </Paragraph>
             {activeJob && (
               <Space direction="vertical" style={{ width: "100%", marginTop: 12 }} size={10}>
