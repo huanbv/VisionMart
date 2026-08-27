@@ -86,6 +86,40 @@ def test_side_by_side_bottles_keep_both():
     assert {d.class_name for d in out} == {"du_7u", "du_sti"}
 
 
+def test_offset_boxes_on_one_bottle_collapse_to_one():
+    """Live: du_7u 0.535 and du_sti 0.419 on one bottle ~60px apart."""
+    reset_slots()
+    gray = np.full((400, 400, 3), 80, dtype=np.uint8)
+    seven = _box("du_7u", 0.535, 80, 100, 160, 300, tid=1)
+    sting = _box("du_sti", 0.419, 140, 110, 220, 290, tid=2)
+    out = stabilize_lookalikes("cam-offset", [seven, sting], gray, now=40.0)
+    assert len(out) == 1
+    assert out[0].class_name == "du_7u"
+
+
+def test_sticky_survives_multi_second_miss():
+    reset_slots()
+    gray = np.full((400, 400, 3), 80, dtype=np.uint8)
+    first = _box("du_7u", 0.46, 100, 80, 160, 280, tid=11)
+    later = _box("du_sti", 0.49, 104, 84, 158, 276, tid=12)
+    stabilize_lookalikes("cam-ttl", [first], gray, now=10.0)
+    out = stabilize_lookalikes("cam-ttl", [later], gray, now=16.0)
+    assert out[0].class_name == "du_7u"
+
+
+def test_weak_color_does_not_flip_sticky():
+    reset_slots()
+    gray = np.full((400, 400, 3), 80, dtype=np.uint8)
+    first = _box("du_7u", 0.70, 100, 80, 160, 280, tid=1)
+    stabilize_lookalikes("cam-weak", [first], gray, now=1.0)
+    mixed = np.full((400, 400, 3), 80, dtype=np.uint8)
+    mixed[80:280, 100:130] = (40, 210, 40)
+    mixed[80:280, 130:160] = (20, 20, 210)
+    flip = _box("du_sti", 0.48, 100, 80, 160, 280, tid=2)
+    out = stabilize_lookalikes("cam-weak", [flip], mixed, now=1.2)
+    assert out[0].class_name == "du_7u"
+
+
 def test_lookalike_sku_helper():
     assert skus_are_lookalikes("DU-7U", "DU-STI")
     assert not skus_are_lookalikes("DU-7U", "DU-7U")

@@ -6,8 +6,8 @@ name already maps to a SKU, so the classifier is skipped and the HUD/cart
 flip every frame.
 
 7Up is lime-green; Sting đỏ is red/orange. A cheap HSV vote on the crop
-plus a short spatial hold (same counter spot keeps its SKU) stops the
-flip without retraining.
+plus a spatial hold (same counter spot keeps its SKU) stops the flip
+without retraining.
 """
 
 from __future__ import annotations
@@ -40,10 +40,13 @@ _SKU_TO_GROUP: dict[str, frozenset[str]] = {
     sku: group for group in SKU_GROUPS for sku in group
 }
 
-# Hold a counter spot for a couple of seconds of missed frames (occlusion).
-_SLOT_TTL_SECONDS = 2.8
-_SLOT_MAX_DIST_PX = 52.0
+# Checkout often misses the bottle for several seconds (n=0). Keep the
+# last SKU at that spot long enough to cover those gaps.
+_SLOT_TTL_SECONDS = 10.0
+_SLOT_MAX_DIST_PX = 96.0
 _SLOT_MAX_PER_CAMERA = 24
+# Color must beat the other hue by this much to *flip* a sticky SKU.
+_STRONG_COLOR_RATIO = 2.0
 
 # camera_key -> list of spatial slots
 _SLOTS: dict[str, list[dict[str, Any]]] = {}
@@ -76,14 +79,13 @@ def reset_slots(camera_key: str | None = None) -> None:
             _SLOTS.pop(key, None)
 
 
-def color_hint_7up_sting(crop: np.ndarray | None) -> str | None:
-    """Return ``du_7u`` (green) or ``du_sti`` (red/orange), else None."""
+def color_vote_7up_sting(crop: np.ndarray | None) -> tuple[str | None, float]:
+    """Return ``(class, winner/loser ratio)``. Ratio 0 means inconclusive."""
     if crop is None or getattr(crop, "size", 0) == 0:
-        return None
+        return None, 0.0
     if crop.ndim != 3 or crop.shape[0] < 8 or crop.shape[1] < 8:
-        return None
+        return None, 0.0
     h, w = crop.shape[:2]
-    # Inner crop: skip wood/hand around the bottle.
     y1, y2 = int(h * 0.12), max(int(h * 0.12) + 1, int(h * 0.88))
     x1, x2 = int(w * 0.18), max(int(w * 0.18) + 1, int(w * 0.82))
     inner = crop[y1:y2, x1:x2]
@@ -95,7 +97,7 @@ def color_hint_7up_sting(crop: np.ndarray | None) -> str | None:
     val = hsv[:, :, 2]
     chroma = (sat >= 55) & (val >= 45) & (val <= 245)
     if int(chroma.sum()) < 40:
-        return None
+        return None, 0.0
     green = chroma & (hue >= 35) & (hue <= 85)
     red = chroma & ((hue <= 12) | (hue >= 165))
     orange = chroma & (hue > 12) & (hue < 32) & (sat >= 90)
@@ -103,12 +105,17 @@ def color_hint_7up_sting(crop: np.ndarray | None) -> str | None:
     n_red = int(red.sum()) + int(orange.sum())
     total = n_green + n_red
     if total < 40:
-        return None
-    if n_green > n_red * 1.30:
-        return "du_7u"
-    if n_red > n_green * 1.30:
-        return "du_sti"
-    return None
+        return None, 0.0
+    if n_green > n_red * 1.15:
+        return "du_7u", n_green / max(1.0, float(n_red))
+    if n_red > n_green * 1.15:
+        return "du_sti", n_red / max(1.0, float(n_green))
+    return None, 0.0
+
+
+def color_hint_7up_sting(crop: np.ndarray | None) -> str | None:
+    cls, _ratio = color_vote_7up_sting(crop)
+    return cls
 
 
 def _crop(frame: np.ndarray | None, det: Any) -> np.ndarray | None:
@@ -123,19 +130,64 @@ def _crop(frame: np.ndarray | None, det: Any) -> np.ndarray | None:
     return crop if crop.size else None
 
 
-def _spatial_clash(a: Any, b: Any) -> bool:
+def _union_crop(frame: np.ndarray | None, dets: list[Any]) -> np.ndarray | None:
+    if not dets:
+        return None
+    x1 = min(d.x1 for d in dets)
+    y1 = min(d.y1 for d in dets)
+    x2 = max(d.x2 for d in dets)
+    y2 = max(d.y2 for d in dets)
+
+    class _Box:
+        def __init__(self) -> None:
+            self.x1, self.y1, self.x2, self.y2 = x1, y1, x2, y2
+
+    return _crop(frame, _Box())
+
+
+def _same_bottle(a: Any, b: Any) -> bool:
+    """True when two 7Up/Sting boxes are parts of one standing bottle.
+
+    Live logs showed both classes surviving because centers sat ~60–90px
+    apart — wider than the old 36px NMS, still one object.
+    Side-by-side bottles have a much larger horizontal gap.
+    """
+    if box_iou(a, b) >= 0.12 or _center_in_box(a, b) or _center_in_box(b, a):
+        return True
     acx, acy = _center(a)
     bcx, bcy = _center(b)
-    amin = min(max(1.0, a.x2 - a.x1), max(1.0, a.y2 - a.y1))
-    bmin = min(max(1.0, b.x2 - b.x1), max(1.0, b.y2 - b.y1))
-    dist = ((acx - bcx) ** 2 + (acy - bcy) ** 2) ** 0.5
-    close = dist < max(36.0, 0.55 * min(amin, bmin))
-    return (
-        box_iou(a, b) >= 0.22
-        or _center_in_box(a, b)
-        or _center_in_box(b, a)
-        or close
-    )
+    aw = max(1.0, a.x2 - a.x1)
+    bw = max(1.0, b.x2 - b.x1)
+    ah = max(1.0, a.y2 - a.y1)
+    bh = max(1.0, b.y2 - b.y1)
+    horiz = abs(acx - bcx)
+    vert = abs(acy - bcy)
+    max_w = max(aw, bw)
+    max_h = max(ah, bh)
+    col = max(48.0, 0.35 * max_h, 0.85 * max_w)
+    if horiz < col and vert < max(140.0, 1.05 * max_h):
+        return True
+    iy1, iy2 = max(a.y1, b.y1), min(a.y2, b.y2)
+    ih = max(0.0, iy2 - iy1)
+    vert_ov = ih / min(ah, bh)
+    return vert_ov >= 0.30 and horiz < max(64.0, 0.95 * max_w)
+
+
+def _cluster_same_bottle(dets: list[Any]) -> list[list[Any]]:
+    clusters: list[list[Any]] = []
+    for d in sorted(dets, key=lambda x: x.confidence, reverse=True):
+        placed = False
+        group = class_group(d.class_name)
+        for cluster in clusters:
+            if class_group(cluster[0].class_name) != group:
+                continue
+            if any(_same_bottle(d, other) for other in cluster):
+                cluster.append(d)
+                placed = True
+                break
+        if not placed:
+            clusters.append([d])
+    return clusters
 
 
 def _prune_slots(camera_key: str, now: float) -> list[dict[str, Any]]:
@@ -164,38 +216,47 @@ def _find_slot(
     return best
 
 
-def _resolve_class(yolo_cls: str, hint: str | None, slot: dict[str, Any] | None) -> str:
-    """Color wins; otherwise keep the bottle at this spot from flipping."""
-    if hint:
-        return hint
+def _resolve_class(
+    yolo_cls: str,
+    hint: str | None,
+    ratio: float,
+    slot: dict[str, Any] | None,
+) -> str:
+    """Strong color may flip; weak color cannot override a sticky SKU."""
+    strong = bool(hint) and ratio >= _STRONG_COLOR_RATIO
+    if strong:
+        return str(hint)
     if slot:
         return str(slot["class_name"])
+    if hint:
+        return str(hint)
     return yolo_cls
 
 
-def _collapse_overlapping_lookalikes(dets: list[Any]) -> list[Any]:
-    look, other = [], []
-    for d in dets:
-        if class_group(d.class_name) is None:
-            other.append(d)
-        else:
-            look.append(d)
-    if len(look) < 2:
-        return dets
-    ordered = sorted(look, key=lambda d: d.confidence, reverse=True)
-    kept: list[Any] = []
-    for d in ordered:
-        group = class_group(d.class_name)
-        clash = False
-        for s in kept:
-            if class_group(s.class_name) != group:
-                continue
-            if _spatial_clash(d, s):
-                clash = True
-                break
-        if not clash:
-            kept.append(d)
-    return other + kept
+def _touch_slot(
+    slots: list[dict[str, Any]],
+    group: frozenset[str],
+    cx: float,
+    cy: float,
+    chosen: str,
+    ts: float,
+) -> None:
+    slot = _find_slot(slots, cx, cy, group)
+    if slot is None:
+        slots.append(
+            {
+                "cx": cx,
+                "cy": cy,
+                "class_name": chosen,
+                "group": group,
+                "last_seen": ts,
+            }
+        )
+        return
+    slot["class_name"] = chosen
+    slot["cx"] = cx
+    slot["cy"] = cy
+    slot["last_seen"] = ts
 
 
 def stabilize_lookalikes(
@@ -209,45 +270,45 @@ def stabilize_lookalikes(
         return detections
     ts = time.monotonic() if now is None else now
     slots = _prune_slots(camera_key, ts)
-    out: list[Any] = []
+    look: list[Any] = []
+    other: list[Any] = []
     for det in detections:
-        yolo_cls = str(det.class_name).strip().lower()
-        group = class_group(yolo_cls)
-        if group is None:
-            out.append(det)
-            continue
-        hint = None
-        if group == CLASS_GROUPS[0]:
-            hint = color_hint_7up_sting(_crop(frame_bgr, det))
-        slot = _find_slot(slots, det.cx, det.cy, group)
-        chosen = _resolve_class(yolo_cls, hint, slot)
-        if slot is None:
-            slot = {
-                "cx": det.cx,
-                "cy": det.cy,
-                "class_name": chosen,
-                "group": group,
-                "last_seen": ts,
-            }
-            slots.append(slot)
+        if class_group(det.class_name) is None:
+            other.append(det)
         else:
-            prev = str(slot["class_name"])
-            if chosen != prev:
-                logger.warning(
-                    "LOOKALIKE: %s -> %s at (%.0f,%.0f) color=%s yolo=%s",
-                    prev,
-                    chosen,
-                    det.cx,
-                    det.cy,
-                    hint,
-                    yolo_cls,
-                )
-            slot["class_name"] = chosen
-            slot["cx"] = det.cx
-            slot["cy"] = det.cy
-            slot["last_seen"] = ts
-        if chosen != yolo_cls:
-            det = replace(det, class_name=chosen)
-        out.append(det)
+            look.append(det)
+    if not look:
+        return detections
+
+    out = list(other)
+    for cluster in _cluster_same_bottle(look):
+        group = class_group(cluster[0].class_name)
+        assert group is not None
+        cx = sum(d.cx for d in cluster) / len(cluster)
+        cy = sum(d.cy for d in cluster) / len(cluster)
+        crop = _union_crop(frame_bgr, cluster) if len(cluster) > 1 else _crop(frame_bgr, cluster[0])
+        hint, ratio = (None, 0.0)
+        if group == CLASS_GROUPS[0]:
+            hint, ratio = color_vote_7up_sting(crop)
+        slot = _find_slot(slots, cx, cy, group)
+        # Highest-conf YOLO class is the default identity of this cluster.
+        top = max(cluster, key=lambda d: d.confidence)
+        yolo_cls = str(top.class_name).strip().lower()
+        chosen = _resolve_class(yolo_cls, hint, ratio, slot)
+        yolo_names = [str(d.class_name).lower() for d in cluster]
+        if len(cluster) > 1 or chosen != yolo_cls or (slot and chosen != slot["class_name"]):
+            logger.warning(
+                "LOOKALIKE: yolo=%s -> %s n=%d color=%s/%.1f sticky=%s",
+                yolo_names,
+                chosen,
+                len(cluster),
+                hint,
+                ratio,
+                None if slot is None else slot["class_name"],
+            )
+        winner = replace(top, class_name=chosen)
+        out.append(winner)
+        _touch_slot(slots, group, cx, cy, chosen, ts)
+
     _SLOTS[camera_key] = slots
-    return _collapse_overlapping_lookalikes(out)
+    return out
