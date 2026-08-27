@@ -292,6 +292,41 @@ sku = find_sku_by_brand_volume(text)  # map chuỗi in trên nhãn → SKU`,
 final = combine_confidence(yolo=yolo_p, classifier=cls_p, ocr=ocr_p)
 # Tích có trọng số: mắt xích yếu (YOLO thấp) vẫn kéo điểm cuối xuống`,
   },
+  video_capture: {
+    key: "video_capture",
+    algorithm: "Lấy khung video (temporal sampling)",
+    algorithmEn: "Frame grab — HTMLVideoElement → Canvas → JPEG, pause during inference",
+    citation: "Video temporal sampling; pause-on-infer to keep VPS without GPU responsive",
+    file: "frontend/src/pages/VideoAnalysisPage.tsx",
+    code: `video.pause()
+canvas.width, canvas.height = video.videoWidth, video.videoHeight
+ctx.drawImage(video, 0, 0)
+blob = await canvas.toBlob("image/jpeg", 0.85)
+# Tự chạy: tua currentTime += interval, chờ seeked, lặp lại`,
+  },
+  scan_session: {
+    key: "scan_session",
+    algorithm: "Phiên quét video độc lập (một giỏ / một lần test)",
+    algorithmEn: "Isolated scan_session — do not merge with live till ByteTrack IDs",
+    citation: "Session isolation; manual_scan emits product_scanned into one cart",
+    file: "ai-engine/app/api/frame.py",
+    code: `if scan_session:
+    camera_key = f"{camera_key}::video::{scan_session}"
+    manual_scan = True  # một khung → một giỏ, không checkout-p1 live
+form.append("scan_session", token)
+form.append("manual_scan", "true")
+form.append("roi_zones", json.dumps(zones))  # vùng vẽ trên file video`,
+  },
+  cart_order: {
+    key: "cart_order",
+    algorithm: "Tạo giỏ / đơn từ sự kiện product_scanned",
+    algorithmEn: "Event-driven cart — backend accepts SKU lines, POS checkout → order",
+    citation: "Vision checkout pipeline: detect → identify → cart → order",
+    file: "backend/app/modules/sales/application/",
+    code: `# ai-engine emit product_scanned { sku, qty, photo_key, scan_session }
+# backend CartService thêm dòng nếu SKU có trong catalog
+# Checkout / QR → Order — cùng luồng POS, nguồn source=ai_vision`,
+  },
 };
 
 export function lookupAlgorithm(stage: string): AlgorithmDef | undefined {
@@ -345,7 +380,7 @@ export function formatAppendixMarkdown(sections: Array<{
   return [
     "# Phụ lục — Thuật toán và mã nguồn pipeline nhận diện VisionMart",
     "",
-    "Mỗi mục tương ứng một giai đoạn thật đã chạy trên ảnh quét (OpenCV → YOLOv8 → crop → MobileNetV3 → gán SKU).",
+    "Mỗi mục tương ứng một giai đoạn pipeline (thư viện video / ảnh → OpenCV → YOLOv8 → crop → MobileNetV3 → giỏ hàng).",
     "",
     body,
   ].join("\n");

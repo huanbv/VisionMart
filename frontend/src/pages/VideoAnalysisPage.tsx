@@ -33,6 +33,7 @@ import {
   Slider,
   Space,
   Statistic,
+  Steps,
   Switch,
   Tag,
   Timeline,
@@ -70,12 +71,20 @@ import {
   type CartLine,
 } from "@/api/carts";
 import { listBranches, getOrganization, type Branch } from "@/api/tenancy";
-import { listCameras, getRoiZones, type Camera, type RoiZone } from "@/api/cameras";
+import { listCameras, getRoiZones, getTraceStageImageBlob, tracePipeline, type Camera, type DebugStep, type PipelineTraceResult, type RoiZone } from "@/api/cameras";
 import { tokenStore } from "@/api/client";
 import CartLinePhoto from "@/components/CartLinePhoto";
 import CartLineSkuButton from "@/components/CartLineSkuButton";
 import RoiZoneEditor from "@/components/RoiZoneEditor";
 import VideoLibraryGrid from "@/components/VideoLibraryGrid";
+import {
+  DebugStepGallery,
+  OpenCvStageGallery,
+  THESIS_CODE_CSS,
+  ThesisAppendix,
+  type ThesisAppendixSection,
+} from "@/components/ThesisPipelineLab";
+import { lookupAlgorithm } from "@/pages/imageScanAlgorithms";
 import { listTrainingJobs, type TrainingJob } from "@/api/aiTraining";
 import {
   mapNormToContent,
@@ -127,6 +136,14 @@ function jobSelectLabel(job: TrainingJob): string {
   return `${job.name}${jobMetricHint(job)}${live} — ${date}`;
 }
 
+const VIDEO_FLOW = [
+  "Thư viện video",
+  "Chọn khung",
+  "Tiền xử lý OpenCV",
+  "YOLO + SKU",
+  "Tạo giỏ / đơn",
+] as const;
+
 function formatMoney(amount: string, currency: string): string {
   const value = Number(amount);
   if (!Number.isFinite(value)) return `${amount} ${currency}`;
@@ -172,6 +189,12 @@ export default function VideoAnalysisPage() {
   const [framesProcessed, setFramesProcessed] = useState(0);
   const [framesAccepted, setFramesAccepted] = useState(0);
   const [lastFrameResult, setLastFrameResult] = useState<string | null>(null);
+  const [debugSteps, setDebugSteps] = useState<DebugStep[]>([]);
+  const [trace, setTrace] = useState<PipelineTraceResult | null>(null);
+  const [stageUrls, setStageUrls] = useState<Record<number, string>>({});
+  const [traceHint, setTraceHint] = useState<string | null>(null);
+  const [thesisTime, setThesisTime] = useState<number | null>(null);
+  const stageUrlsRef = useRef<string[]>([]);
 
   const [carts, setCarts] = useState<Cart[]>([]);
   const [cartsLoading, setCartsLoading] = useState(false);
@@ -200,6 +223,12 @@ export default function VideoAnalysisPage() {
   const [roiZones, setRoiZones] = useState<RoiZone[]>([]);
   const [roiEditorOpen, setRoiEditorOpen] = useState(false);
   const [roiSnapshot, setRoiSnapshot] = useState<string | null>(null);
+
+  useEffect(() => {
+    return () => {
+      stageUrlsRef.current.forEach((u) => URL.revokeObjectURL(u));
+    };
+  }, []);
 
   const captureVideoSnapshot = useCallback((): string | null => {
     const video = videoRef.current;
@@ -470,6 +499,75 @@ export default function VideoAnalysisPage() {
     ];
   }, [trainingJobs]);
 
+  const detectorDesc = useMemo(() => {
+    if (weightKey && weightKey !== "live") {
+      const job = trainingJobs.find((j) => j.weight_key === weightKey);
+      const kind = job ? jobKind(job) : "crop";
+      return {
+        title: kind === "bbox" ? "Train từ nhãn bbox (Gán nhãn bbox)" : "Train AI (crop 1 SKU)",
+        detail: job ? `${job.name} · ${weightKey}` : weightKey,
+        color: kind === "bbox" ? "purple" : "cyan",
+      };
+    }
+    const deployed = trainingJobs
+      .filter((j) => j.deployed_at)
+      .sort((a, b) => +new Date(b.deployed_at || 0) - +new Date(a.deployed_at || 0))[0];
+    if (deployed) {
+      const kind = jobKind(deployed);
+      return {
+        title: kind === "bbox" ? "Model live — Train từ nhãn bbox" : "Model live — Train AI (crop 1 SKU)",
+        detail: `${deployed.name} · ${deployed.weight_key}`,
+        color: kind === "bbox" ? "purple" : "cyan",
+      };
+    }
+    return {
+      title: "Model đang triển khai (live)",
+      detail: "Weight sau Deploy tại Train AI / Gán nhãn bbox",
+      color: "blue",
+    };
+  }, [weightKey, trainingJobs]);
+
+  const flowCurrent = !videoUrl
+    ? 0
+    : isSending
+      ? 3
+      : debugSteps.length || carts.length
+        ? 4
+        : 1;
+
+  const appendixSections = useMemo((): ThesisAppendixSection[] => {
+    const fromTrace = (trace?.stages ?? []).map((s) => ({
+      stage: s.stage,
+      title: s.label,
+      params: s.params,
+      elapsedMs: s.elapsed_ms,
+    }));
+    const fromDebug = debugSteps.map((s) => ({
+      stage: s.step,
+      title: s.label,
+      params: s.params,
+      elapsedMs: s.elapsed_ms,
+    }));
+    const seen = new Set<string>();
+    const merged = [...fromTrace, ...fromDebug].filter((s) => {
+      if (!lookupAlgorithm(s.stage) || seen.has(s.stage)) return false;
+      seen.add(s.stage);
+      return true;
+    });
+    for (const key of ["video_capture", "scan_session", "detection", "crop", "classifier", "cart_order"]) {
+      if (!seen.has(key) && lookupAlgorithm(key)) {
+        merged.push({
+          stage: key,
+          title: lookupAlgorithm(key)!.algorithm,
+          params: undefined,
+          elapsedMs: null,
+        });
+        seen.add(key);
+      }
+    }
+    return merged;
+  }, [trace, debugSteps]);
+
   useEffect(() => {
     if (!branchId) return;
     (async () => {
@@ -642,7 +740,7 @@ export default function VideoAnalysisPage() {
     message.success("Đã xóa video khỏi thư viện");
   };
 
-  const captureAndSendFrame = useCallback(async (): Promise<void> => {
+  const captureAndSendFrame = useCallback(async (thesis = false): Promise<void> => {
     const video = videoRef.current;
     const canvas = canvasRef.current;
     if (!video || !canvas || !organizationId || !branchId) return;
@@ -695,6 +793,9 @@ export default function VideoAnalysisPage() {
     } else {
       form.append("skip_roi", "true");
     }
+    if (thesis) {
+      form.append("include_debug_steps", "true");
+    }
     form.append("image", new File([blob], "frame.jpg", { type: "image/jpeg" }));
 
     try {
@@ -742,6 +843,49 @@ export default function VideoAnalysisPage() {
         addLog("add", `🔍 Phát hiện & Nhận dạng SKU: ${detectedSkus}`, `${products} sản phẩm trong khung${elapsedPart}`);
       } else {
         addLog("info", "AI đã quét khung này", `${persons} người · ${products} SP${elapsedPart || ""}`);
+      }
+
+      if (thesis) {
+        const steps = (result?.debug_steps ?? []) as DebugStep[];
+        setDebugSteps(steps);
+        setThesisTime(video.currentTime);
+        addLog(
+          "info",
+          `📓 Nhật ký giai đoạn: ${steps.length} ảnh AI`,
+          modelName ? `model ${modelName}` : undefined,
+        );
+        if (cameraId) {
+          try {
+            const file = new File([blob], "frame.jpg", { type: "image/jpeg" });
+            const traced = await tracePipeline(cameraId, file);
+            setTrace(traced);
+            setTraceHint(null);
+            stageUrlsRef.current.forEach((u) => URL.revokeObjectURL(u));
+            const next: Record<number, string> = {};
+            const created: string[] = [];
+            for (const stage of traced.stages) {
+              if (!stage.image_key) continue;
+              try {
+                const img = await getTraceStageImageBlob(cameraId, traced.trace_id, stage.image_key);
+                const url = URL.createObjectURL(img);
+                created.push(url);
+                next[stage.order] = url;
+              } catch {
+                /* non-fatal */
+              }
+            }
+            stageUrlsRef.current = created;
+            setStageUrls(next);
+            addLog("info", `OpenCV ${traced.stages.length} bước`, `${traced.opencv_ms.toFixed(0)} ms`);
+          } catch (err) {
+            const detail = isAxiosError(err) && err.response?.data?.detail
+              ? String(err.response.data.detail)
+              : "Không lưu vết OpenCV";
+            setTrace(null);
+            setTraceHint(detail);
+            addLog("info", "Bỏ qua ảnh từng bước OpenCV", detail);
+          }
+        }
       }
     } catch (err) {
       addLog("error", "Lỗi gửi frame", String(err));
@@ -801,7 +945,7 @@ export default function VideoAnalysisPage() {
       userPausedRef.current = true;
       setIsPaused(true);
       const t = video.currentTime;
-      await captureAndSendFrame();
+      await captureAndSendFrame(true);
       addLog("info", "⚡ Đã quét khung này", `t=${t.toFixed(1)}s · một giỏ theo vùng thanh toán`);
       await loadCarts();
     } finally {
@@ -975,6 +1119,14 @@ export default function VideoAnalysisPage() {
           </Space>
         }
       >
+        <style>{THESIS_CODE_CSS}</style>
+        <Steps
+          size="small"
+          current={flowCurrent}
+          status={isSending ? "process" : "wait"}
+          items={VIDEO_FLOW.map((title) => ({ title }))}
+          style={{ marginBottom: 16 }}
+        />
         <Row gutter={[16, 16]}>
           <Col span={24}>
             <Space direction="vertical" style={{ width: "100%" }} size="small">
@@ -1101,9 +1253,13 @@ export default function VideoAnalysisPage() {
                   showSearch
                   optionFilterProp="label"
                 />
+                <Tag color={detectorDesc.color} style={{ marginTop: 6 }}>
+                  {detectorDesc.title}
+                </Tag>
                 <Typography.Text type="secondary" style={{ fontSize: 11, display: "block", marginTop: 4 }}>
-                  Chọn job Train AI hoặc Train từ nhãn bbox để so sánh tốc độ/độ chính xác.
-                  Camera live vẫn dùng model đang triển khai.
+                  {detectorDesc.detail}. Chọn job Train AI hoặc Train từ nhãn bbox để so sánh.
+                  Camera live không đổi. <strong>Kích hoạt AI tại khung này</strong> ghi ảnh từng giai đoạn + mã nguồn cho luận văn;
+                  tự chạy nhiều khung thì không đính JPEG mỗi frame (tránh quá tải).
                 </Typography.Text>
               </Card>
 
@@ -1117,7 +1273,7 @@ export default function VideoAnalysisPage() {
                   size="large"
                   style={{ width: "100%", fontWeight: 600 }}
                 >
-                  Kích hoạt AI tại khung này
+                  Kích hoạt AI tại khung này (ghi luận văn)
                 </Button>
                 <Space style={{ width: "100%", justifyContent: "center" }} wrap>
                   <Button
@@ -1274,6 +1430,30 @@ export default function VideoAnalysisPage() {
           </Col>
         </Row>
       </Card>
+
+      {(videoUrl || debugSteps.length > 0) && (
+        <Space direction="vertical" size="large" style={{ width: "100%" }}>
+          {thesisTime != null && (
+            <Alert
+              type="info"
+              showIcon
+              message={`Nhật ký giai đoạn — khung t=${thesisTime.toFixed(1)}s · ${detectorDesc.title}`}
+              description={
+                <>
+                  {detectorDesc.detail}
+                  {traceHint ? ` OpenCV: ${traceHint}` : ""}
+                </>
+              }
+            />
+          )}
+          <DebugStepGallery steps={debugSteps} />
+          {trace && <OpenCvStageGallery trace={trace} stageUrls={stageUrls} />}
+          <ThesisAppendix
+            sections={appendixSections}
+            intro="Luồng: thư viện video → lấy khung (tạm dừng) → ROI trên file → OpenCV → YOLOv8/ByteTrack → crop → MobileNetV3 → giỏ AI → đơn hàng. Sao chép Markdown hoặc In PDF."
+          />
+        </Space>
+      )}
 
       {/* Stats */}
       <Row gutter={16}>
