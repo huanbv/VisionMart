@@ -649,6 +649,17 @@ def _hand_dist_to_product(
     return min(dl, dr)
 
 
+def _person_overlap_is_legs_only(person: Any, product_cy: float) -> bool:
+    """True when the product sits at this person's hips/feet, not their hands.
+
+    A bystander whose legs enter the pay zone gets a huge bbox covering the
+    counter; treating them as the payer is the usual mis-ID.
+    """
+    height = max(1.0, float(person.y2) - float(person.y1))
+    rel_y = (product_cy - float(person.y1)) / height
+    return rel_y >= 0.62
+
+
 def _person_by_hand_near_product(
     persons: list[Any], product_cx: float, product_cy: float
 ) -> Any | None:
@@ -689,7 +700,11 @@ def _pair_products_with_persons(
                 
         if best_hand is not None:
             chosen_person = best_hand[1]
-        elif best_centroid is not None and best_centroid[0] < 180.0:
+        elif (
+            best_centroid is not None
+            and best_centroid[0] < 180.0
+            and not _person_overlap_is_legs_only(best_centroid[1], product.cy)
+        ):
             chosen_person = best_centroid[1]
         else:
             continue
@@ -735,6 +750,9 @@ def _nearest_person_for_product(
     best_ts = -1.0
     best_id: int | None = None
     for pid in all_ids:
+        visible = current_ids.get(pid)
+        if visible is not None and _person_overlap_is_legs_only(visible, product_cy):
+            continue
         touched_at = trajectory_last_near_ts(
             camera_key,
             pid,
@@ -768,6 +786,8 @@ def _nearest_person_for_product(
 
     if len(persons) == 1:
         person = persons[0]
+        if _person_overlap_is_legs_only(person, product_cy):
+            return None
         dc = math.hypot(person.cx - product_cx, person.cy - product_cy)
         if dc <= _checkout_person_assoc_max_dist_px():
             return person
@@ -1085,7 +1105,7 @@ async def process_frame(
                 y2=det.y2,
             )
             for det, sku in products
-            if float(det.confidence) >= 0.55
+            if float(det.confidence) >= 0.30
         ]
         _cache_latest_product_boxes(camera_key, overlay_dets, fw, fh)
 

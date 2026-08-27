@@ -27,6 +27,18 @@ def _det(x1, y1, x2, y2, conf=0.8, cls="du_sti"):
     }
 
 
+def test_custom_bbox_weight_keeps_products_without_color_blobs(monkeypatch):
+    monkeypatch.setattr(
+        "app.services.model_path.is_custom_detection_weight",
+        lambda: True,
+    )
+    frame = _wood()
+    hit = _det(40, 50, 90, 120, conf=0.42)
+    out = filter_overlay_ghosts(frame, [hit])
+    assert len(out) == 1
+    assert out[0]["bbox"]["x1"] == 40
+
+
 def test_empty_wood_drops_all_product_ghosts():
     frame = _wood()
     ghosts = [

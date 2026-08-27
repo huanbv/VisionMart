@@ -32,6 +32,8 @@ _PERSON_COLOR = (80, 220, 60)
 _HAND_LEFT_COLOR = (0, 255, 255)   # cyan — left wrist
 _HAND_RIGHT_COLOR = (0, 200, 255)  # amber — right wrist
 _HAND_RADIUS = 6
+_ARM_LEFT_COLOR = (0, 220, 255)
+_ARM_RIGHT_COLOR = (0, 140, 255)
 
 
 def marker_color(key: str) -> tuple[int, int, int]:
@@ -121,6 +123,46 @@ def _draw_hand_dot(
     cv2.circle(frame, (cx, cy), _HAND_RADIUS, (20, 20, 20), 1, cv2.LINE_AA)
 
 
+def _draw_hand_box(
+    frame: np.ndarray,
+    cx: int,
+    cy: int,
+    color: tuple[int, int, int],
+    size: int,
+) -> None:
+    half = max(10, size // 2)
+    x1, y1 = cx - half, cy - half
+    x2, y2 = cx + half, cy + half
+    cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2, cv2.LINE_AA)
+
+
+def _pt(det: dict, key: str) -> tuple[int, int] | None:
+    raw = det.get(key)
+    if raw is None:
+        return None
+    try:
+        return int(raw[0]), int(raw[1])
+    except (TypeError, ValueError, IndexError):
+        return None
+
+
+def _draw_arm_chain(
+    frame: np.ndarray,
+    det: dict,
+    side: str,
+    color: tuple[int, int, int],
+) -> None:
+    shoulder = _pt(det, f"{side}_shoulder")
+    elbow = _pt(det, f"{side}_elbow")
+    wrist = _pt(det, f"{side}_hand")
+    pts = [p for p in (shoulder, elbow, wrist) if p is not None]
+    if len(pts) < 2:
+        return
+    for a, b in zip(pts, pts[1:]):
+        cv2.line(frame, a, b, color, 2, cv2.LINE_AA)
+        cv2.circle(frame, a, 4, color, -1, cv2.LINE_AA)
+
+
 def _hand_points(det: dict) -> list[tuple[int, int, tuple[int, int, int]]]:
     out: list[tuple[int, int, tuple[int, int, int]]] = []
     for key, color in (("left_hand", _HAND_LEFT_COLOR), ("right_hand", _HAND_RIGHT_COLOR)):
@@ -150,9 +192,22 @@ def draw_live_detections(frame: Any, detections: list[dict]) -> None:
         x1, y1, x2, y2 = xy
         class_name = str(det.get("class_name") or "object")
         if class_name.lower() == "person":
-            cv2.rectangle(frame, (x1, y1), (x2, y2), _PERSON_COLOR, 1, cv2.LINE_AA)
+            person_color = _PERSON_COLOR
+            tid = det.get("track_id")
+            if tid is not None:
+                try:
+                    from app.services.person_tracker import TRAJECTORY_PALETTE
+
+                    person_color = TRAJECTORY_PALETTE[int(tid) % len(TRAJECTORY_PALETTE)]
+                except Exception:  # noqa: BLE001
+                    person_color = _PERSON_COLOR
+            cv2.rectangle(frame, (x1, y1), (x2, y2), person_color, 1, cv2.LINE_AA)
+            hand_size = max(22, int(0.08 * max(1, y2 - y1)))
+            _draw_arm_chain(frame, det, "left", _ARM_LEFT_COLOR)
+            _draw_arm_chain(frame, det, "right", _ARM_RIGHT_COLOR)
             for hx, hy, hcolor in _hand_points(det):
                 if 0 <= hx < w and 0 <= hy < h:
+                    _draw_hand_box(frame, hx, hy, hcolor, hand_size)
                     _draw_hand_dot(frame, hx, hy, hcolor)
             label = _det_label(det)
             _tw, th = measure_text(label, 13)

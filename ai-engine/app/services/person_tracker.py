@@ -53,6 +53,78 @@ _MODEL_LOCK = asyncio.Lock()
 _LAST_VISION_RESULT: dict[str, dict[str, Any]] = {}
 _LATEST_PERSON_BOXES: dict[str, list[dict]] = {}
 _LATEST_PRODUCT_BOXES: dict[str, dict[str, Any]] = {}
+# Smoothed arm keypoints per camera/track so the HUD marker stays on the
+# wrist when pose flickers for a few frames.
+_ARM_STATE: dict[str, dict[int, dict[str, Any]]] = {}
+
+_ARM_KEYS = (
+    "left_shoulder",
+    "left_elbow",
+    "left_hand",
+    "right_shoulder",
+    "right_elbow",
+    "right_hand",
+)
+_KPT_INDEX = {
+    "left_shoulder": 5,
+    "right_shoulder": 6,
+    "left_elbow": 7,
+    "right_elbow": 8,
+    "left_hand": 9,
+    "right_hand": 10,
+}
+_KPT_CONF_MIN = 0.30
+_ARM_HOLD_SECONDS = 0.9
+_ARM_SMOOTH_ALPHA = 0.55
+_ARM_JUMP_PX = 90.0
+
+
+def _kpt_xy(xy, confs, idx: int) -> tuple[float, float] | None:
+    if xy is None or idx >= len(xy):
+        return None
+    x, y = float(xy[idx][0]), float(xy[idx][1])
+    if x == 0.0 and y == 0.0:
+        return None
+    if confs is not None and idx < len(confs) and float(confs[idx]) < _KPT_CONF_MIN:
+        return None
+    return (x, y)
+
+
+def _smooth_arm_points(
+    camera_key: str,
+    track_id: int,
+    raw: dict[str, tuple[float, float] | None],
+    now: float,
+) -> dict[str, tuple[float, float] | None]:
+    """EMA + hold-last so the HUD wrist marker follows the arm without flicker."""
+    per_cam = _ARM_STATE.setdefault(camera_key, {})
+    prev = per_cam.get(track_id) or {}
+    merged: dict[str, tuple[float, float] | None] = {}
+    stored: dict[str, Any] = {"ts": now}
+    for key in _ARM_KEYS:
+        incoming = raw.get(key)
+        last_pt = prev.get(key)
+        last_ts = float(prev.get("ts") or 0.0)
+        if incoming is None:
+            if last_pt is not None and (now - last_ts) <= _ARM_HOLD_SECONDS:
+                merged[key] = last_pt
+                stored[key] = last_pt
+            else:
+                merged[key] = None
+            continue
+        if last_pt is not None:
+            dist = ((incoming[0] - last_pt[0]) ** 2 + (incoming[1] - last_pt[1]) ** 2) ** 0.5
+            if dist < _ARM_JUMP_PX:
+                a = _ARM_SMOOTH_ALPHA
+                incoming = (
+                    a * incoming[0] + (1.0 - a) * last_pt[0],
+                    a * incoming[1] + (1.0 - a) * last_pt[1],
+                )
+        merged[key] = incoming
+        stored[key] = incoming
+    per_cam[track_id] = stored
+    return merged
+
 
 def get_latest_person_boxes(
     camera_key: str, frame_w: int | None = None, frame_h: int | None = None
@@ -74,7 +146,7 @@ def get_latest_person_boxes(
             **item,
             "bbox": [x1 * sx, y1 * sy, x2 * sx, y2 * sy],
         }
-        for key in ("left_hand", "right_hand"):
+        for key in _ARM_KEYS:
             pt = item.get(key)
             if pt and len(pt) >= 2:
                 scaled_item[key] = (float(pt[0]) * sx, float(pt[1]) * sy)
@@ -349,6 +421,8 @@ def reset_trackers() -> None:
     _DET_TRACKER_STATE.clear()
     _ACTIVE_CAMERA.clear()
     _PERSON_TRAJECTORIES.clear()
+    _ARM_STATE.clear()
+    _LATEST_PERSON_BOXES.clear()
     _SHARED_POSE_MODEL = None
     _SHARED_DET_MODEL = None
     _LOADED_DET_PATH = None
@@ -574,6 +648,31 @@ def dense_detect_on_model(
         boxes = _boxes_from_yolo_result(results[0], id_base=next_id, ox=ox, oy=oy)
         next_id += max(1, len(boxes))
         collected.extend(boxes)
+
+    from app.services.model_path import is_custom_detection_weight
+
+    if is_custom_detection_weight():
+        # Bbox-trained SKU weights: one full-frame (or ROI crop) pass — tiling
+        # was for classifier weights labeled as the whole image.
+        if roi_rect is not None:
+            rx1, ry1, rx2, ry2 = roi_rect
+            rx1, ry1 = max(0, rx1), max(0, ry1)
+            rx2, ry2 = min(w, max(rx1 + 1, rx2)), min(h, max(ry1 + 1, ry2))
+            crop = img[ry1:ry2, rx1:rx2]
+            if crop.size:
+                _run_predict(crop, float(rx1), float(ry1))
+        else:
+            _run_predict(img)
+        merged = merge_tiled_detections(collected, w, h)
+        logger.warning(
+            "DENSE DET: layout=%s custom_bbox=1 roi=%s raw=%d final=%d classes=%s",
+            layout,
+            roi_rect,
+            len(collected),
+            len(merged),
+            sorted({d.class_name for d in merged}),
+        )
+        return merged
 
     if roi_rect is not None:
         rx1, ry1, rx2, ry2 = roi_rect
@@ -914,65 +1013,67 @@ async def track_frame_detailed(
                     if has_ids
                     else [900_000 + i for i in range(len(boxes))]
                 )
+                keypoints_conf = None
                 if first_pose.keypoints is not None and first_pose.keypoints.xy is not None:
                     keypoints_xy = first_pose.keypoints.xy.cpu().numpy()
-                
+                    try:
+                        keypoints_conf = first_pose.keypoints.conf.cpu().numpy()
+                    except Exception:  # noqa: BLE001
+                        keypoints_conf = None
+
+                import time
+                now_ts = time.time()
+                frame_h, frame_w = img.shape[:2]
+                latest_boxes = []
+
                 for i, tid in enumerate(ids):
                     cls_idx = int(boxes.cls[i]) if boxes.cls is not None else 0
                     class_name = names_pose.get(cls_idx, "person")
                     conf = float(boxes.conf[i]) if boxes.conf is not None else 0.0
                     xy = boxes.xyxy[i].tolist()
-                    
+
                     mapped_tid = (
                         reid_manager.get_mapped_id(tid, img, xy) if has_ids else int(tid)
                     )
 
-                    left_hand = None
-                    right_hand = None
+                    raw_arm: dict[str, tuple[float, float] | None] = {k: None for k in _ARM_KEYS}
                     if i < len(keypoints_xy):
                         kpts = keypoints_xy[i]
-                        if len(kpts) > 10:
-                            lw = kpts[9]
-                            rw = kpts[10]
-                            if lw[0] != 0 or lw[1] != 0:
-                                left_hand = (float(lw[0]), float(lw[1]))
-                            if rw[0] != 0 or rw[1] != 0:
-                                right_hand = (float(rw[0]), float(rw[1]))
-                                
-                    out.append(
-                        TrackedObject(
-                            track_id=int(mapped_tid),
-                            class_name=str(class_name),
-                            confidence=conf,
-                            x1=float(xy[0]),
-                            y1=float(xy[1]),
-                            x2=float(xy[2]),
-                            y2=float(xy[3]),
-                            left_hand=left_hand,
-                            right_hand=right_hand,
-                        )
+                        kconf = keypoints_conf[i] if keypoints_conf is not None and i < len(keypoints_conf) else None
+                        for name, idx in _KPT_INDEX.items():
+                            raw_arm[name] = _kpt_xy(kpts, kconf, idx)
+                    arms = _smooth_arm_points(camera_key, int(mapped_tid), raw_arm, now_ts)
+
+                    obj = TrackedObject(
+                        track_id=int(mapped_tid),
+                        class_name=str(class_name),
+                        confidence=conf,
+                        x1=float(xy[0]),
+                        y1=float(xy[1]),
+                        x2=float(xy[2]),
+                        y2=float(xy[3]),
+                        left_hand=arms.get("left_hand"),
+                        right_hand=arms.get("right_hand"),
                     )
-                
-                if has_ids:
-                    import time
-                    now_ts = time.time()
-                    frame_h, frame_w = img.shape[:2]
-                    latest_boxes = []
-                    for obj in out:
-                        if obj.class_name == "person":
-                            latest_boxes.append({
-                                "mapped_id": obj.track_id,
-                                "bbox": [obj.x1, obj.y1, obj.x2, obj.y2],
-                                "left_hand": list(obj.left_hand) if obj.left_hand else None,
-                                "right_hand": list(obj.right_hand) if obj.right_hand else None,
-                                "timestamp": now_ts,
-                                "frame_w": frame_w,
-                                "frame_h": frame_h,
-                            })
+                    out.append(obj)
+                    if str(class_name).lower() == "person":
+                        box_payload = {
+                            "mapped_id": obj.track_id,
+                            "bbox": [obj.x1, obj.y1, obj.x2, obj.y2],
+                            "timestamp": now_ts,
+                            "frame_w": frame_w,
+                            "frame_h": frame_h,
+                        }
+                        for key in _ARM_KEYS:
+                            pt = arms.get(key)
+                            box_payload[key] = list(pt) if pt else None
+                        latest_boxes.append(box_payload)
+                        if has_ids:
                             record_person_position(
                                 camera_key, obj.track_id, obj.cx, obj.cy, now_ts,
                                 frame_w, frame_h,
                             )
+                if latest_boxes:
                     _LATEST_PERSON_BOXES[camera_key] = latest_boxes
 
         # 2. Products. Full-image classifier weights need blob→crop; bbox-trained

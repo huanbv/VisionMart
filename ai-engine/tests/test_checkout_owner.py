@@ -58,7 +58,7 @@ def test_single_person_centroid_fallback():
     out = _nearest_person_for_product(
         "cam-1",
         210,
-        430,
+        280,
         [alone],
         now=100.0,
         frame_w=960,
@@ -66,3 +66,25 @@ def test_single_person_centroid_fallback():
     )
     assert out is not None
     assert out.track_id == 3
+
+
+def test_legs_in_pay_zone_does_not_claim_payer():
+    bystander = TrackedObject(
+        track_id=2,
+        class_name="person",
+        confidence=0.9,
+        x1=160,
+        y1=40,
+        x2=280,
+        y2=500,
+    )
+    out = _nearest_person_for_product(
+        "cam-1",
+        210,
+        470,
+        [bystander],
+        now=100.0,
+        frame_w=960,
+        frame_h=540,
+    )
+    assert out is None

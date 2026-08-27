@@ -284,7 +284,14 @@ def _append_latest_people(
     for tracked in get_latest_person_boxes(camera_key, frame_w, frame_h):
         bbox = tracked.get("bbox") or [0, 0, 0, 0]
         hand_payload: dict[str, tuple[int, int]] = {}
-        for key in ("left_hand", "right_hand"):
+        for key in (
+            "left_hand",
+            "right_hand",
+            "left_elbow",
+            "right_elbow",
+            "left_shoulder",
+            "right_shoulder",
+        ):
             pt = tracked.get(key)
             if pt and len(pt) >= 2:
                 hand_payload[key] = (int(pt[0]), int(pt[1]))
@@ -292,6 +299,7 @@ def _append_latest_people(
             {
                 "class_name": "person",
                 "confidence": 1.0,
+                "track_id": tracked.get("mapped_id"),
                 "sku_label": f"Khach hang #{tracked.get('mapped_id')}",
                 "sku_confidence": 1.0,
                 "bbox": {
@@ -444,6 +452,7 @@ async def _mjpeg_frames(
                 detector is not None
                 and inference_task is None
                 and frame_index % detect_every_n == 0
+                and not use_cached_detections
             ):
                 inference_task = asyncio.create_task(
                     asyncio.to_thread(

@@ -60,11 +60,15 @@ def test_person_wrist_dots_drawn():
                 "bbox": {"x1": 40, "y1": 30, "x2": 180, "y2": 170},
                 "left_hand": (100, 120),
                 "right_hand": (140, 125),
+                "left_elbow": (90, 90),
+                "right_elbow": (150, 95),
             }
         ],
     )
     assert int(frame[120, 100].sum()) > 80
     assert int(frame[125, 140].sum()) > 80
+    # Hand box around the wrist.
+    assert int(frame[120, 100 - 11].sum()) > 40
 
 
 def test_collapse_same_sku_nearby():

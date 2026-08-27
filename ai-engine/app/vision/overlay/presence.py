@@ -66,11 +66,19 @@ def filter_overlay_ghosts(frame_bgr: Any, detections: list[dict]) -> list[dict]:
 
     persons: list[dict] = []
     candidates: list[dict] = []
+    custom_bbox = False
+    try:
+        from app.services.model_path import is_custom_detection_weight
+
+        custom_bbox = is_custom_detection_weight()
+    except Exception:  # noqa: BLE001
+        custom_bbox = False
+    min_conf = 0.30 if custom_bbox else OVERLAY_MIN_CONFIDENCE
     for det in detections:
         if str(det.get("class_name") or "").lower() == "person":
             persons.append(det)
             continue
-        if float(det.get("confidence") or 0.0) < OVERLAY_MIN_CONFIDENCE:
+        if float(det.get("confidence") or 0.0) < min_conf:
             continue
         if _bbox(det) is None:
             continue
@@ -78,6 +86,11 @@ def filter_overlay_ghosts(frame_bgr: Any, detections: list[dict]) -> list[dict]:
 
     if not candidates:
         return persons
+
+    # Bbox-trained SKU detector already localizes packs. The color-blob gate
+    # was for tiled classifier weights and hid real products on live HUD.
+    if custom_bbox:
+        return persons + candidates
 
     try:
         from app.vision.region_proposal import (
