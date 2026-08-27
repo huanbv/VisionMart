@@ -1,6 +1,10 @@
 from __future__ import annotations
 
-from app.api.frame import _aggregate_manual_products, _reuse_recent_checkout_products
+from app.api.frame import (
+    _aggregate_manual_products,
+    _reuse_recent_checkout_products,
+    _sanitize_scan_session,
+)
 from app.services.person_tracker import TrackedObject
 
 
@@ -39,3 +43,11 @@ def test_missed_frame_keeps_recent_checkout_skus():
     assert [s for _, s in held] == ["DU-STI", "DU-7U"]
     expired = _reuse_recent_checkout_products("cam-hold", [], now=19.0)
     assert expired == []
+
+
+def test_scan_session_token_is_reused_across_frames():
+    assert _sanitize_scan_session("vmmh2k1") == "vmmh2k1"
+    assert _sanitize_scan_session("vmmh2k1") == _sanitize_scan_session("vmmh2k1")
+    assert _sanitize_scan_session("") is None
+    assert _sanitize_scan_session("bad token!") is None
+    assert _sanitize_scan_session("x" * 81) is None

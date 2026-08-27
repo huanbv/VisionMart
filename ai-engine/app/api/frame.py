@@ -1261,6 +1261,9 @@ async def process_frame(
     if scan_session_key:
         # Don't share ByteTrack / checkout RAM with the live till camera.
         camera_key = f"{camera_key}::video::{scan_session_key}"
+        # One paused-frame scan → one cart (manual_track = scan_session).
+        # Never fall through to checkout-p1 even if Form bool was missed.
+        manual_scan = True
     det_weight_path: str | None = None
 
     # DEBUG_AI: collects one image per pipeline step and hands the set to a

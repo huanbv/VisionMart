@@ -90,7 +90,6 @@ import {
 } from "@/utils/videoLibrary";
 
 const AI_FRAME_URL = "/ai/ai/frame";
-const AI_RESET_URL = "/ai/ai/reset-session";
 // Đọc từ biến môi trường lúc build (VITE_AI_ENGINE_KEY trong .env) thay vì
 // hardcode literal — key thật không nằm trong lịch sử git. Vẫn nằm trong
 // bundle JS gửi tới trình duyệt (không tránh được vì gọi ai-engine thẳng
@@ -185,7 +184,10 @@ export default function VideoAnalysisPage() {
   const userPausedRef = useRef(false);
   const autoPausingRef = useRef(false);
   const scanSessionRef = useRef<string | null>(null);
+  /** Giữ token để lọc giỏ sau khi Dừng AI (scanSessionRef bị xóa để lần kích hoạt sau là giỏ mới). */
+  const cartSessionFilterRef = useRef<string | null>(null);
   const sendingRef = useRef(false);
+  const activateLockRef = useRef(false);
   const lastDetectionsRef = useRef<any[]>([]);
   const selectedVideoIdRef = useRef<string | undefined>(undefined);
   const videoUrlRef = useRef<string | null>(null);
@@ -479,9 +481,6 @@ export default function VideoAnalysisPage() {
     })();
   }, [branchId]);
 
-  const [hasStartedAnalysis, setHasStartedAnalysis] = useState(false);
-  const videoStartTimeRef = useRef<number | null>(null);
-
   const loadCarts = useCallback(async () => {
     if (!branchId) return;
     setCartsLoading(true);
@@ -491,22 +490,22 @@ export default function VideoAnalysisPage() {
         listCarts({ branch_id: branchId, status: "pending_checkout", limit: 100 }),
       ]);
       const allCarts = [...pendingRes.items, ...activeRes.items];
-
-      if (!hasStartedAnalysis || videoStartTimeRef.current === null) {
+      const sid = cartSessionFilterRef.current;
+      if (!sid) {
         setCarts([]);
       } else {
-        const startTimeIso = new Date(videoStartTimeRef.current - 2000).toISOString();
-        const filteredCarts = allCarts.filter(
-          (c) => (c.created_at && c.created_at >= startTimeIso) || (c.updated_at && c.updated_at >= startTimeIso)
+        // Chỉ giỏ của phiên Phân tích Video — giỏ live `checkout-p1` cùng
+        // camera quầy không được hiện như "hai giỏ từ một khung".
+        setCarts(
+          allCarts.filter((c) => (c.session_id || "").includes(sid)),
         );
-        setCarts(filteredCarts);
       }
     } catch {
       // silent
     } finally {
       setCartsLoading(false);
     }
-  }, [branchId, hasStartedAnalysis]);
+  }, [branchId]);
 
   useEffect(() => {
     loadCarts();
@@ -576,9 +575,8 @@ export default function VideoAnalysisPage() {
     runningRef.current = false;
     setIsRunning(false);
     setIsSending(false);
-    setHasStartedAnalysis(false);
-    videoStartTimeRef.current = null;
     scanSessionRef.current = null;
+    cartSessionFilterRef.current = null;
     if (videoUrlRef.current) URL.revokeObjectURL(videoUrlRef.current);
     const file = new File([row.blob], row.name, { type: row.type || "video/mp4" });
     const url = URL.createObjectURL(row.blob);
@@ -631,6 +629,7 @@ export default function VideoAnalysisPage() {
       runningRef.current = false;
       setIsRunning(false);
       scanSessionRef.current = null;
+      cartSessionFilterRef.current = null;
       if (videoUrlRef.current) URL.revokeObjectURL(videoUrlRef.current);
       setVideoFile(null);
       setVideoUrl(null);
@@ -638,21 +637,6 @@ export default function VideoAnalysisPage() {
       setRoiZones([]);
     }
     message.success("Đã xóa video khỏi thư viện");
-  };
-
-  const resetSession = async (camId?: string) => {
-    try {
-      const form = new FormData();
-      if (camId) form.append("camera_id", camId);
-      await fetch(AI_RESET_URL, {
-        method: "POST",
-        headers: { "X-AI-Engine-Key": AI_ENGINE_KEY },
-        body: form,
-      });
-      addLog("info", "Reset session AI engine", "Gio hang moi se duoc tao cho video nay");
-    } catch {
-      // non-fatal
-    }
   };
 
   const captureAndSendFrame = useCallback(async (): Promise<void> => {
@@ -694,9 +678,11 @@ export default function VideoAnalysisPage() {
     form.append("manual_scan", "true");
     form.append("min_confidence", String(minConfidence));
     form.append("recognize_face", "false");
-    if (scanSessionRef.current) {
-      form.append("scan_session", scanSessionRef.current);
+    if (!scanSessionRef.current) {
+      scanSessionRef.current = `v${Date.now().toString(36)}`;
     }
+    cartSessionFilterRef.current = scanSessionRef.current;
+    form.append("scan_session", scanSessionRef.current);
     if (weightKey && weightKey !== "live") {
       form.append("weight_key", weightKey);
     }
@@ -771,12 +757,17 @@ export default function VideoAnalysisPage() {
       window.setTimeout(done, 800);
     });
 
+  const mintScanSession = () => {
+    if (!scanSessionRef.current) {
+      scanSessionRef.current = `v${Date.now().toString(36)}`;
+    }
+    cartSessionFilterRef.current = scanSessionRef.current;
+  };
+
   const ensureAnalysisSession = async () => {
-    if (scanSessionRef.current) return;
-    const token = `vid-${(selectedVideoId || "tmp").replace(/[^A-Za-z0-9_-]/g, "").slice(0, 40)}-${Date.now().toString(36)}`;
-    scanSessionRef.current = token;
-    videoStartTimeRef.current = Date.now();
-    setHasStartedAnalysis(true);
+    const already = Boolean(scanSessionRef.current);
+    mintScanSession();
+    if (already) return;
     if (cleanBeforeStart && carts.length > 0 && branchId) {
       try {
         await bulkAbandonCarts(carts.map((c) => c.id), branchId);
@@ -786,7 +777,6 @@ export default function VideoAnalysisPage() {
     } else if (cleanBeforeStart) {
       setCarts([]);
     }
-    await resetSession(cameraId);
     setFramesProcessed(0);
     setFramesAccepted(0);
   };
@@ -799,16 +789,22 @@ export default function VideoAnalysisPage() {
       message.warning("Chờ video tải xong, tua tới đoạn cần quét, rồi kích hoạt AI");
       return;
     }
-    await ensureAnalysisSession();
-    video.pause();
-    userPausedRef.current = true;
-    setIsPaused(true);
+    if (activateLockRef.current || sendingRef.current) return;
+    activateLockRef.current = true;
     setIsSending(true);
-    const t = video.currentTime;
-    addLog("info", "⚡ Kích hoạt AI tại khung này", `t=${t.toFixed(1)}s · tạm dừng video · quét vùng thanh toán`);
-    await captureAndSendFrame();
-    setIsSending(false);
-    loadCarts();
+    try {
+      await ensureAnalysisSession();
+      video.pause();
+      userPausedRef.current = true;
+      setIsPaused(true);
+      const t = video.currentTime;
+      await captureAndSendFrame();
+      addLog("info", "⚡ Đã quét khung này", `t=${t.toFixed(1)}s · một giỏ theo vùng thanh toán`);
+      await loadCarts();
+    } finally {
+      activateLockRef.current = false;
+      setIsSending(false);
+    }
   };
 
   const runStepLoop = useCallback(async () => {
@@ -844,6 +840,7 @@ export default function VideoAnalysisPage() {
     const video = videoRef.current;
     if (!video || !videoUrl) { message.warning("Chưa chọn video"); return; }
     if (!organizationId || !branchId) { message.warning("Chưa chọn chi nhánh"); return; }
+    if (activateLockRef.current || runningRef.current || sendingRef.current) return;
     await ensureAnalysisSession();
     video.pause();
     userPausedRef.current = true;
@@ -1301,7 +1298,7 @@ export default function VideoAnalysisPage() {
       {/* Cart list */}
       <Card title={<Space><ShoppingCartOutlined /><Typography.Text strong>Giỏ hàng được tạo từ video</Typography.Text></Space>}>
         {carts.length === 0 ? (
-          <Empty description="Chưa có giỏ hàng. Phân tích video để AI tự động tạo đơn." />
+          <Empty description="Chưa có giỏ từ phiên video này. Tua tới quầy, tạm dừng, rồi Kích hoạt AI." />
         ) : (
           <List
             dataSource={carts}
