@@ -34,6 +34,7 @@ Pipeline (per uploaded frame):
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import math
 import os
@@ -353,6 +354,31 @@ def _resolve_checkout_owner(
     if nearest is None and persons:
         nearest = _closest_visible_person(product_cx, product_cy, persons)
     return nearest
+
+
+def _roi_zones_for_frame(
+    *,
+    skip_roi: bool,
+    override_json: str | None,
+    camera_info: dict[str, Any] | None,
+) -> list:
+    """ROI for one /ai/frame call.
+
+    Video analysis draws a pay zone on the uploaded file (different framing
+    than the live camera). That JSON wins over ``cameras.roi_zones``. Empty
+    override + skip_roi scans the whole still.
+    """
+    if skip_roi:
+        return []
+    if override_json and override_json.strip():
+        try:
+            raw = json.loads(override_json)
+        except (ValueError, TypeError):
+            logger.warning("frame roi_zones form JSON invalid — falling back to camera")
+        else:
+            if isinstance(raw, list) and raw:
+                return zones_from_payload(raw)
+    return zones_from_payload((camera_info or {}).get("roi_zones"))
 
 
 def _checkout_person_session(
@@ -1203,6 +1229,7 @@ async def process_frame(
     min_confidence: float = Form(0.3),
     manual_scan: bool = Form(False),
     skip_roi: bool = Form(False),
+    roi_zones_json: str | None = Form(None, alias="roi_zones"),
     image: UploadFile = File(...),
 ) -> dict[str, Any]:
     frame_started = time.perf_counter()
@@ -1246,10 +1273,13 @@ async def process_frame(
         # the same preprocessed frame YOLO saw, without re-preprocessing.
         # Vung nhan dien ve tren Admin di kem camera_info (da duoc cache
         # 30s trong _fetch_camera) — khong them mot luot goi mang nao.
-        # Quét thủ công từ ảnh upload: bỏ ROI (khung ảnh ≠ camera).
+        # Quét thủ công từ ảnh upload: bỏ ROI (khung ảnh ≠ camera) trừ khi
+        # client gửi roi_zones (Phân tích Video vẽ vùng trên file).
         # Chụp & Quét từ camera live: GIỮ ROI để contour/mì gói chạy trong vùng quầy.
-        roi_zones = [] if skip_roi else zones_from_payload(
-            (camera_info or {}).get("roi_zones")
+        parsed_roi = _roi_zones_for_frame(
+            skip_roi=skip_roi,
+            override_json=roi_zones_json,
+            camera_info=camera_info,
         )
         is_checkout = manual_scan or bool(
             camera_info and camera_info.get("is_checkout_zone")
@@ -1258,7 +1288,7 @@ async def process_frame(
             content,
             camera_key,
             is_checkout_zone=is_checkout,
-            roi_zones=roi_zones,
+            roi_zones=parsed_roi,
             # Checkout / manual scan: dense product pass. Stock weights use
             # blob→crop; deployed bbox weights use full-frame predict.
             dense_detect=is_checkout,

@@ -41,6 +41,7 @@ import {
   message,
 } from "antd";
 import {
+  BorderOuterOutlined,
   CheckCircleOutlined,
   DeleteOutlined,
   PauseCircleOutlined,
@@ -69,6 +70,7 @@ import {
 import { listBranches, getOrganization, type Branch } from "@/api/tenancy";
 import { listCameras, getRoiZones, type Camera, type RoiZone } from "@/api/cameras";
 import { tokenStore } from "@/api/client";
+import RoiZoneEditor from "@/components/RoiZoneEditor";
 
 const AI_FRAME_URL = "/ai/ai/frame";
 const AI_RESET_URL = "/ai/ai/reset-session";
@@ -140,11 +142,53 @@ export default function VideoAnalysisPage() {
   const runningRef = useRef(false);
 
   const [roiZones, setRoiZones] = useState<RoiZone[]>([]);
+  const [roiEditorOpen, setRoiEditorOpen] = useState(false);
+  const [roiSnapshot, setRoiSnapshot] = useState<string | null>(null);
 
-  useEffect(() => {
-    if (!cameraId) { setRoiZones([]); return; }
-    getRoiZones(cameraId).then(setRoiZones).catch(() => setRoiZones([]));
-  }, [cameraId]);
+  const captureVideoSnapshot = useCallback((): string | null => {
+    const video = videoRef.current;
+    const canvas = canvasRef.current;
+    if (!video || !canvas || !video.videoWidth) return null;
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return null;
+    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+    return canvas.toDataURL("image/jpeg", 0.85);
+  }, []);
+
+  const openRoiEditor = () => {
+    if (!videoUrl) {
+      message.warning("Tải video trước, rồi tua tới khung mặt quầy để vẽ vùng");
+      return;
+    }
+    const snap = captureVideoSnapshot();
+    if (!snap) {
+      message.warning("Chờ video tải xong (hoặc bấm play một nhịp) rồi vẽ vùng");
+      return;
+    }
+    videoRef.current?.pause();
+    setIsPaused(true);
+    setRoiSnapshot(snap);
+    setRoiEditorOpen(true);
+  };
+
+  const loadCameraRoi = () => {
+    if (!cameraId) {
+      message.warning("Chọn camera quầy nếu muốn nạp vùng đã lưu");
+      return;
+    }
+    getRoiZones(cameraId)
+      .then((z) => {
+        setRoiZones(z);
+        message.success(
+          z.length
+            ? `Đã nạp ${z.length} vùng từ camera — chỉnh lại nếu góc video khác`
+            : "Camera này chưa có vùng thanh toán",
+        );
+      })
+      .catch(() => message.error("Không tải được vùng camera"));
+  };
 
   const drawDetectionsOverlay = useCallback((detections: any[]) => {
     const video = videoRef.current;
@@ -167,7 +211,7 @@ export default function VideoAnalysisPage() {
     const scaleY = displayH / vidH;
 
     // 1. Vẽ Khu vực thanh toán (ROI Payzone)
-    const zones = roiZones.length > 0 ? roiZones : (selectedCamera?.roi_zones || []);
+    const zones = roiZones;
     zones.forEach((zone) => {
       if (!zone.points || zone.points.length < 3) return;
       ctx.save();
@@ -253,7 +297,12 @@ export default function VideoAnalysisPage() {
       ctx.fillText(labelText, x1 + 6, labelY + 15);
       ctx.restore();
     });
-  }, [roiZones, selectedCamera]);
+  }, [roiZones]);
+
+  useEffect(() => {
+    if (!videoUrl) return;
+    drawDetectionsOverlay([]);
+  }, [roiZones, videoUrl, drawDetectionsOverlay]);
 
   const clearOverlayCanvas = useCallback(() => {
     const overlayCanvas = overlayCanvasRef.current;
@@ -448,6 +497,12 @@ export default function VideoAnalysisPage() {
     form.append("manual_scan", "false");
     form.append("min_confidence", String(minConfidence));
     form.append("recognize_face", "false");
+    if (roiZones.length > 0) {
+      form.append("skip_roi", "false");
+      form.append("roi_zones", JSON.stringify(roiZones));
+    } else {
+      form.append("skip_roi", "true");
+    }
     form.append("image", new File([blob], "frame.jpg", { type: "image/jpeg" }));
 
     try {
@@ -491,7 +546,7 @@ export default function VideoAnalysisPage() {
     } catch (err) {
       addLog("error", "Lỗi gửi frame", String(err));
     }
-  }, [organizationId, branchId, cameraId, addLog, drawDetectionsOverlay]);
+  }, [organizationId, branchId, cameraId, minConfidence, addLog, drawDetectionsOverlay, roiZones]);
 
   const runLoop = useCallback(async () => {
     if (runningRef.current) return;
@@ -637,6 +692,7 @@ export default function VideoAnalysisPage() {
   const totalRevenue = useMemo(() => carts.reduce((sum, c) => sum + Number(c.total_amount || 0), 0), [carts]);
 
   return (
+    <>
     <Space direction="vertical" size="large" style={{ width: "100%" }}>
       {/* Header */}
       <Card>
@@ -701,6 +757,34 @@ export default function VideoAnalysisPage() {
                   {videoFile ? `📹 ${videoFile.name}` : "Chọn file video (MP4, AVI...)"}
                 </Button>
               </Upload>
+
+              <Button
+                icon={<BorderOuterOutlined />}
+                onClick={openRoiEditor}
+                disabled={!videoFile || isRunning}
+                style={{ width: "100%" }}
+              >
+                Vẽ vùng thanh toán trên video
+                {roiZones.length > 0 ? ` (${roiZones.length})` : ""}
+              </Button>
+              <Button
+                size="small"
+                type="link"
+                onClick={loadCameraRoi}
+                disabled={!cameraId || isRunning}
+              >
+                Nạp vùng đã lưu của camera
+              </Button>
+              {roiZones.length > 0 ? (
+                <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                  AI chỉ nhận diện trong {roiZones.length} vùng đã vẽ trên khung video
+                  (không dùng vùng camera live nếu góc máy khác).
+                </Typography.Text>
+              ) : (
+                <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                  Chưa có vùng — AI quét toàn khung. Nên vẽ vùng mặt quầy trước khi phân tích.
+                </Typography.Text>
+              )}
 
               <Card size="small" style={{ background: "#fafafa" }}>
                 <Typography.Text type="secondary" style={{ fontSize: 12 }}>
@@ -835,6 +919,7 @@ export default function VideoAnalysisPage() {
                     controls
                     style={{ width: "100%", maxHeight: 480, display: "block" }}
                     onEnded={() => { if (isRunning) handleStop(); }}
+                    onLoadedData={() => drawDetectionsOverlay([])}
                   />
                   <canvas
                     ref={overlayCanvasRef}
@@ -872,8 +957,9 @@ export default function VideoAnalysisPage() {
                 message="Hướng dẫn sử dụng"
                 description={
                   <ol style={{ margin: 0, paddingLeft: 18, fontSize: 13 }}>
-                    <li>Chọn chi nhánh và camera quầy thanh toán</li>
-                    <li>Nhấn <strong>"Chọn file video"</strong> để tải video lên (test.mp4 hoặc bất kỳ)</li>
+                    <li>Chọn chi nhánh và camera quầy (để ghi giỏ vào đúng chi nhánh)</li>
+                    <li>Nhấn <strong>"Chọn file video"</strong> để tải video lên</li>
+                    <li>Tua tới khung thấy mặt quầy, nhấn <strong>"Vẽ vùng thanh toán trên video"</strong> — AI chỉ quét trong vùng đó</li>
                     <li>Chọn tần suất gửi frame (2s phù hợp với hầu hết video)</li>
                     <li>Nhấn <strong>"▶ Bắt đầu phân tích"</strong> — AI quét từng frame tự động</li>
                     <li>Sản phẩm được nhận diện sẽ tự thêm vào giỏ hàng bên dưới</li>
@@ -1009,5 +1095,19 @@ export default function VideoAnalysisPage() {
         )}
       </Card>
     </Space>
+      <RoiZoneEditor
+        camera={selectedCamera ?? null}
+        open={roiEditorOpen}
+        onClose={() => setRoiEditorOpen(false)}
+        persistToCamera={false}
+        snapshotSrc={roiSnapshot}
+        initialZones={roiZones}
+        title="Vẽ vùng thanh toán trên video"
+        onApply={(zones) => {
+          setRoiZones(zones);
+          drawDetectionsOverlay([]);
+        }}
+      />
+    </>
   );
 }

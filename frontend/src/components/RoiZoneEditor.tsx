@@ -45,6 +45,11 @@ export default function RoiZoneEditor({
   open,
   onClose,
   onSaved,
+  snapshotSrc,
+  initialZones,
+  persistToCamera = true,
+  onApply,
+  title,
 }: {
   camera: Camera | null;
   open: boolean;
@@ -53,6 +58,13 @@ export default function RoiZoneEditor({
    *  nếu không, cột "Vùng nhận diện" và overlay xem trực tiếp vẫn dùng dữ
    *  liệu cũ cho tới khi người dùng tự tải lại trang. */
   onSaved?: () => void;
+  /** Ảnh nền sẵn (khung video). Khi có thì không chụp camera. */
+  snapshotSrc?: string | null;
+  initialZones?: RoiZone[];
+  /** false = chỉ dùng vùng cho phiên hiện tại, không ghi vào camera. */
+  persistToCamera?: boolean;
+  onApply?: (zones: RoiZone[]) => void;
+  title?: string;
 }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const imgRef = useRef<HTMLImageElement | null>(null);
@@ -78,8 +90,36 @@ export default function RoiZoneEditor({
   // useEffect bên dưới lo việc vẽ, luôn với `zones` mới nhất.
   const [imgEpoch, setImgEpoch] = useState(0);
 
+  const applySnapshot = useCallback((src: string, epoch: number) => {
+    const img = new Image();
+    img.onload = () => {
+      if (epoch !== epochRef.current) return;
+      imgRef.current = img;
+      const cv = canvasRef.current;
+      if (cv && img.naturalWidth && img.naturalHeight) {
+        cv.width = img.naturalWidth;
+        cv.height = img.naturalHeight;
+      }
+      setLoading(false);
+      setImgEpoch((n) => n + 1);
+    };
+    img.onerror = () => {
+      if (epoch !== epochRef.current) return;
+      setSnapshotErr("Không đọc được ảnh nền để vẽ vùng.");
+      setLoading(false);
+    };
+    img.src = src;
+  }, []);
+
   // ---- tải ảnh nền + vùng đã lưu -----------------------------------
   const loadSnapshot = useCallback(async () => {
+    if (snapshotSrc) {
+      const myEpoch = epochRef.current;
+      setLoading(true);
+      setSnapshotErr(null);
+      applySnapshot(snapshotSrc, myEpoch);
+      return;
+    }
     if (!camera) return;
     const myEpoch = epochRef.current;
     setLoading(true);
@@ -119,28 +159,28 @@ export default function RoiZoneEditor({
       );
       setLoading(false);
     }
-  }, [camera]);
+  }, [camera, snapshotSrc, applySnapshot]);
 
   useEffect(() => {
-    if (!open || !camera) return;
+    if (!open) return;
+    if (persistToCamera && !camera) return;
     const myEpoch = ++epochRef.current;
     setDraft([]);
-    setDraftName("");
+    setDraftName(persistToCamera ? "" : "Vùng Thanh Toán");
     imgRef.current = null;
-    // Xoá vùng của camera trước ngay lập tức. Nếu để nguyên chờ API trả
-    // về, người dùng sẽ thấy vùng của camera khác trong khoảnh khắc đó và
-    // tưởng mình đã vẽ sai chỗ.
-    setZones([]);
+    setZones(initialZones ? [...initialZones] : []);
     setImgEpoch((n) => n + 1);
-    getRoiZones(camera.id)
-      .then((z) => {
-        if (myEpoch === epochRef.current) setZones(z);
-      })
-      .catch(() => {
-        if (myEpoch === epochRef.current) setZones([]);
-      });
+    if (persistToCamera && camera) {
+      getRoiZones(camera.id)
+        .then((z) => {
+          if (myEpoch === epochRef.current) setZones(z);
+        })
+        .catch(() => {
+          if (myEpoch === epochRef.current) setZones([]);
+        });
+    }
     void loadSnapshot();
-  }, [open, camera, loadSnapshot]);
+  }, [open, camera, loadSnapshot, persistToCamera, snapshotSrc]);
 
   // ---- vẽ ------------------------------------------------------------
   const redraw = useCallback(() => {
@@ -231,10 +271,20 @@ export default function RoiZoneEditor({
     }
     setZones((z) => [...z, { name, type: draftType, points: draft }]);
     setDraft([]);
-    setDraftName("");
+    setDraftName(persistToCamera ? "" : "Vùng Thanh Toán");
   };
 
   const onSave = async () => {
+    if (!persistToCamera) {
+      onApply?.(zones);
+      message.success(
+        zones.length
+          ? `Dùng ${zones.length} vùng cho video này — AI chỉ nhận diện trong vùng.`
+          : "Không có vùng — AI quét toàn khung video.",
+      );
+      onClose();
+      return;
+    }
     if (!camera) return;
     setSaving(true);
     try {
@@ -255,12 +305,12 @@ export default function RoiZoneEditor({
 
   return (
     <Modal
-      title={`Vẽ vùng nhận diện — ${camera?.name ?? ""}`}
+      title={title ?? `Vẽ vùng nhận diện — ${camera?.name ?? ""}`}
       open={open}
       onCancel={onClose}
       width={980}
       onOk={onSave}
-      okText="Lưu vùng"
+      okText={persistToCamera ? "Lưu vùng" : "Dùng vùng này"}
       confirmLoading={saving}
     >
       <Alert
@@ -268,7 +318,11 @@ export default function RoiZoneEditor({
         showIcon
         style={{ marginBottom: 12 }}
         message="Bấm lần lượt lên ảnh để tạo các đỉnh của vùng, đặt tên rồi bấm “Hoàn tất vùng”."
-        description="Hệ thống sẽ che mọi thứ nằm ngoài các vùng đã vẽ trước khi đưa vào nhận diện, nên kệ hàng phía sau hay người qua lại không còn bị tính nhầm. Nếu không vẽ vùng nào, camera vẫn quét toàn khung hình như trước."
+        description={
+          persistToCamera
+            ? "Hệ thống sẽ che mọi thứ nằm ngoài các vùng đã vẽ trước khi đưa vào nhận diện, nên kệ hàng phía sau hay người qua lại không còn bị tính nhầm. Nếu không vẽ vùng nào, camera vẫn quét toàn khung hình như trước."
+            : "Vùng chỉ áp dụng cho video đang phân tích, không ghi đè vùng camera live. Toạ độ theo khung video (phân số 0–1)."
+        }
       />
 
       {snapshotErr && (
@@ -320,7 +374,7 @@ export default function RoiZoneEditor({
               Bỏ điểm cuối
             </Button>
             <Button icon={<ReloadOutlined />} onClick={loadSnapshot}>
-              Chụp lại ảnh
+              {persistToCamera ? "Chụp lại ảnh" : "Tải lại khung"}
             </Button>
           </Space>
         </div>

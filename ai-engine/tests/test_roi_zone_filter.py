@@ -51,3 +51,37 @@ def test_dense_tiles_stay_inside_roi():
         assert oy >= 20
         assert ox < 200
         assert oy < 80
+
+
+def test_frame_override_roi_beats_camera_zones():
+    from app.api.frame import _roi_zones_for_frame
+
+    camera = {
+        "roi_zones": [
+            {
+                "name": "cam",
+                "type": "checkout",
+                "points": [[0.0, 0.0], [0.2, 0.0], [0.2, 0.2], [0.0, 0.2]],
+            }
+        ]
+    }
+    override = (
+        '[{"name":"video","type":"checkout",'
+        '"points":[[0.5,0.5],[1,0.5],[1,1],[0.5,1]]}]'
+    )
+    zones = _roi_zones_for_frame(
+        skip_roi=False, override_json=override, camera_info=camera
+    )
+    assert len(zones) == 1
+    assert zones[0].name == "video"
+
+
+def test_frame_skip_roi_ignores_override_and_camera():
+    from app.api.frame import _roi_zones_for_frame
+
+    zones = _roi_zones_for_frame(
+        skip_roi=True,
+        override_json='[{"name":"x","type":"checkout","points":[[0,0],[1,0],[1,1]]}]',
+        camera_info={"roi_zones": [{"name": "cam", "type": "checkout", "points": [[0, 0], [1, 0], [1, 1]]}]},
+    )
+    assert zones == []
