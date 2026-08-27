@@ -9,8 +9,11 @@ import {
   Card,
   Col,
   Collapse,
+  Divider,
   Empty,
   Image,
+  List,
+  Popconfirm,
   Progress,
   Row,
   Select,
@@ -19,16 +22,22 @@ import {
   Steps,
   Tag,
   Timeline,
+  Tooltip,
   Typography,
   Upload,
   message,
 } from "antd";
 import {
   CameraOutlined,
+  CheckCircleOutlined,
   CloudUploadOutlined,
   CopyOutlined,
+  DeleteOutlined,
   DownloadOutlined,
   PrinterOutlined,
+  QrcodeOutlined,
+  ReloadOutlined,
+  ShoppingCartOutlined,
 } from "@ant-design/icons";
 import { isAxiosError } from "axios";
 
@@ -45,10 +54,22 @@ import {
   type PipelineTraceResult,
   type TraceStage,
 } from "@/api/cameras";
-import { getCart, listCarts, type Cart } from "@/api/carts";
+import {
+  abandonCart,
+  cancelCheckout,
+  checkoutCart,
+  confirmCheckoutStaff,
+  getCart,
+  getCheckoutQr,
+  removeCartLine,
+  type Cart,
+  type CartCheckoutQrResponse,
+  type CartLine,
+} from "@/api/carts";
 import { listTrainingJobs, type TrainingJob } from "@/api/aiTraining";
 import { listModels } from "@/api/aiReview";
 import CartLinePhoto from "@/components/CartLinePhoto";
+import CartLineSkuButton from "@/components/CartLineSkuButton";
 import {
   formatAlgorithmMarkdown,
   formatAppendixMarkdown,
@@ -86,6 +107,20 @@ function jobSelectLabel(job: TrainingJob): string {
 function fileName(path: string | null | undefined): string {
   if (!path) return "";
   return path.split(/[\\/]/).pop() || path;
+}
+
+function formatMoney(amount: string, currency: string): string {
+  const value = Number(amount);
+  if (!Number.isFinite(value)) return `${amount} ${currency}`;
+  try {
+    return new Intl.NumberFormat("vi-VN", {
+      style: "currency",
+      currency: currency || "VND",
+      maximumFractionDigits: 0,
+    }).format(value);
+  } catch {
+    return `${value.toLocaleString("vi-VN")} ${currency}`;
+  }
 }
 
 function describeDetector(
@@ -237,6 +272,8 @@ export default function ImageScanPage() {
   const [analyze, setAnalyze] = useState<AnalyzeResult | null>(null);
   const [debugSteps, setDebugSteps] = useState<DebugStep[]>([]);
   const [carts, setCarts] = useState<Cart[]>([]);
+  const [qrByCart, setQrByCart] = useState<Record<string, CartCheckoutQrResponse>>({});
+  const scanCartIdsRef = useRef<string[]>([]);
   const [logs, setLogs] = useState<ScanLog[]>([]);
   const [traceHint, setTraceHint] = useState<string | null>(null);
   const [failed, setFailed] = useState(false);
@@ -331,6 +368,106 @@ export default function ImageScanPage() {
     setStageUrls(next);
   };
 
+  const loadScanCarts = useCallback(async () => {
+    const ids = scanCartIdsRef.current;
+    if (!ids.length) {
+      setCarts([]);
+      return;
+    }
+    const loaded = await Promise.all(
+      ids.map(async (id) => {
+        try {
+          return await getCart(id);
+        } catch {
+          return null;
+        }
+      }),
+    );
+    setCarts(loaded.filter((c): c is Cart => Boolean(c)));
+  }, []);
+
+  useEffect(() => {
+    scanCartIdsRef.current = [];
+    setCarts([]);
+    setQrByCart({});
+  }, [branchId]);
+
+  const onCheckout = async (cart: Cart) => {
+    try {
+      const res = await checkoutCart(cart.id);
+      message.success(`Đã tạo đơn ${res.order_code}`);
+      await loadScanCarts();
+    } catch (err) {
+      message.error(
+        isAxiosError(err) && err.response?.data?.detail
+          ? String(err.response.data.detail)
+          : "Không thể checkout",
+      );
+    }
+  };
+
+  const onAbandon = async (cart: Cart) => {
+    try {
+      await abandonCart(cart.id);
+      message.success("Đã hủy giỏ hàng");
+      await loadScanCarts();
+    } catch {
+      message.error("Không thể hủy giỏ hàng");
+    }
+  };
+
+  const onRemoveLine = async (cart: Cart, lineId: string) => {
+    try {
+      await removeCartLine(cart.id, lineId);
+      await loadScanCarts();
+    } catch {
+      message.error("Không xóa được sản phẩm");
+    }
+  };
+
+  const onShowQr = async (cart: Cart) => {
+    try {
+      const qr = await getCheckoutQr(cart.id);
+      setQrByCart((prev) => ({ ...prev, [cart.id]: qr }));
+    } catch {
+      message.error("Không tải được mã QR");
+    }
+  };
+
+  const onConfirmStaff = async (cart: Cart) => {
+    try {
+      const res = await confirmCheckoutStaff(cart.id);
+      message.success(`Đã xác nhận — đơn ${res.order_code}`);
+      setQrByCart((prev) => {
+        const n = { ...prev };
+        delete n[cart.id];
+        return n;
+      });
+      await loadScanCarts();
+    } catch (err) {
+      message.error(
+        isAxiosError(err) && err.response?.data?.detail
+          ? String(err.response.data.detail)
+          : "Không thể xác nhận",
+      );
+    }
+  };
+
+  const onCancelCheckout = async (cart: Cart) => {
+    try {
+      await cancelCheckout(cart.id);
+      setQrByCart((prev) => {
+        const n = { ...prev };
+        delete n[cart.id];
+        return n;
+      });
+      message.info("Đã huỷ chờ xác nhận");
+      await loadScanCarts();
+    } catch {
+      message.error("Không thể huỷ");
+    }
+  };
+
   const runScan = async (file: File, source: "upload" | "live") => {
     if (!cameraId) {
       message.warning("Chọn camera (chi nhánh) trước");
@@ -341,7 +478,6 @@ export default function ImageScanPage() {
     setTrace(null);
     setAnalyze(null);
     setDebugSteps([]);
-    setCarts([]);
     setTraceHint(null);
     revokeStages();
     if (previewRef.current) URL.revokeObjectURL(previewRef.current);
@@ -420,21 +556,15 @@ export default function ImageScanPage() {
             .filter((id): id is string => Boolean(id)),
         ),
       ];
-      if (cartIds[0]) {
-        try {
-          const cart = await getCart(cartIds[0]);
-          setCarts([cart]);
-          addLog(PHASES[3], "ok", `Giỏ ${cart.id.slice(0, 8)} · ${cart.lines.length} dòng`);
-        } catch {
-          addLog(PHASES[3], "warn", "Có cart_id nhưng không tải được giỏ");
-        }
-      } else if (branchId) {
-        const [active, pending] = await Promise.all([
-          listCarts({ branch_id: branchId, status: "active", limit: 8 }),
-          listCarts({ branch_id: branchId, status: "pending_checkout", limit: 8 }),
-        ]);
-        setCarts([...pending.items, ...active.items].slice(0, 4));
-        addLog(PHASES[3], "ok", "Đã ghi giỏ (nếu SKU khớp catalog)");
+      if (cartIds.length) {
+        scanCartIdsRef.current = [...new Set([...scanCartIdsRef.current, ...cartIds])];
+      }
+      await loadScanCarts();
+      const n = scanCartIdsRef.current.length;
+      if (cartIds.length) {
+        addLog(PHASES[3], "ok", `${cartIds.length} giỏ mới · tổng ${n} giỏ từ hình ảnh trên trang này`);
+      } else if (n) {
+        addLog(PHASES[3], "warn", `Ảnh này không tạo giỏ mới · vẫn còn ${n} giỏ trên trang`);
       } else {
         addLog(PHASES[3], "warn", "Không có giỏ — SKU chưa khớp catalog hoặc pipeline lỗi");
       }
@@ -541,6 +671,15 @@ export default function ImageScanPage() {
     [appendixSections],
   );
 
+  const totalRevenue = useMemo(
+    () => carts.reduce((sum, c) => sum + Number(c.total_amount || 0), 0),
+    [carts],
+  );
+  const totalLines = useMemo(
+    () => carts.reduce((sum, c) => sum + (c.lines?.length ?? 0), 0),
+    [carts],
+  );
+
   return (
     <Space direction="vertical" size="large" style={{ width: "100%" }} className="image-scan-lab">
       <style>{`
@@ -554,6 +693,7 @@ export default function ImageScanPage() {
           white-space: pre-wrap;
           word-break: break-word;
         }
+        .image-scan-qr svg { width: 100%; height: 100%; display: block; }
         @media print {
           .no-print, .ant-layout-sider, .ant-layout-header, .ant-layout-footer { display: none !important; }
           .ant-layout, .ant-layout-content { margin: 0 !important; padding: 0 !important; }
@@ -570,6 +710,7 @@ export default function ImageScanPage() {
           Tải một ảnh quầy (hoặc chụp live). Chọn <strong>Train AI</strong> (crop 1 SKU) hoặc{" "}
           <strong>Train từ nhãn bbox</strong> để so sánh; mặc định là model đang triển khai (live).
           Hệ thống ghi từng bước OpenCV rồi YOLO / crop / SKU kèm ảnh, tên thuật toán và mã nguồn.
+          Giỏ tạo từ ảnh nằm riêng phía dưới — không lẫn giỏ live của quầy.
         </Paragraph>
       </div>
 
@@ -840,27 +981,232 @@ export default function ImageScanPage() {
               </Tag>
             ))}
           </Space>
-          {carts[0] && (
-            <div style={{ marginTop: 16 }}>
-              <Text strong>
-                Giỏ {carts[0].id.slice(0, 8)} · {carts[0].status}
-              </Text>
-              <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginTop: 8 }}>
-                {carts[0].lines.map((line) => (
-                  <Space key={line.line_id} direction="vertical" size={4} align="center">
-                    {line.has_photo ? (
-                      <CartLinePhoto cartId={carts[0]!.id} lineId={line.line_id} size={72} alt={line.product_name} />
-                    ) : null}
-                    <Text style={{ fontSize: 12 }}>
-                      {line.product_name} ({line.sku})
-                    </Text>
-                  </Space>
-                ))}
-              </div>
-            </div>
-          )}
         </Card>
       )}
+
+      <Row gutter={16}>
+        <Col span={8}>
+          <Card>
+            <Statistic title="Giỏ hàng từ hình ảnh" value={carts.length} prefix={<ShoppingCartOutlined />} />
+          </Card>
+        </Col>
+        <Col span={8}>
+          <Card>
+            <Statistic
+              title="Tổng giá trị chờ thanh toán"
+              value={totalRevenue}
+              formatter={(v) =>
+                new Intl.NumberFormat("vi-VN", {
+                  style: "currency",
+                  currency: "VND",
+                  maximumFractionDigits: 0,
+                }).format(Number(v))
+              }
+            />
+          </Card>
+        </Col>
+        <Col span={8}>
+          <Card>
+            <Statistic title="Tổng sản phẩm trong giỏ" value={totalLines} prefix={<CheckCircleOutlined />} />
+          </Card>
+        </Col>
+      </Row>
+
+      <Card
+        className="print-break"
+        title={
+          <Space>
+            <ShoppingCartOutlined />
+            <Typography.Text strong>Giỏ hàng được tạo từ hình ảnh</Typography.Text>
+          </Space>
+        }
+        extra={
+          <Button
+            className="no-print"
+            size="small"
+            icon={<ReloadOutlined />}
+            onClick={() => void loadScanCarts()}
+            disabled={busy}
+          >
+            Làm mới
+          </Button>
+        }
+      >
+        {carts.length === 0 ? (
+          <Empty description="Chưa có giỏ từ ảnh đã quét trên trang này. Tải ảnh (SKU khớp catalog) rồi quét." />
+        ) : (
+          <List
+            dataSource={carts}
+            renderItem={(cart) => (
+              <List.Item key={cart.id}>
+                <Card
+                  size="small"
+                  style={{ width: "100%", borderRadius: 8 }}
+                  title={
+                    <Space>
+                      <Tag
+                        color={
+                          cart.status === "active"
+                            ? "green"
+                            : cart.status === "pending_checkout"
+                              ? "orange"
+                              : "default"
+                        }
+                      >
+                        {cart.status === "active"
+                          ? "ACTIVE"
+                          : cart.status === "pending_checkout"
+                            ? "CHỜ XÁC NHẬN"
+                            : cart.status}
+                      </Tag>
+                      <Typography.Text style={{ fontSize: 12, color: "#888" }}>
+                        {cart.id.slice(0, 8)}
+                      </Typography.Text>
+                      <Tag color="purple">{cart.session_id ?? "ảnh"}</Tag>
+                    </Space>
+                  }
+                  extra={
+                    <Space size="small" className="no-print">
+                      {cart.status === "active" && (
+                        <>
+                          <Tooltip title="Thanh toán ngay">
+                            <Button
+                              size="small"
+                              type="primary"
+                              icon={<CheckCircleOutlined />}
+                              onClick={() => void onCheckout(cart)}
+                            >
+                              Checkout
+                            </Button>
+                          </Tooltip>
+                          <Tooltip title="Xem QR xác nhận">
+                            <Button size="small" icon={<QrcodeOutlined />} onClick={() => void onShowQr(cart)} />
+                          </Tooltip>
+                          <Popconfirm
+                            title="Hủy giỏ hàng?"
+                            onConfirm={() => void onAbandon(cart)}
+                            okText="Hủy"
+                            cancelText="Không"
+                          >
+                            <Button size="small" danger icon={<DeleteOutlined />} />
+                          </Popconfirm>
+                        </>
+                      )}
+                      {cart.status === "pending_checkout" && (
+                        <>
+                          <Button
+                            size="small"
+                            type="primary"
+                            icon={<CheckCircleOutlined />}
+                            onClick={() => void onConfirmStaff(cart)}
+                          >
+                            Xác nhận hộ
+                          </Button>
+                          <Button size="small" onClick={() => void onCancelCheckout(cart)}>
+                            Huỷ chờ
+                          </Button>
+                        </>
+                      )}
+                    </Space>
+                  }
+                >
+                  {qrByCart[cart.id] && (
+                    <div style={{ textAlign: "center", marginBottom: 8 }}>
+                      <div
+                        className="image-scan-qr"
+                        style={{ width: 100, height: 100, margin: "0 auto" }}
+                        // eslint-disable-next-line react/no-danger
+                        dangerouslySetInnerHTML={{ __html: qrByCart[cart.id].qr_svg }}
+                      />
+                      <Typography.Text copyable style={{ fontSize: 11 }}>
+                        {qrByCart[cart.id].confirm_url}
+                      </Typography.Text>
+                    </div>
+                  )}
+                  {(cart.lines || []).length === 0 ? (
+                    <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                      Giỏ trống
+                    </Typography.Text>
+                  ) : (
+                    <List
+                      size="small"
+                      dataSource={cart.lines}
+                      renderItem={(line: CartLine) => (
+                        <List.Item
+                          key={line.line_id}
+                          extra={
+                            <Space>
+                              <Typography.Text strong style={{ fontSize: 12 }}>
+                                {formatMoney(line.subtotal, cart.currency)}
+                              </Typography.Text>
+                              {cart.status === "active" && (
+                                <>
+                                  <CartLineSkuButton cart={cart} line={line} onDone={() => void loadScanCarts()} />
+                                  <Tooltip title="Xóa dòng">
+                                    <Button
+                                      size="small"
+                                      danger
+                                      icon={<DeleteOutlined />}
+                                      onClick={() => void onRemoveLine(cart, line.line_id)}
+                                    />
+                                  </Tooltip>
+                                </>
+                              )}
+                            </Space>
+                          }
+                        >
+                          <List.Item.Meta
+                            avatar={
+                              line.has_photo ? (
+                                <CartLinePhoto
+                                  cartId={cart.id}
+                                  lineId={line.line_id}
+                                  size={56}
+                                  alt={line.product_name || line.sku}
+                                />
+                              ) : undefined
+                            }
+                            title={
+                              <Space size="small" wrap>
+                                <Typography.Text strong style={{ fontSize: 13 }}>
+                                  {line.product_name}
+                                </Typography.Text>
+                                <Tag color="blue" style={{ fontWeight: 600 }}>
+                                  {line.sku}
+                                </Tag>
+                                <Tag>x{line.quantity}</Tag>
+                                {line.added_via === "staff_correction" && <Tag color="green">Admin sửa</Tag>}
+                                {line.added_via === "ai" && line.confidence != null && line.confidence < 0.7 && (
+                                  <Tooltip title={`Độ tin cậy AI: ${(line.confidence * 100).toFixed(0)}%`}>
+                                    <Tag color="orange">⚠️ {(line.confidence * 100).toFixed(0)}%</Tag>
+                                  </Tooltip>
+                                )}
+                              </Space>
+                            }
+                          />
+                        </List.Item>
+                      )}
+                    />
+                  )}
+                  <Divider style={{ margin: "8px 0" }} />
+                  <Row justify="space-between">
+                    <Col>
+                      <Typography.Text type="secondary" style={{ fontSize: 11 }}>
+                        {cart.lines?.length ?? 0} sản phẩm
+                      </Typography.Text>
+                    </Col>
+                    <Col>
+                      <Typography.Text strong>
+                        Tổng: {formatMoney(cart.total_amount, cart.currency)}
+                      </Typography.Text>
+                    </Col>
+                  </Row>
+                </Card>
+              </List.Item>
+            )}
+          />
+        )}
+      </Card>
 
       {appendixSections.length > 0 && (
         <Card
