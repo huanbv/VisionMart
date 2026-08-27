@@ -81,6 +81,17 @@ def test_sticky_holds_when_yolo_flips_without_color():
     assert out[0].class_name == "du_7u"
 
 
+def test_live_7up_box_beats_sticky_sting_without_color():
+    """HUD 7Up must not wait for a green color vote after a Sting slot."""
+    reset_slots()
+    gray = np.full((400, 400, 3), 80, dtype=np.uint8)
+    stabilize_lookalikes("cam-7up-now", [_box("du_sti", 0.50, 100, 80, 160, 280)], gray, now=1.0)
+    out = stabilize_lookalikes(
+        "cam-7up-now", [_box("du_7u", 0.48, 102, 82, 158, 278, tid=2)], gray, now=1.3
+    )
+    assert out[0].class_name == "du_7u"
+
+
 def test_overlapping_7up_and_sting_collapse_to_color_winner():
     reset_slots()
     frame = np.full((400, 400, 3), 30, dtype=np.uint8)
@@ -184,3 +195,33 @@ def test_bridge_lookalike_updates_sku_for_cart():
     assert hit == "DU-STI:1:1"
     frame_mod._PHYSICAL_PRODUCTS.pop("cam-flip-sku", None)
     frame_mod._CHECKOUT_SCANNED.pop("cam-flip-sku:person-1", None)
+
+
+def test_same_track_lookalike_flip_reopens_cart_line():
+    """ByteTrack keeping the same id must still swap Sting → 7Up in the cart."""
+    from app.api import frame as frame_mod
+
+    camera_key = "cam-same-track"
+    logical_id = "DU-STI:7:1"
+    frame_mod._PHYSICAL_PRODUCTS[camera_key] = {
+        logical_id: {
+            "sku": "DU-STI",
+            "cx": 200.0,
+            "cy": 200.0,
+            "last_seen": 50.0,
+            "counted": True,
+            "session_key": "person-7",
+            "current_track_id": 7,
+        }
+    }
+    frame_mod._CHECKOUT_SCANNED[f"{camera_key}:person-7"] = {
+        "DU-STI": {"logical_ids": {logical_id}},
+    }
+    pp = frame_mod._PHYSICAL_PRODUCTS[camera_key][logical_id]
+    frame_mod._maybe_flip_lookalike_sku(camera_key, logical_id, pp, "DU-7U")
+    assert pp["sku"] == "DU-7U"
+    assert pp["counted"] is False
+    assert pp["pending_return_sku"] == "DU-STI"
+    assert logical_id not in frame_mod._CHECKOUT_SCANNED[f"{camera_key}:person-7"]["DU-STI"]["logical_ids"]
+    frame_mod._PHYSICAL_PRODUCTS.pop(camera_key, None)
+    frame_mod._CHECKOUT_SCANNED.pop(f"{camera_key}:person-7", None)

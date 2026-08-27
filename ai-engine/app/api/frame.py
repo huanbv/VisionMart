@@ -854,6 +854,38 @@ def _nearest_person_for_product(
     return None
 
 
+def _maybe_flip_lookalike_sku(
+    camera_key: str,
+    logical_id: str,
+    pp: dict[str, Any],
+    sku: str,
+) -> None:
+    """When YOLO/color revises 7Up vs Sting on the SAME track, update the cart.
+
+    Lookalike SKU used to change only on ByteTrack reconnect (new track_id).
+    A bottle that stays tracked as Sting then becomes 7Up on the HUD never
+    emitted product_returned + product_scanned, so the live label and the
+    open cart disagreed for several seconds.
+    """
+    old_sku = pp.get("sku")
+    if not sku or sku == old_sku:
+        return
+    if not skus_are_lookalikes(str(old_sku or ""), sku):
+        return
+    logger.warning(
+        "CHECKOUT LOOKALIKE SKU: %s -> %s logical=%s (cap nhat gio, khong giu Sting khi da la 7Up)",
+        old_sku, sku, logical_id,
+    )
+    if pp.get("counted") and pp.get("session_key"):
+        scanned_key = f"{camera_key}:{pp['session_key']}"
+        bucket = _CHECKOUT_SCANNED.get(scanned_key, {}).get(old_sku)
+        if bucket and logical_id in bucket.get("logical_ids", ()):
+            bucket["logical_ids"].discard(logical_id)
+        pp["pending_return_sku"] = old_sku
+        pp["counted"] = False
+    pp["sku"] = sku
+
+
 def _find_bridge_match(
     camera_key: str, sku: str, cx: float, cy: float, now: float, claimed_this_frame: set[str]
 ) -> str | None:
@@ -1481,6 +1513,7 @@ async def process_frame(
             logical_id = alias.get(product.track_id)
             if logical_id is not None and logical_id in phys:
                 pp = phys[logical_id]
+                _maybe_flip_lookalike_sku(camera_key, logical_id, pp, sku)
                 pp["current_track_id"] = product.track_id
                 pp["cx"], pp["cy"] = product.cx, product.cy
                 pp["last_seen"] = now
@@ -1499,20 +1532,7 @@ async def process_frame(
             )
             if bridged_id is not None:
                 pp = phys[bridged_id]
-                if sku != pp["sku"] and skus_are_lookalikes(pp["sku"], sku):
-                    old_sku = pp["sku"]
-                    logger.warning(
-                        "CHECKOUT LOOKALIKE SKU: %s -> %s logical=%s (cap nhat gio, khong giu Sting khi da la 7Up)",
-                        old_sku, sku, bridged_id,
-                    )
-                    if pp.get("counted") and pp.get("session_key"):
-                        scanned_key = f"{camera_key}:{pp['session_key']}"
-                        bucket = _CHECKOUT_SCANNED.get(scanned_key, {}).get(old_sku)
-                        if bucket and bridged_id in bucket.get("logical_ids", ()):
-                            bucket["logical_ids"].discard(bridged_id)
-                        pp["pending_return_sku"] = old_sku
-                        pp["counted"] = False
-                    pp["sku"] = sku
+                _maybe_flip_lookalike_sku(camera_key, bridged_id, pp, sku)
                 pp["current_track_id"] = product.track_id
                 pp["cx"], pp["cy"] = product.cx, product.cy
                 pp["last_seen"] = now

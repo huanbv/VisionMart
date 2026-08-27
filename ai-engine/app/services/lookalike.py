@@ -226,10 +226,12 @@ def _resolve_class(
     ratio: float,
     slot: dict[str, Any] | None,
 ) -> str:
-    """Strong color may flip; YOLO+color agreement beats a stale sticky SKU.
+    """Strong color may flip; a live 7Up box must not stay hidden behind Sting.
 
-    Sting (red) wins the first frames under warm light; 7Up then sits in the
-    same slot for 10s unless green is allowed to override.
+    Warm LEDs make the first frames look red, so the spatial slot often
+    stores Sting. Strong color still wins (a red crop is Sting even if YOLO
+    said 7Up). Sticky still blocks a lone Sting flicker. A live ``du_7u``
+    box with no color vote is shown and carted immediately.
     """
     yolo_cls = str(yolo_cls).strip().lower()
     hint_cls = str(hint).strip().lower() if hint else None
@@ -238,6 +240,8 @@ def _resolve_class(
         return yolo_cls
     if strong:
         return str(hint_cls)
+    if yolo_cls == "du_7u":
+        return "du_7u"
     if slot:
         return str(slot["class_name"])
     if hint_cls:
