@@ -4,9 +4,11 @@
  * Cơ chế:
  *  1. Người dùng upload video (MP4/AVI/MOV...).
  *  2. Video phát trong <video>; mỗi N giây, canvas chụp frame hiện tại → Blob JPEG.
- *  3. Blob được gửi lên POST /ai/ai/frame (manual_scan=true).
- *  4. Backend nhận events → tạo giỏ hàng → WebSocket thông báo → danh sách giỏ cập nhật.
- *  5. Nút Dừng dừng vòng lặp gửi frame.
+ *  3. Blob được gửi lên POST /ai/ai/frame (manual_scan=false, optional weight_key).
+ *  4. Mặc định tạm dừng phát khi đang chờ AI, rồi chạy tiếp — inference chậm
+ *     hơn 1× không bỏ khung. Nút Tạm dừng vẫn gửi khung đang đóng băng.
+ *  5. Backend nhận events → tạo giỏ hàng → WebSocket thông báo → danh sách giỏ cập nhật.
+ *  6. Nút Dừng dừng vòng lặp gửi frame.
  */
 
 import {
@@ -71,6 +73,7 @@ import { listBranches, getOrganization, type Branch } from "@/api/tenancy";
 import { listCameras, getRoiZones, type Camera, type RoiZone } from "@/api/cameras";
 import { tokenStore } from "@/api/client";
 import RoiZoneEditor from "@/components/RoiZoneEditor";
+import { listTrainingJobs, type TrainingJob } from "@/api/aiTraining";
 
 const AI_FRAME_URL = "/ai/ai/frame";
 const AI_RESET_URL = "/ai/ai/reset-session";
@@ -87,6 +90,26 @@ const IGNORED_COCO_CLASSES = new Set([
   "chair", "cat", "dog", "book", "table", "couch", "tv", "laptop",
   "potted plant", "cell phone", "remote", "keyboard", "mouse", "dining table", "bed", "toilet", "refrigerator"
 ]);
+
+function jobKind(job: TrainingJob): "bbox" | "crop" {
+  return job.class_map?.["mode"] === "labeled_scenes" ? "bbox" : "crop";
+}
+
+function jobMetricHint(job: TrainingJob): string {
+  const metrics = job.metrics || {};
+  const entry = Object.entries(metrics).find(([k]) =>
+    /map50/i.test(k)
+  );
+  if (!entry || typeof entry[1] !== "number") return "";
+  const value = entry[1] <= 1 ? entry[1] * 100 : entry[1];
+  return ` · mAP50 ${value.toFixed(0)}%`;
+}
+
+function jobSelectLabel(job: TrainingJob): string {
+  const date = new Date(job.created_at).toLocaleDateString("vi-VN");
+  const live = job.deployed_at ? " · đang live" : "";
+  return `${job.name}${jobMetricHint(job)}${live} — ${date}`;
+}
 
 function formatMoney(amount: string, currency: string): string {
   const value = Number(amount);
@@ -125,6 +148,9 @@ export default function VideoAnalysisPage() {
   const [frameInterval, setFrameInterval] = useState(2);
   const [minConfidence, setMinConfidence] = useState(0.6);
   const [cleanBeforeStart, setCleanBeforeStart] = useState(true);
+  const [pauseForAi, setPauseForAi] = useState(true);
+  const [weightKey, setWeightKey] = useState<string>("live");
+  const [trainingJobs, setTrainingJobs] = useState<TrainingJob[]>([]);
   const [framesProcessed, setFramesProcessed] = useState(0);
   const [framesAccepted, setFramesAccepted] = useState(0);
   const [lastFrameResult, setLastFrameResult] = useState<string | null>(null);
@@ -140,6 +166,9 @@ export default function VideoAnalysisPage() {
   const overlayCanvasRef = useRef<HTMLCanvasElement>(null);
   const stopRef = useRef(false);
   const runningRef = useRef(false);
+  const userPausedRef = useRef(false);
+  const autoPausingRef = useRef(false);
+  const loopWakeRef = useRef<Set<() => void>>(new Set());
 
   const [roiZones, setRoiZones] = useState<RoiZone[]>([]);
   const [roiEditorOpen, setRoiEditorOpen] = useState(false);
@@ -339,6 +368,37 @@ export default function VideoAnalysisPage() {
   }, []);
 
   useEffect(() => {
+    listTrainingJobs()
+      .then((res) => {
+        setTrainingJobs(
+          res.items.filter((j) => j.status === "succeeded" && Boolean(j.weight_key)),
+        );
+      })
+      .catch(() => {
+        setTrainingJobs([]);
+      });
+  }, []);
+
+  const modelSelectOptions = useMemo(() => {
+    const bbox = trainingJobs.filter((j) => jobKind(j) === "bbox");
+    const crop = trainingJobs.filter((j) => jobKind(j) === "crop");
+    const toOpts = (jobs: TrainingJob[]) =>
+      jobs.map((j) => ({
+        label: jobSelectLabel(j),
+        value: j.weight_key as string,
+      }));
+    return [
+      { label: "Model đang triển khai (live)", value: "live" },
+      ...(bbox.length
+        ? [{ label: "Train từ nhãn bbox", options: toOpts(bbox) }]
+        : []),
+      ...(crop.length
+        ? [{ label: "Train AI (crop 1 SKU)", options: toOpts(crop) }]
+        : []),
+    ];
+  }, [trainingJobs]);
+
+  useEffect(() => {
     if (!branchId) return;
     (async () => {
       try {
@@ -477,18 +537,36 @@ export default function VideoAnalysisPage() {
     const video = videoRef.current;
     const canvas = canvasRef.current;
     if (!video || !canvas || !organizationId || !branchId) return;
-    if (video.paused || video.ended) return;
+    if (video.ended) return;
+
+    let autoPaused = false;
+    if (pauseForAi && !video.paused && !userPausedRef.current) {
+      autoPausingRef.current = true;
+      video.pause();
+      autoPausingRef.current = false;
+      autoPaused = true;
+    }
 
     canvas.width = video.videoWidth || 640;
     canvas.height = video.videoHeight || 480;
     const ctx = canvas.getContext("2d");
-    if (!ctx) return;
+    if (!ctx) {
+      if (autoPaused && !userPausedRef.current && !stopRef.current) {
+        video.play().catch(() => {});
+      }
+      return;
+    }
     ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
 
     const blob = await new Promise<Blob | null>((resolve) =>
       canvas.toBlob(resolve, "image/jpeg", 0.85)
     );
-    if (!blob) return;
+    if (!blob) {
+      if (autoPaused && !userPausedRef.current && !stopRef.current) {
+        video.play().catch(() => {});
+      }
+      return;
+    }
 
     const form = new FormData();
     form.append("organization_id", organizationId);
@@ -497,6 +575,9 @@ export default function VideoAnalysisPage() {
     form.append("manual_scan", "false");
     form.append("min_confidence", String(minConfidence));
     form.append("recognize_face", "false");
+    if (weightKey && weightKey !== "live") {
+      form.append("weight_key", weightKey);
+    }
     if (roiZones.length > 0) {
       form.append("skip_roi", "false");
       form.append("roi_zones", JSON.stringify(roiZones));
@@ -524,6 +605,10 @@ export default function VideoAnalysisPage() {
       const persons: number = result?.persons ?? result?.frame_pipeline?.persons ?? 0;
       const events: any[] = result?.emitted_events || result?.frame_pipeline?.emitted_events || [];
       const accepted = events.filter((e) => e?.backend?.body?.accepted === true).length;
+      const elapsed = result?.elapsed_ms;
+      const modelName = typeof result?.model === "string"
+        ? result.model.split(/[/\\]/).pop()
+        : null;
 
       // Draw detection bounding boxes (people & products) on overlay canvas!
       drawDetectionsOverlay(detections);
@@ -536,17 +621,62 @@ export default function VideoAnalysisPage() {
         .map((e) => e.event.product_sku)
         .join(", ");
 
+      const elapsedPart =
+        typeof elapsed === "number" ? ` | ⏱ ${Math.round(elapsed)} ms` : "";
+      const modelPart = modelName ? ` | ${modelName}` : "";
       setLastFrameResult(
-        `👤 ${persons} người | 📦 ${products} SP${detectedSkus ? ` | ✅ ${detectedSkus}` : ""}`
+        `👤 ${persons} người | 📦 ${products} SP${detectedSkus ? ` | ✅ ${detectedSkus}` : ""}${elapsedPart}${modelPart}`
       );
 
       if (detectedSkus) {
-        addLog("add", `🔍 Phát hiện & Nhận dạng SKU: ${detectedSkus}`, `${products} sản phẩm trong khung`);
+        addLog("add", `🔍 Phát hiện & Nhận dạng SKU: ${detectedSkus}`, `${products} sản phẩm trong khung${elapsedPart}`);
       }
     } catch (err) {
       addLog("error", "Lỗi gửi frame", String(err));
+    } finally {
+      if (autoPaused && !userPausedRef.current && !stopRef.current) {
+        video.play().catch(() => {});
+      }
     }
-  }, [organizationId, branchId, cameraId, minConfidence, addLog, drawDetectionsOverlay, roiZones]);
+  }, [organizationId, branchId, cameraId, minConfidence, addLog, drawDetectionsOverlay, roiZones, pauseForAi, weightKey]);
+
+  const wakeLoop = useCallback(() => {
+    loopWakeRef.current.forEach((resolve) => resolve());
+    loopWakeRef.current.clear();
+  }, []);
+
+  const waitMsOrWake = useCallback((ms: number) => {
+    return new Promise<void>((resolve) => {
+      const done = () => {
+        loopWakeRef.current.delete(done);
+        window.clearTimeout(timer);
+        resolve();
+      };
+      loopWakeRef.current.add(done);
+      const timer = window.setTimeout(done, ms);
+    });
+  }, []);
+
+  const waitWhileUserPaused = useCallback(() => {
+    const video = videoRef.current;
+    return new Promise<void>((resolve) => {
+      if (!video || !video.paused || video.ended || stopRef.current || !userPausedRef.current) {
+        resolve();
+        return;
+      }
+      const finish = () => {
+        video.removeEventListener("play", finish);
+        video.removeEventListener("seeked", finish);
+        window.clearInterval(poll);
+        resolve();
+      };
+      video.addEventListener("play", finish);
+      video.addEventListener("seeked", finish);
+      const poll = window.setInterval(() => {
+        if (stopRef.current || !userPausedRef.current || !video.paused) finish();
+      }, 200);
+    });
+  }, []);
 
   const runLoop = useCallback(async () => {
     if (runningRef.current) return;
@@ -555,30 +685,27 @@ export default function VideoAnalysisPage() {
     const video = videoRef.current;
     if (!video) { runningRef.current = false; return; }
 
-    addLog("info", "▶️ Bắt đầu phân tích video", `Gửi frame mỗi ${frameInterval}s`);
+    const modelHint = weightKey !== "live" ? ` · model ${weightKey.split("/").pop()}` : " · model live";
+    addLog("info", "▶️ Bắt đầu phân tích video", `Gửi frame mỗi ${frameInterval}s${pauseForAi ? " · tạm video khi gửi AI" : ""}${modelHint}`);
 
     while (!stopRef.current) {
       if (video.ended) {
         addLog("info", "🏁 Video kết thúc", "Phân tích hoàn tất");
         break;
       }
-      if (!video.paused) {
-        await captureAndSendFrame();
+      await captureAndSendFrame();
+      if (stopRef.current) break;
+      if (userPausedRef.current && video.paused) {
+        await waitWhileUserPaused();
+      } else {
+        await waitMsOrWake(frameInterval * 1000);
       }
-      await new Promise<void>((resolve) => {
-        const start = Date.now();
-        const tick = () => {
-          if (stopRef.current || Date.now() - start >= frameInterval * 1000) resolve();
-          else setTimeout(tick, 100);
-        };
-        tick();
-      });
     }
 
     runningRef.current = false;
     setIsRunning(false);
     setIsPaused(false);
-  }, [captureAndSendFrame, frameInterval, addLog]);
+  }, [captureAndSendFrame, frameInterval, addLog, pauseForAi, weightKey, waitMsOrWake, waitWhileUserPaused]);
 
   const handleStart = async () => {
     const video = videoRef.current;
@@ -609,6 +736,7 @@ export default function VideoAnalysisPage() {
     clearOverlayCanvas();
     setIsRunning(true);
     setIsPaused(false);
+    userPausedRef.current = false;
     setFramesProcessed(0);
     setFramesAccepted(0);
     setLogs([]);
@@ -617,6 +745,8 @@ export default function VideoAnalysisPage() {
 
   const handleStop = () => {
     stopRef.current = true;
+    userPausedRef.current = false;
+    wakeLoop();
     setIsRunning(false);
     setIsPaused(false);
     videoRef.current?.pause();
@@ -628,12 +758,16 @@ export default function VideoAnalysisPage() {
   const handlePause = () => {
     const video = videoRef.current;
     if (!video) return;
-    if (video.paused) {
+    if (video.paused && userPausedRef.current) {
+      userPausedRef.current = false;
       video.play().catch(() => {});
       setIsPaused(false);
+      wakeLoop();
     } else {
+      userPausedRef.current = true;
       video.pause();
       setIsPaused(true);
+      wakeLoop();
     }
   };
 
@@ -830,6 +964,36 @@ export default function VideoAnalysisPage() {
                     Don sach gio cu truoc khi bat dau
                   </Typography.Text>
                 </Space>
+
+                <Space style={{ marginTop: 8 }} align="start">
+                  <Switch
+                    checked={pauseForAi}
+                    onChange={setPauseForAi}
+                    size="small"
+                    disabled={isRunning}
+                  />
+                  <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                    Tạm dừng video khi đang gửi AI — để hệ thống kịp nhận diện,
+                    không bỏ khung vì inference chậm hơn phát 1×
+                  </Typography.Text>
+                </Space>
+
+                <Typography.Text type="secondary" style={{ fontSize: 12, marginTop: 12, display: "block" }}>
+                  Model để test (không triển khai live):
+                </Typography.Text>
+                <Select
+                  style={{ width: "100%", marginTop: 4 }}
+                  value={weightKey}
+                  onChange={setWeightKey}
+                  disabled={isRunning}
+                  options={modelSelectOptions}
+                  showSearch
+                  optionFilterProp="label"
+                />
+                <Typography.Text type="secondary" style={{ fontSize: 11, display: "block", marginTop: 4 }}>
+                  Chọn job Train AI hoặc Train từ nhãn bbox để so sánh tốc độ/độ chính xác.
+                  Camera live vẫn dùng model đang triển khai.
+                </Typography.Text>
               </Card>
 
               <Space style={{ width: "100%", justifyContent: "center" }} size="middle">
@@ -920,6 +1084,23 @@ export default function VideoAnalysisPage() {
                     style={{ width: "100%", maxHeight: 480, display: "block" }}
                     onEnded={() => { if (isRunning) handleStop(); }}
                     onLoadedData={() => drawDetectionsOverlay([])}
+                    onPause={() => {
+                      if (autoPausingRef.current || stopRef.current) return;
+                      if (runningRef.current) {
+                        userPausedRef.current = true;
+                        setIsPaused(true);
+                        wakeLoop();
+                      }
+                    }}
+                    onPlay={() => {
+                      if (autoPausingRef.current) return;
+                      userPausedRef.current = false;
+                      setIsPaused(false);
+                      wakeLoop();
+                    }}
+                    onSeeked={() => {
+                      if (runningRef.current && userPausedRef.current) wakeLoop();
+                    }}
                   />
                   <canvas
                     ref={overlayCanvasRef}

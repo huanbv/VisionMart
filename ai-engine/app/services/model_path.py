@@ -85,11 +85,63 @@ def resolve_detection_weight() -> str:
     return stock or STOCK_WEIGHT
 
 
+def is_custom_weight_path(path: str | None) -> bool:
+    """True when ``path`` is a fine-tuned ``.pt``, not stock COCO ``yolov8n``."""
+    if not path:
+        return False
+    return os.path.basename(path) != STOCK_WEIGHT
+
+
 def is_custom_detection_weight() -> bool:
     """True when a deployed fine-tuned weight is active (not stock COCO yolov8n)."""
     configured = os.path.basename(_configured_weight())
     resolved = os.path.basename(resolve_detection_weight())
     return configured != STOCK_WEIGHT and resolved != STOCK_WEIGHT
+
+
+def sanitize_try_weight_key(key: str | None) -> str | None:
+    """Allow only MinIO keys written by Train AI / bbox jobs: ``models/<file>.pt``.
+
+    Rejects path traversal and anything that is not a training-job object, so
+    a video-analysis request cannot point the detector at an arbitrary file.
+    """
+    if not key:
+        return None
+    raw = key.strip()
+    if not raw or ".." in raw or "\\" in raw or raw.startswith("/"):
+        return None
+    if raw.count("/") != 1:
+        return None
+    prefix, name = raw.split("/", 1)
+    if prefix != "models" or not name.endswith(".pt") or not name or name == ".pt":
+        return None
+    if "/" in name or name.startswith("."):
+        return None
+    return raw
+
+
+def ensure_try_weight(weight_key: str) -> str:
+    """Local path for a job weight **without** swapping the live detector.
+
+    Reuses a file already under ``MODELS_DIR`` (after deploy) or downloads
+    once into ``MODELS_DIR/try/``.
+    """
+    safe = sanitize_try_weight_key(weight_key)
+    if not safe:
+        raise ValueError("weight_key must be models/<job>.pt")
+    basename = os.path.basename(safe)
+    found = _lookup(basename)
+    if found:
+        return found
+    dest_dir = os.path.join(models_dir(), "try")
+    os.makedirs(dest_dir, exist_ok=True)
+    dest = os.path.join(dest_dir, basename)
+    if os.path.exists(dest):
+        return dest
+    from app.services import object_storage as storage
+
+    storage.download(safe, dest)
+    return dest
 
 
 def reload_detection_models() -> None:

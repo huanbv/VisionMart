@@ -52,7 +52,11 @@ from app.services.det_nms import _center_in_box, box_iou, cluster_winner_take_al
 from app.services.face_recognizer import get_face_recognizer
 from app.services.lookalike import reset_slots as reset_lookalike_slots
 from app.services.lookalike import skus_are_lookalikes, stabilize_lookalikes
-from app.services.model_path import resolve_detection_weight
+from app.services.model_path import (
+    ensure_try_weight,
+    resolve_detection_weight,
+    sanitize_try_weight_key,
+)
 from app.services.person_tracker import (
     TrackedObject,
     get_last_vision_result,
@@ -1230,6 +1234,7 @@ async def process_frame(
     manual_scan: bool = Form(False),
     skip_roi: bool = Form(False),
     roi_zones_json: str | None = Form(None, alias="roi_zones"),
+    weight_key: str | None = Form(None),
     image: UploadFile = File(...),
 ) -> dict[str, Any]:
     frame_started = time.perf_counter()
@@ -1238,6 +1243,7 @@ async def process_frame(
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Empty image upload")
 
     camera_key = str(camera_id) if camera_id else f"{organization_id}:{branch_id}"
+    det_weight_path: str | None = None
 
     # DEBUG_AI: collects one image per pipeline step and hands the set to a
     # background queue at the end. A no-op object when the flag is off, so
@@ -1284,6 +1290,21 @@ async def process_frame(
         is_checkout = manual_scan or bool(
             camera_info and camera_info.get("is_checkout_zone")
         )
+        if weight_key:
+            safe_key = sanitize_try_weight_key(weight_key)
+            if not safe_key:
+                raise HTTPException(
+                    status.HTTP_400_BAD_REQUEST,
+                    "weight_key must be models/<job>.pt",
+                )
+            try:
+                det_weight_path = ensure_try_weight(safe_key)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("try-weight download failed key=%s: %s", safe_key, exc)
+                raise HTTPException(
+                    status.HTTP_502_BAD_GATEWAY,
+                    f"Không tải được weight: {exc}",
+                ) from exc
         tracking = await track_frame_detailed(
             content,
             camera_key,
@@ -1293,6 +1314,7 @@ async def process_frame(
             # blob→crop; deployed bbox weights use full-frame predict.
             dense_detect=is_checkout,
             product_min_confidence=min_confidence,
+            det_weight_path=det_weight_path,
         )
         detections = tracking.detections
         detections = stabilize_lookalikes(
@@ -1303,6 +1325,8 @@ async def process_frame(
             tracking.frame_bgr,
             opencv_ms=tracking.opencv_ms,
         )
+    except HTTPException:
+        raise
     except ValueError as exc:
         raise HTTPException(status.HTTP_415_UNSUPPORTED_MEDIA_TYPE, str(exc))
     except Exception as exc:  # noqa: BLE001
@@ -1971,7 +1995,7 @@ async def process_frame(
     image_format = (image.content_type or "image/unknown").rsplit("/", 1)[-1].upper()
 
     return {
-        "model": resolve_detection_weight(),
+        "model": det_weight_path or resolve_detection_weight(),
         "image": {
             "width": int(image_width),
             "height": int(image_height),

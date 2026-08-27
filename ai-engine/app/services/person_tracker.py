@@ -45,8 +45,11 @@ _SHARED_DET_MODEL: Any = None
 # can notice when the admin points YOLO_MODEL_PATH at a different weight and
 # hot-swap it without a container restart.
 _LOADED_DET_PATH: str | None = None
+# Per-request try weights (Phân tích Video) — never replace _SHARED_DET_MODEL.
+_OVERRIDE_DET_MODELS: dict[str, Any] = {}
 _POSE_TRACKER_STATE: dict[str, Any] = {}
 _DET_TRACKER_STATE: dict[str, Any] = {}
+_TRY_DET_TRACKER_STATE: dict[str, Any] = {}
 _ACTIVE_CAMERA: dict[str, str] = {}
 _MODEL_LOCK = asyncio.Lock()
 
@@ -426,6 +429,8 @@ def reset_trackers() -> None:
     _TRACKERS.clear()
     _POSE_TRACKER_STATE.clear()
     _DET_TRACKER_STATE.clear()
+    _TRY_DET_TRACKER_STATE.clear()
+    _OVERRIDE_DET_MODELS.clear()
     _ACTIVE_CAMERA.clear()
     _PERSON_TRAJECTORIES.clear()
     _ARM_STATE.clear()
@@ -616,7 +621,12 @@ _DENSE_ID_BASE = 500_000
 
 
 def dense_detect_on_model(
-    model, img, *, layout: str = "scan", roi_rect: tuple[int, int, int, int] | None = None
+    model,
+    img,
+    *,
+    layout: str = "scan",
+    roi_rect: tuple[int, int, int, int] | None = None,
+    treat_as_custom: bool | None = None,
 ) -> list[TrackedObject]:
     """Multi-window predict, then spatial cluster to one box per product.
 
@@ -658,7 +668,9 @@ def dense_detect_on_model(
 
     from app.services.model_path import is_custom_detection_weight
 
-    if is_custom_detection_weight():
+    custom = is_custom_detection_weight() if treat_as_custom is None else treat_as_custom
+
+    if custom:
         # Weights were trained on bottle crops. Full-frame 640 letterbox
         # shrinks a 7Up on the counter to ~20px and YOLO returns n=0 while
         # the live HUD still shows two people. Infer on the pay-zone crop.
@@ -821,8 +833,21 @@ def _resolve_det_path() -> str:
     return resolve_detection_weight()
 
 
-def _get_det_model():
+def _get_det_model(override_path: str | None = None):
     global _SHARED_DET_MODEL, _LOADED_DET_PATH
+    if override_path:
+        # Isolated YOLO instance so live cameras keep the deployed weight.
+        model = _OVERRIDE_DET_MODELS.get(override_path)
+        if model is None:
+            from ultralytics import YOLO
+
+            model = YOLO(override_path)
+            _OVERRIDE_DET_MODELS[override_path] = model
+            logger.warning(
+                "YOLO try-weight loaded (live detector unchanged): %s",
+                override_path,
+            )
+        return model
     want = _resolve_det_path()
     # Reload when the configured weight changed under us — the admin picked a
     # different model. Cheap: this only re-reads config (throttled) and
@@ -948,6 +973,7 @@ async def track_frame(
     roi_zones: list | None = None,
     dense_detect: bool = False,
     product_min_confidence: float = 0.35,
+    det_weight_path: str | None = None,
 ) -> list[TrackedObject]:
     """Unchanged contract — see module docstring. Delegates to
     :func:`track_frame_detailed` so both paths share one implementation."""
@@ -958,6 +984,7 @@ async def track_frame(
         roi_zones=roi_zones,
         dense_detect=dense_detect,
         product_min_confidence=product_min_confidence,
+        det_weight_path=det_weight_path,
     )
     return outcome.detections
 
@@ -970,6 +997,7 @@ async def track_frame_detailed(
     roi_zones: list | None = None,
     dense_detect: bool = False,
     product_min_confidence: float = 0.35,
+    det_weight_path: str | None = None,
 ) -> TrackingOutcome:
     cfg = get_vision_config()
 
@@ -982,7 +1010,24 @@ async def track_frame_detailed(
 
     async with _LOCK:
         model_pose = _get_pose_model()
-        model_det = _get_det_model()
+        model_det = _get_det_model(det_weight_path)
+
+    from app.services.model_path import (
+        is_custom_detection_weight,
+        is_custom_weight_path,
+    )
+
+    treat_as_custom = (
+        is_custom_weight_path(det_weight_path)
+        if det_weight_path
+        else is_custom_detection_weight()
+    )
+    det_tracker_state = _TRY_DET_TRACKER_STATE if det_weight_path else _DET_TRACKER_STATE
+    det_camera_key = (
+        f"{camera_key}::try::{os.path.basename(det_weight_path)}"
+        if det_weight_path
+        else camera_key
+    )
 
     loop = asyncio.get_event_loop()
 
@@ -1089,19 +1134,19 @@ async def track_frame_detailed(
         # 2. Products. Crop-trained SKU weights: YOLO on the pay-zone crop
         # (not the full 1080p frame). Stock COCO still uses blob→crop.
         if dense_detect:
-            from app.services.model_path import is_custom_detection_weight
             from app.services.region_detect import detect_products_from_regions
 
             conf = max(0.0, min(1.0, product_min_confidence))
             persons_now = [
                 o for o in out if str(o.class_name).lower() == "person"
             ]
-            if is_custom_detection_weight():
+            if treat_as_custom:
                 products = dense_detect_on_model(
                     model_det,
                     det_img,
                     layout="scan",
                     roi_rect=roi_rect,
+                    treat_as_custom=True,
                 )
                 blob_products = detect_products_from_regions(
                     model_det,
@@ -1147,7 +1192,7 @@ async def track_frame_detailed(
     yolo_timer = StageTimer()
     async with _MODEL_LOCK:
         _use_camera_tracker_custom(model_pose, camera_key, _POSE_TRACKER_STATE)
-        _use_camera_tracker_custom(model_det, camera_key, _DET_TRACKER_STATE)
+        _use_camera_tracker_custom(model_det, det_camera_key, det_tracker_state)
         with yolo_timer:
             detections = await loop.run_in_executor(None, _run)
 
