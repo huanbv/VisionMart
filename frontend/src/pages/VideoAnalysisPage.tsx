@@ -47,14 +47,20 @@ import {
   CheckCircleOutlined,
   DeleteOutlined,
   FileWordOutlined,
-  ThunderboltOutlined,
+  FundOutlined,
+  InfoCircleOutlined,
+  PauseCircleOutlined,
   PlayCircleOutlined,
   QrcodeOutlined,
   ReloadOutlined,
+  ScanOutlined,
   ShoppingCartOutlined,
   StopOutlined,
+  ThunderboltOutlined,
+  UnorderedListOutlined,
   UploadOutlined,
   VideoCameraOutlined,
+  WarningOutlined,
 } from "@ant-design/icons";
 import { isAxiosError } from "axios";
 
@@ -170,6 +176,16 @@ interface LogItem {
   type: "scan" | "add" | "remove" | "checkout" | "info" | "error";
   message: string;
   detail?: string;
+}
+
+function logTypeIcon(type: LogItem["type"]) {
+  const s = { fontSize: 12 };
+  if (type === "add") return <ShoppingCartOutlined style={s} />;
+  if (type === "checkout") return <ThunderboltOutlined style={s} />;
+  if (type === "remove") return <DeleteOutlined style={s} />;
+  if (type === "scan") return <ScanOutlined style={s} />;
+  if (type === "error") return <WarningOutlined style={s} />;
+  return <InfoCircleOutlined style={s} />;
 }
 
 export default function VideoAnalysisPage() {
@@ -339,7 +355,7 @@ export default function VideoAnalysisPage() {
       ctx.fillStyle = isCheckout ? "#faad14" : "#1890ff";
       ctx.setLineDash([]);
       ctx.fillText(
-        isCheckout ? "🛒 KHU VỰC THANH TOÁN (PAYZONE)" : `📦 ${zone.name.toUpperCase()}`,
+        isCheckout ? "PAYZONE" : zone.name.toUpperCase(),
         labelAt.x + 6,
         labelAt.y + 16
       );
@@ -384,8 +400,8 @@ export default function VideoAnalysisPage() {
       const confStr = d.confidence != null ? `${(d.confidence * 100).toFixed(0)}%` : "";
       const displayLabel = d.sku || d.class_name?.toUpperCase() || "SP";
       const labelText = isPerson
-        ? `👤 KHÁCH HÀNG #${d.track_id ?? ""} (${confStr})`
-        : `📦 ${displayLabel} (${confStr})`;
+        ? `KHACH #${d.track_id ?? ""} (${confStr})`
+        : `${displayLabel} (${confStr})`;
 
       ctx.font = "bold 13px sans-serif";
       const textWidth = ctx.measureText(labelText).width;
@@ -645,13 +661,13 @@ export default function VideoAnalysisPage() {
           if (data?.type === "cart_update" && runningRef.current) {
             const act = data.action;
             if (act === "cart_line_added" || act === "line_added") {
-              addLog("add", `🛒 Thêm sản phẩm vào giỏ`, `Giỏ ${data.cart_id?.slice(0, 8)} • ${formatMoney(data.total_amount || "0", data.currency || "VND")}`);
+              addLog("add", "Thêm sản phẩm vào giỏ", `Giỏ ${data.cart_id?.slice(0, 8)} • ${formatMoney(data.total_amount || "0", data.currency || "VND")}`);
             } else if (act === "checkout_pending" || act === "checkout_requested") {
-              addLog("checkout", `⚡ Đóng băng hoá đơn chờ xác nhận`, `Giỏ ${data.cart_id?.slice(0, 8)}`);
+              addLog("checkout", "Đóng băng hoá đơn chờ xác nhận", `Giỏ ${data.cart_id?.slice(0, 8)}`);
             } else if (act === "cart_created") {
-              addLog("scan", `✨ Mở giỏ hàng mới`, `Phiên ${data.cart_id?.slice(0, 8)}`);
+              addLog("scan", "Mở giỏ hàng mới", `Phiên ${data.cart_id?.slice(0, 8)}`);
             } else if (act === "cart_abandoned") {
-              addLog("remove", `🗑️ Giỏ hàng bị hủy`);
+              addLog("remove", "Giỏ hàng bị hủy");
             }
           }
         } catch {}
@@ -699,7 +715,7 @@ export default function VideoAnalysisPage() {
     const n = row.roiZones?.length ?? 0;
     addLog(
       "info",
-      `📂 Đã chọn video: ${row.name}`,
+      `Đã chọn video: ${row.name}`,
       n
         ? `Dùng lại ${n} vùng thanh toán đã lưu — không cần vẽ lại`
         : `Kích thước: ${(row.size / 1024 / 1024).toFixed(1)} MB · chưa có vùng, hãy vẽ trước khi phân tích`,
@@ -840,14 +856,14 @@ export default function VideoAnalysisPage() {
         .join(", ");
 
       const elapsedPart =
-        typeof elapsed === "number" ? ` | ⏱ ${Math.round(elapsed)} ms` : "";
+        typeof elapsed === "number" ? ` | ${Math.round(elapsed)} ms` : "";
       const modelPart = modelName ? ` | ${modelName}` : "";
       setLastFrameResult(
-        `👤 ${persons} người | 📦 ${products} SP${detectedSkus ? ` | ✅ ${detectedSkus}` : ""}${elapsedPart}${modelPart}`
+        `${persons} người | ${products} SP${detectedSkus ? ` | ${detectedSkus}` : ""}${elapsedPart}${modelPart}`
       );
 
       if (detectedSkus) {
-        addLog("add", `🔍 Phát hiện & Nhận dạng SKU: ${detectedSkus}`, `${products} sản phẩm trong khung${elapsedPart}`);
+        addLog("add", `Phát hiện và nhận dạng SKU: ${detectedSkus}`, `${products} sản phẩm trong khung${elapsedPart}`);
       } else {
         addLog("info", "AI đã quét khung này", `${persons} người · ${products} SP${elapsedPart || ""}`);
       }
@@ -858,7 +874,7 @@ export default function VideoAnalysisPage() {
         setThesisTime(video.currentTime);
         addLog(
           "info",
-          `📓 Nhật ký giai đoạn: ${steps.length} ảnh AI`,
+          `Nhật ký giai đoạn: ${steps.length} ảnh AI`,
           modelName ? `model ${modelName}` : undefined,
         );
         if (cameraId) {
@@ -926,7 +942,7 @@ export default function VideoAnalysisPage() {
       try {
         await bulkAbandonCarts(carts.map((c) => c.id), branchId);
         setCarts([]);
-        addLog("remove", `🗑️ Đã dọn ${carts.length} giỏ hàng cũ`, "Giỏ mới cho phiên phân tích này");
+        addLog("remove", `Đã dọn ${carts.length} giỏ hàng cũ`, "Giỏ mới cho phiên phân tích này");
       } catch { /* non-fatal */ }
     } else if (cleanBeforeStart) {
       setCarts([]);
@@ -953,7 +969,7 @@ export default function VideoAnalysisPage() {
       setIsPaused(true);
       const t = video.currentTime;
       await captureAndSendFrame(true);
-      addLog("info", "⚡ Đã quét khung này", `t=${t.toFixed(1)}s · một giỏ theo vùng thanh toán`);
+      addLog("info", "Đã quét khung này", `t=${t.toFixed(1)}s · một giỏ theo vùng thanh toán`);
       await loadCarts();
     } finally {
       activateLockRef.current = false;
@@ -968,18 +984,18 @@ export default function VideoAnalysisPage() {
     const video = videoRef.current;
     if (!video) { runningRef.current = false; return; }
 
-    addLog("info", "▶️ Tự chạy AI từ đây", `Video đứng yên, mỗi ${frameInterval}s tua tới khung kế (phù hợp VPS không GPU)`);
+    addLog("info", "Tự chạy AI từ đây", `Video đứng yên, mỗi ${frameInterval}s tua tới khung kế (phù hợp VPS không GPU)`);
 
     while (!stopRef.current) {
       if (video.ended || video.currentTime >= (video.duration || 0) - 0.05) {
-        addLog("info", "🏁 Hết video", "Đã quét tới cuối");
+        addLog("info", "Hết video", "Đã quét tới cuối");
         break;
       }
       await captureAndSendFrame();
       if (stopRef.current) break;
       const next = video.currentTime + frameInterval;
       if (next >= (video.duration || next)) {
-        addLog("info", "🏁 Hết video", "Đã quét tới cuối");
+        addLog("info", "Hết video", "Đã quét tới cuối");
         break;
       }
       video.currentTime = next;
@@ -1011,7 +1027,7 @@ export default function VideoAnalysisPage() {
     scanSessionRef.current = null;
     videoRef.current?.pause();
     setIsPaused(true);
-    addLog("info", "⏹️ Đã dừng AI — có thể tua video tiếp, không gửi thêm frame");
+    addLog("info", "Đã dừng AI — có thể tua video tiếp, không gửi thêm frame");
     loadCarts();
   };
 
@@ -1429,7 +1445,7 @@ export default function VideoAnalysisPage() {
                   </Row>
                   {lastFrameResult && (
                     <Typography.Text type="secondary" style={{ fontSize: 11, display: "block", marginTop: 6 }}>
-                      📊 Frame gần nhất: {lastFrameResult}
+                      <FundOutlined /> Frame gần nhất: {lastFrameResult}
                     </Typography.Text>
                   )}
                   {isSending && (
@@ -1441,7 +1457,16 @@ export default function VideoAnalysisPage() {
                 </Card>
               )}
 
-              <Card size="small" title="📋 Nhật ký sự kiện AI" style={{ maxHeight: 260, overflowY: "auto" }}>
+              <Card
+                size="small"
+                title={
+                  <Space>
+                    <UnorderedListOutlined />
+                    Nhật ký sự kiện AI
+                  </Space>
+                }
+                style={{ maxHeight: 260, overflowY: "auto" }}
+              >
                 {logs.length === 0 ? (
                   <Typography.Text type="secondary" style={{ fontSize: 11 }}>
                     Chưa có sự kiện. Phát video tới đoạn quầy, tạm dừng, rồi Kích hoạt AI.
@@ -1454,6 +1479,7 @@ export default function VideoAnalysisPage() {
                         <div style={{ fontSize: 11 }}>
                           <Space size={4}>
                             <Tag style={{ fontSize: 10, margin: 0, padding: "0 4px" }}>{log.time}</Tag>
+                            {logTypeIcon(log.type)}
                             <Typography.Text strong style={{ fontSize: 11 }}>{log.message}</Typography.Text>
                           </Space>
                           {log.detail && <div style={{ color: "#666", fontSize: 10, marginTop: 1 }}>{log.detail}</div>}
@@ -1519,8 +1545,8 @@ export default function VideoAnalysisPage() {
               )}
               <canvas ref={canvasRef} style={{ display: "none" }} />
               {isSending && (
-                <div style={{ position: "absolute", top: 10, right: 10, background: "rgba(250,140,22,0.92)", color: "#fff", padding: "4px 12px", borderRadius: 20, fontSize: 12, fontWeight: 700, boxShadow: "0 2px 8px rgba(0,0,0,0.25)" }}>
-                  ⚡ Đang gửi AI
+                <div style={{ position: "absolute", top: 10, right: 10, background: "rgba(250,140,22,0.92)", color: "#fff", padding: "4px 12px", borderRadius: 20, fontSize: 12, fontWeight: 700, boxShadow: "0 2px 8px rgba(0,0,0,0.25)", display: "flex", alignItems: "center", gap: 6 }}>
+                  <ThunderboltOutlined /> Đang gửi AI
                 </div>
               )}
               {isRunning && !isSending && (
@@ -1529,8 +1555,8 @@ export default function VideoAnalysisPage() {
                 </div>
               )}
               {isPaused && !isSending && !isRunning && videoUrl && (
-                <div style={{ position: "absolute", top: 10, right: 10, background: "rgba(250,140,22,0.92)", color: "#fff", padding: "4px 12px", borderRadius: 20, fontSize: 12, fontWeight: 700 }}>
-                  ⏸ Đã tạm dừng
+                <div style={{ position: "absolute", top: 10, right: 10, background: "rgba(250,140,22,0.92)", color: "#fff", padding: "4px 12px", borderRadius: 20, fontSize: 12, fontWeight: 700, display: "flex", alignItems: "center", gap: 6 }}>
+                  <PauseCircleOutlined /> Đã tạm dừng
                 </div>
               )}
             </div>
@@ -1714,7 +1740,9 @@ export default function VideoAnalysisPage() {
                                 )}
                                 {line.added_via === "ai" && line.confidence != null && line.confidence < 0.7 && (
                                   <Tooltip title={`Độ tin cậy AI: ${(line.confidence * 100).toFixed(0)}%`}>
-                                    <Tag color="orange">⚠️ {(line.confidence * 100).toFixed(0)}%</Tag>
+                                    <Tag color="orange" icon={<WarningOutlined />}>
+                                      {(line.confidence * 100).toFixed(0)}%
+                                    </Tag>
                                   </Tooltip>
                                 )}
                               </Space>

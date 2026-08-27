@@ -954,7 +954,7 @@ export default function AiLabelingPage() {
           </Button>
         </Space>
         <Text type="secondary" style={{ display: "block", marginTop: 8, fontSize: 12 }}>
-          Lọc SKU → chỉ hiện ảnh có nhãn SKU đó · ✂ cam = chưa cắt · số xanh = số bbox · bấm ô ảnh
+          Lọc SKU → chỉ hiện ảnh có nhãn SKU đó · cam = chưa cắt · số xanh = số bbox · bấm ô ảnh
           để mở cắt/gán nhãn
         </Text>
       </Card>

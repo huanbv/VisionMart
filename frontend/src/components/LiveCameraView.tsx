@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { Typography } from "antd";
+import { PauseCircleOutlined } from "@ant-design/icons";
 
 import type { Camera } from "@/api/cameras";
 import { openMjpegStream } from "@/utils/mjpegStream";
@@ -105,7 +106,7 @@ export default function LiveCameraView({
         }}
       >
         <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-          ⏸️ Đã tạm dừng nhận diện AI
+          <PauseCircleOutlined /> Đã tạm dừng nhận diện AI
         </Typography.Text>
       </div>
     );

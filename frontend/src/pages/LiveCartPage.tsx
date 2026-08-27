@@ -35,7 +35,11 @@ import {
   StopOutlined,
   SyncOutlined,
   ThunderboltOutlined,
+  UnorderedListOutlined,
   UploadOutlined,
+  UserOutlined,
+  WarningOutlined,
+  InfoCircleOutlined,
 } from "@ant-design/icons";
 import { isAxiosError } from "axios";
 import { Link } from "react-router-dom";
@@ -254,7 +258,7 @@ function CartCustomerPhoto({ cartId, size = 36 }: { cartId: string; size?: numbe
           fontSize: size * 0.5,
         }}
       >
-        👤
+        <UserOutlined style={{ color: "#8c8c8c" }} />
       </div>
     );
   }
@@ -341,6 +345,21 @@ interface AiLogItem {
   detail?: string;
 }
 
+function liveLogIcon(type: AiLogItem["type"]) {
+  const s = { fontSize: 12 };
+  if (type === "add") return <ShoppingCartOutlined style={s} />;
+  if (type === "checkout") return <ThunderboltOutlined style={s} />;
+  if (type === "remove") return <DeleteOutlined style={s} />;
+  if (type === "scan") return <ScanOutlined style={s} />;
+  return <InfoCircleOutlined style={s} />;
+}
+
+const PERSON_PLACEHOLDER =
+  "data:image/svg+xml;utf8," +
+  encodeURIComponent(
+    '<svg xmlns="http://www.w3.org/2000/svg" width="60" height="90"><rect width="60" height="90" fill="#e8e8e8"/><circle cx="30" cy="28" r="12" fill="#8c8c8c"/><rect x="16" y="44" width="28" height="32" rx="10" fill="#8c8c8c"/></svg>',
+  );
+
 interface ActivePerson {
   mapped_id: number;
   crop_url: string;
@@ -384,7 +403,16 @@ function ActivePersonsPanel({ camera, paused = false }: { camera: Camera; paused
   if (activePersons.length === 0) return null;
 
   return (
-    <Card size="small" title="👤 Khách hàng đang ở khu vực quầy" style={{ borderRadius: 8, marginTop: 12 }}>
+    <Card
+      size="small"
+      title={
+        <Space>
+          <UserOutlined />
+          Khách hàng đang ở khu vực quầy
+        </Space>
+      }
+      style={{ borderRadius: 8, marginTop: 12 }}
+    >
       <div style={{ display: "flex", gap: 16, overflowX: "auto", padding: "8px 0" }}>
         {activePersons.map((p) => (
           <div key={p.mapped_id} style={{ display: "flex", flexDirection: "column", alignItems: "center", minWidth: 80 }}>
@@ -401,7 +429,7 @@ function ActivePersonsPanel({ camera, paused = false }: { camera: Camera; paused
                 backgroundColor: "#f0f0f0"
               }}
               onError={(e) => {
-                (e.target as HTMLImageElement).src = "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='60' height='90'><rect width='60' height='90' fill='%23ccc'/><text x='15' y='50' fill='%23666' font-size='10'>👤</text></svg>";
+                (e.target as HTMLImageElement).src = PERSON_PLACEHOLDER;
               }}
             />
             <Tag color="blue" style={{ marginTop: 6, fontWeight: "bold" }}>
@@ -496,10 +524,10 @@ export default function LiveCartPage() {
       setAiPaused(res.paused);
       if (res.paused) {
         message.info("Đã tắt AI tự động thêm giỏ — live vẫn đánh dấu sản phẩm bằng chấm màu trong vùng thanh toán");
-        addLog("info", "⏸️ Tắt AI tự động", "Không tự thêm giỏ; live overlay, Chụp & Quét và Tải ảnh vẫn chạy");
+        addLog("info", "Tắt AI tự động", "Không tự thêm giỏ; live overlay, Chụp & Quét và Tải ảnh vẫn chạy");
       } else {
         message.success("Đã bật lại nhận diện AI tự động");
-        addLog("info", "▶️ Bật AI tự động", "Luồng live lại thêm SKU vào giỏ");
+        addLog("info", "Bật AI tự động", "Luồng live lại thêm SKU vào giỏ");
       }
     } catch (err) {
       setAiPaused(previous);
@@ -577,9 +605,9 @@ export default function LiveCartPage() {
           if (data?.type === "cart_update") {
             const act = data.action;
             if (act === "cart_line_added" || act === "line_added") {
-              addLog("add", `🛒 AI đã nhận diện & thêm sản phẩm vào giỏ`, `Giỏ ${data.cart_id?.slice(0, 8)} • Tổng: ${formatMoney(data.total_amount || "0", data.currency || "VND")}`);
+              addLog("add", "AI đã nhận diện và thêm sản phẩm vào giỏ", `Giỏ ${data.cart_id?.slice(0, 8)} • Tổng: ${formatMoney(data.total_amount || "0", data.currency || "VND")}`);
             } else if (act === "checkout_pending" || act === "checkout_requested") {
-              addLog("checkout", `⚡ Khách vào vùng quầy — Đã đóng băng hoá đơn`, `Mã giỏ: ${data.cart_id?.slice(0, 8)}`);
+              addLog("checkout", "Khách vào vùng quầy — Đã đóng băng hoá đơn", `Mã giỏ: ${data.cart_id?.slice(0, 8)}`);
             } else if (act === "cart_created") {
               addLog("scan", `Mở giỏ hàng AI mới cho phiên quầy`, `Phiên ${data.cart_id?.slice(0, 8)}`);
             } else if (act === "cart_abandoned") {
@@ -652,7 +680,7 @@ export default function LiveCartPage() {
     setManualScanning(true);
     try {
       const res = await triggerCameraScan(liveCameraId);
-      reportScanOutcome(res.detections ?? [], res.emitted_events ?? [], addLog, "📸 Quét khung live");
+      reportScanOutcome(res.detections ?? [], res.emitted_events ?? [], addLog, "Quét khung live");
       load();
     } catch (err) {
       const detail =
@@ -680,7 +708,7 @@ export default function LiveCartPage() {
       const res = await analyzeCameraFrame(liveCameraId, file);
       if (res.frame_pipeline_error) {
         message.error(`Phân tích ảnh lỗi: ${res.frame_pipeline_error}`);
-        addLog("remove", "🖼️ Tải ảnh — pipeline lỗi", res.frame_pipeline_error);
+        addLog("remove", "Tải ảnh — pipeline lỗi", res.frame_pipeline_error);
         return;
       }
       const pipeline = res.frame_pipeline;
@@ -690,7 +718,7 @@ export default function LiveCartPage() {
         res.detections ?? [],
         pipeline?.emitted_events ?? [],
         addLog,
-        "🖼️ Tải ảnh",
+        "Tải ảnh",
       );
       load();
     } catch (err) {
@@ -815,7 +843,7 @@ export default function LiveCartPage() {
                   cancelText="Bỏ qua"
                 >
                   <Button danger type="primary" icon={<DeleteOutlined />} style={{ fontWeight: 600 }}>
-                    🗑️ Xóa / Hủy tất cả
+                    Xóa / Hủy tất cả
                   </Button>
                 </Popconfirm>
               )}
@@ -853,7 +881,7 @@ export default function LiveCartPage() {
               onClick={onManualTriggerScan}
               style={{ fontWeight: 600, backgroundColor: "#1677ff" }}
             >
-              📸 Chụp & Quét AI Khung Hình Này
+              Chụp & Quét AI Khung Hình Này
             </Button>
             <Tooltip title="JPEG / PNG / WebP / BMP, tối đa 10 MB. Ảnh có sản phẩm trên quầy — AI nhận diện và thêm vào giỏ giống Chụp & Quét.">
               <span>
@@ -927,7 +955,7 @@ export default function LiveCartPage() {
                   />
                   {liveCamera && !liveCamera.is_checkout_zone && (
                     <Typography.Text type="warning" style={{ fontSize: 11, marginTop: 4, display: "block" }}>
-                      ⚠️ Camera này không phải quầy thanh toán.
+                      <WarningOutlined /> Camera này không phải quầy thanh toán.
                     </Typography.Text>
                   )}
                 </div>
@@ -939,7 +967,7 @@ export default function LiveCartPage() {
                 >
                   <Space style={{ width: "100%", justifyContent: "space-between", marginBottom: 6 }}>
                     <Typography.Text strong style={{ fontSize: 13 }}>
-                      ⚡ Tiến độ nhận diện AI
+                      <ThunderboltOutlined /> Tiến độ nhận diện AI
                     </Typography.Text>
                     <Switch
                       checked={showAiProgress}
@@ -954,7 +982,7 @@ export default function LiveCartPage() {
                     </Typography.Text>
                   ) : streamStatus === "error" ? (
                     <Typography.Text type="warning" style={{ fontSize: 12 }}>
-                      ⚠️ Mất luồng camera — đang tự động thử kết nối lại…
+                      <WarningOutlined /> Mất luồng camera — đang tự động thử kết nối lại…
                     </Typography.Text>
                   ) : !showAiProgress ? (
                     <Typography.Text type="secondary" style={{ fontSize: 12 }}>
@@ -998,7 +1026,16 @@ export default function LiveCartPage() {
                   )}
                 </Card>
 
-                <Card size="small" title="📋 Nhật ký sự kiện AI & Realtime" style={{ maxHeight: 200, overflowY: "auto", borderRadius: 8 }}>
+                <Card
+                  size="small"
+                  title={
+                    <Space>
+                      <UnorderedListOutlined />
+                      Nhật ký sự kiện AI & Realtime
+                    </Space>
+                  }
+                  style={{ maxHeight: 200, overflowY: "auto", borderRadius: 8 }}
+                >
                   {aiLogs.length === 0 ? (
                     <Typography.Text type="secondary" style={{ fontSize: 11 }}>
                       Chưa có sự kiện mới. AI đang theo dõi khung hình...
@@ -1012,6 +1049,7 @@ export default function LiveCartPage() {
                           <div style={{ fontSize: 11, marginBottom: 2 }}>
                             <Space size={4}>
                               <Tag color="default" style={{ fontSize: 10, margin: 0, padding: "0 4px" }}>{log.time}</Tag>
+                              {liveLogIcon(log.type)}
                               <Typography.Text strong style={{ fontSize: 11 }}>{log.message}</Typography.Text>
                             </Space>
                             {log.detail && (
@@ -1186,7 +1224,7 @@ export default function LiveCartPage() {
                         <CartCustomerPhoto cartId={cart.id} />
                         <div>
                           <div style={{ fontWeight: "bold", fontSize: 13, color: "#1d39c4" }}>
-                            👤 Khách hàng{checkoutPersonId !== null ? ` #${checkoutPersonId}` : ""}
+                            <UserOutlined /> Khách hàng{checkoutPersonId !== null ? ` #${checkoutPersonId}` : ""}
                           </div>
                           <div style={{ fontSize: 11, color: "#595959" }}>
                             Ảnh chụp lúc AI ghép sản phẩm đầu tiên vào giỏ
@@ -1210,12 +1248,12 @@ export default function LiveCartPage() {
                             backgroundColor: "#f5f5f5"
                           }}
                           onError={(e) => {
-                            (e.target as HTMLImageElement).src = "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='36' height='54'><rect width='36' height='54' fill='%23ccc'/><text x='6' y='32' fill='%23666' font-size='10'>👤</text></svg>";
+                            (e.target as HTMLImageElement).src = PERSON_PLACEHOLDER;
                           }}
                         />
                         <div>
                           <div style={{ fontWeight: "bold", fontSize: 13, color: "#1d39c4" }}>
-                            👤 Khách hàng ID: {personInfo.mappedId}
+                            <UserOutlined /> Khách hàng ID: {personInfo.mappedId}
                           </div>
                           <div style={{ fontSize: 11, color: "#595959" }}>
                             Liên kết giỏ hàng tự động qua ngoại hình
@@ -1230,7 +1268,7 @@ export default function LiveCartPage() {
                         <ScanOutlined style={{ fontSize: 20, color: "#d4b106" }} />
                         <div>
                           <div style={{ fontWeight: "bold", fontSize: 13, color: "#ad8b00" }}>
-                            ⚡ Phiên quầy thanh toán
+                            Phiên quầy thanh toán
                           </div>
                           <div style={{ fontSize: 11, color: "#595959" }}>
                             Đang xử lý sản phẩm đặt trên quầy thu ngân

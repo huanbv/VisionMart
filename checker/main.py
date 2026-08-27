@@ -164,7 +164,7 @@ class VisionMartCheckerApp:
         right_col.pack_propagate(False)
 
         # Cart Table
-        cart_frame = ttk.LabelFrame(right_col, text=" 🛒 Giỏ Hàng AI (Nhận diện tự động) ")
+        cart_frame = ttk.LabelFrame(right_col, text=" Giỏ hàng AI (Nhận diện tự động) ")
         cart_frame.pack(fill=tk.BOTH, expand=True, pady=(0, 10))
 
         # Treeview Scrollbar
@@ -193,10 +193,10 @@ class VisionMartCheckerApp:
         btn_row = ttk.Frame(right_col)
         btn_row.pack(fill=tk.X, pady=5)
         ttk.Button(btn_row, text="Xóa/Reset Giỏ Hàng", command=self.reset_cart).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 5))
-        ttk.Button(btn_row, text="📸 Chụp & Quét AI", command=self.manual_scan).pack(side=tk.RIGHT, fill=tk.X, expand=True, padx=(5, 0))
+        ttk.Button(btn_row, text="Chụp & Quét AI", command=self.manual_scan).pack(side=tk.RIGHT, fill=tk.X, expand=True, padx=(5, 0))
 
         # Event Log Window
-        log_frame = ttk.LabelFrame(right_col, text=" 📋 Nhật Ký Sự Kiện AI ")
+        log_frame = ttk.LabelFrame(right_col, text=" Nhật ký sự kiện AI ")
         log_frame.pack(fill=tk.BOTH, expand=True)
         
         self.log_text = tk.Text(log_frame, wrap=tk.WORD, state=tk.DISABLED, font=("Consolas", 9), bg="#fafafa")

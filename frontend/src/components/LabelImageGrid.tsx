@@ -1,4 +1,5 @@
 import { Empty, Spin, Tag, Typography } from "antd";
+import { ScissorOutlined } from "@ant-design/icons";
 
 import type { LabelImageSummary } from "@/api/aiLabeling";
 
@@ -101,8 +102,8 @@ export default function LabelImageGrid({
                 }}
               >
                 {!item.is_cropped && (
-                  <Tag color="orange" style={{ margin: 0, fontSize: 10, lineHeight: "18px" }}>
-                    ✂
+                  <Tag color="orange" style={{ margin: 0, fontSize: 10, lineHeight: "18px" }} icon={<ScissorOutlined />}>
+                    cam
                   </Tag>
                 )}
                 {item.labeled ? (

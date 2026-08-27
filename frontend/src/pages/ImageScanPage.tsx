@@ -38,6 +38,7 @@ import {
   QrcodeOutlined,
   ReloadOutlined,
   ShoppingCartOutlined,
+  WarningOutlined,
 } from "@ant-design/icons";
 import { isAxiosError } from "axios";
 
@@ -1234,7 +1235,9 @@ export default function ImageScanPage() {
                                 {line.added_via === "staff_correction" && <Tag color="green">Admin sửa</Tag>}
                                 {line.added_via === "ai" && line.confidence != null && line.confidence < 0.7 && (
                                   <Tooltip title={`Độ tin cậy AI: ${(line.confidence * 100).toFixed(0)}%`}>
-                                    <Tag color="orange">⚠️ {(line.confidence * 100).toFixed(0)}%</Tag>
+                                    <Tag color="orange" icon={<WarningOutlined />}>
+                                      {(line.confidence * 100).toFixed(0)}%
+                                    </Tag>
                                   </Tooltip>
                                 )}
                               </Space>
