@@ -8,6 +8,7 @@ import {
   Button,
   Card,
   Col,
+  Collapse,
   Empty,
   Image,
   Progress,
@@ -25,6 +26,7 @@ import {
 import {
   CameraOutlined,
   CloudUploadOutlined,
+  CopyOutlined,
   DownloadOutlined,
   PrinterOutlined,
 } from "@ant-design/icons";
@@ -45,6 +47,11 @@ import {
 } from "@/api/cameras";
 import { getCart, listCarts, type Cart } from "@/api/carts";
 import CartLinePhoto from "@/components/CartLinePhoto";
+import {
+  formatAlgorithmMarkdown,
+  formatAppendixMarkdown,
+  lookupAlgorithm,
+} from "@/pages/imageScanAlgorithms";
 
 const { Title, Paragraph, Text } = Typography;
 
@@ -85,6 +92,69 @@ function downloadDataUrl(url: string, filename: string) {
   a.href = url;
   a.download = filename;
   a.click();
+}
+
+function copyText(text: string, ok = "Đã copy vào clipboard") {
+  void navigator.clipboard.writeText(text).then(
+    () => message.success(ok),
+    () => message.error("Trình duyệt không cho copy"),
+  );
+}
+
+function AlgorithmSnippet({
+  stage,
+  title,
+  params,
+  elapsedMs,
+}: {
+  stage: string;
+  title?: string;
+  params?: Record<string, unknown>;
+  elapsedMs?: number | null;
+}) {
+  const def = lookupAlgorithm(stage);
+  if (!def) return null;
+  const md = formatAlgorithmMarkdown(stage, { title: title ?? def.algorithm, params, elapsedMs });
+  return (
+    <div style={{ marginTop: 8 }}>
+      <Tag color="geekblue" style={{ whiteSpace: "normal", height: "auto" }}>
+        {def.algorithm}
+      </Tag>
+      <div>
+        <Text type="secondary" style={{ fontSize: 11 }}>
+          {def.algorithmEn}
+        </Text>
+      </div>
+      <Collapse
+        size="small"
+        style={{ marginTop: 6 }}
+        items={[
+          {
+            key: "code",
+            label: "Mã nguồn + tài liệu",
+            children: (
+              <div>
+                <Paragraph style={{ marginBottom: 6, fontSize: 12 }}>
+                  {def.citation}
+                  <br />
+                  <Text code>{def.file}</Text>
+                </Paragraph>
+                <pre className="algo-code">{def.code}</pre>
+                <Button
+                  className="no-print"
+                  size="small"
+                  icon={<CopyOutlined />}
+                  onClick={() => copyText(md, "Đã copy mục này (Markdown)")}
+                >
+                  Sao chép mục này
+                </Button>
+              </div>
+            ),
+          },
+        ]}
+      />
+    </div>
+  );
 }
 
 export default function ImageScanPage() {
@@ -334,14 +404,59 @@ export default function ImageScanPage() {
   const camera = useMemo(() => cameras.find((c) => c.id === cameraId), [cameras, cameraId]);
   const stepStatus = busy ? "process" : failed ? "error" : phase >= 4 ? "finish" : "wait";
 
+  const appendixSections = useMemo(() => {
+    const fromTrace = (trace?.stages ?? []).map((s) => ({
+      stage: s.stage,
+      title: s.label,
+      params: s.params,
+      elapsedMs: s.elapsed_ms,
+    }));
+    const fromDebug = debugSteps.map((s) => ({
+      stage: s.step,
+      title: s.label,
+      params: s.params,
+      elapsedMs: s.elapsed_ms,
+    }));
+    const seen = new Set<string>();
+    const merged = [...fromTrace, ...fromDebug].filter((s) => {
+      if (!lookupAlgorithm(s.stage) || seen.has(s.stage)) return false;
+      seen.add(s.stage);
+      return true;
+    });
+    const fallback = ["original", "preprocess", "detection", "crop", "classifier", "result"];
+    for (const key of fallback) {
+      if (!seen.has(key) && lookupAlgorithm(key)) {
+        merged.push({ stage: key, title: lookupAlgorithm(key)!.algorithm, params: undefined, elapsedMs: null });
+        seen.add(key);
+      }
+    }
+    return merged;
+  }, [trace, debugSteps]);
+
+  const appendixMarkdown = useMemo(
+    () => formatAppendixMarkdown(appendixSections),
+    [appendixSections],
+  );
+
   return (
     <Space direction="vertical" size="large" style={{ width: "100%" }} className="image-scan-lab">
       <style>{`
+        pre.algo-code {
+          background: #f6f8fa;
+          border: 1px solid #eaeaea;
+          border-radius: 6px;
+          padding: 8px 10px;
+          font-size: 11px;
+          line-height: 1.45;
+          white-space: pre-wrap;
+          word-break: break-word;
+        }
         @media print {
           .no-print, .ant-layout-sider, .ant-layout-header, .ant-layout-footer { display: none !important; }
           .ant-layout, .ant-layout-content { margin: 0 !important; padding: 0 !important; }
           .image-scan-lab { color: #000; }
           .print-break { break-inside: avoid; page-break-inside: avoid; }
+          .ant-collapse-content { display: block !important; height: auto !important; }
         }
       `}</style>
       <div>
@@ -349,9 +464,8 @@ export default function ImageScanPage() {
           Tải ảnh &amp; Quét — nhật ký giai đoạn (luận văn)
         </Title>
         <Paragraph type="secondary" style={{ marginBottom: 0 }}>
-          Tải một ảnh quầy (hoặc chụp live). Hệ thống ghi <strong>từng bước tiền xử lý OpenCV</strong> rồi
-          <strong> YOLO / crop / phân loại SKU</strong> kèm ảnh, sau đó tạo giỏ. Dùng nút tải JPEG hoặc
-          In / lưu PDF để đưa vào báo cáo. Giỏ hàng Live vẫn dùng cho thu ngân; trang này dành cho thí nghiệm.
+          Tải một ảnh quầy (hoặc chụp live). Hệ thống ghi từng bước OpenCV rồi YOLO / crop / SKU
+          kèm ảnh, <strong>tên thuật toán và mã nguồn</strong>. Sao chép từng mục hoặc cả phụ lục Markdown để dán Word.
         </Paragraph>
       </div>
 
@@ -395,6 +509,13 @@ export default function ImageScanPage() {
           </Button>
           <Button icon={<PrinterOutlined />} onClick={() => window.print()} disabled={!trace && !analyze}>
             In / lưu PDF
+          </Button>
+          <Button
+            icon={<CopyOutlined />}
+            disabled={appendixSections.length === 0}
+            onClick={() => copyText(appendixMarkdown, "Đã copy phụ lục thuật toán (Markdown)")}
+          >
+            Sao chép phụ lục thuật toán
           </Button>
         </Space>
       </Card>
@@ -476,7 +597,7 @@ export default function ImageScanPage() {
           </Paragraph>
           <Row gutter={[12, 12]}>
             {debugSteps.map((s, i) => (
-              <Col xs={24} sm={12} md={8} xl={6} key={`${s.step}-${i}`}>
+              <Col xs={24} sm={12} lg={8} key={`${s.step}-${i}`}>
                 <Card
                   className="print-break"
                   size="small"
@@ -500,6 +621,12 @@ export default function ImageScanPage() {
                     {s.step}
                     {s.elapsed_ms != null ? ` · ${s.elapsed_ms} ms` : ""}
                   </Text>
+                  <AlgorithmSnippet
+                    stage={s.step}
+                    title={s.label}
+                    params={s.params}
+                    elapsedMs={s.elapsed_ms}
+                  />
                 </Card>
               </Col>
             ))}
@@ -520,7 +647,7 @@ export default function ImageScanPage() {
         >
           <Row gutter={[12, 12]}>
             {trace.stages.map((s) => (
-              <Col xs={24} sm={12} md={8} xl={6} key={s.order}>
+              <Col xs={24} sm={12} lg={8} key={s.order}>
                 <Card
                   className="print-break"
                   size="small"
@@ -546,6 +673,12 @@ export default function ImageScanPage() {
                     {s.stage} · {s.elapsed_ms.toFixed(1)} ms · sáng {s.metrics.brightness.toFixed(0)} · nét{" "}
                     {s.metrics.blur_score.toFixed(0)}
                   </Text>
+                  <AlgorithmSnippet
+                    stage={s.stage}
+                    title={s.label}
+                    params={s.params}
+                    elapsedMs={s.elapsed_ms}
+                  />
                 </Card>
               </Col>
             ))}
@@ -592,6 +725,71 @@ export default function ImageScanPage() {
               </div>
             </div>
           )}
+        </Card>
+      )}
+
+      {appendixSections.length > 0 && (
+        <Card
+          title="Phụ lục thuật toán & mã nguồn (copy vào luận văn)"
+          extra={
+            <Button
+              className="no-print"
+              size="small"
+              icon={<CopyOutlined />}
+              onClick={() => copyText(appendixMarkdown, "Đã copy phụ lục thuật toán (Markdown)")}
+            >
+              Sao chép toàn bộ
+            </Button>
+          }
+        >
+          <Paragraph type="secondary">
+            Dán vào Word: giữ định dạng Markdown hoặc In / lưu PDF. Tên thuật toán kèm tài liệu gốc (Gonzalez &amp; Woods,
+            YOLOv8, ByteTrack, MobileNetV3, CLAHE, …).
+          </Paragraph>
+          {appendixSections.map((s, i) => {
+            const def = lookupAlgorithm(s.stage);
+            if (!def) return null;
+            return (
+              <div key={`${s.stage}-${i}`} className="print-break" style={{ marginBottom: 20 }}>
+                <Title level={5} style={{ marginBottom: 4 }}>
+                  {i + 1}. {s.title}
+                </Title>
+                <Space wrap size={[4, 4]}>
+                  <Tag color="geekblue">{def.algorithm}</Tag>
+                  <Tag>{def.algorithmEn}</Tag>
+                </Space>
+                <div>
+                  <Text type="secondary" style={{ fontSize: 12 }}>
+                    {def.citation}
+                  </Text>
+                </div>
+                <Text code>{def.file}</Text>
+                {s.elapsedMs != null && (
+                  <Text type="secondary" style={{ marginLeft: 8, fontSize: 12 }}>
+                    {s.elapsedMs} ms
+                  </Text>
+                )}
+                <pre className="algo-code">{def.code}</pre>
+                <Button
+                  className="no-print"
+                  size="small"
+                  icon={<CopyOutlined />}
+                  onClick={() =>
+                    copyText(
+                      formatAlgorithmMarkdown(s.stage, {
+                        title: `${i + 1}. ${s.title}`,
+                        params: s.params,
+                        elapsedMs: s.elapsedMs,
+                      }),
+                      "Đã copy mục này",
+                    )
+                  }
+                >
+                  Sao chép mục này
+                </Button>
+              </div>
+            );
+          })}
         </Card>
       )}
     </Space>
