@@ -11,6 +11,7 @@ export type VideoLibraryMeta = {
   type: string;
   createdAt: number;
   roiZones: RoiZone[];
+  poster: string | null;
 };
 
 type VideoRecord = VideoLibraryMeta & { blob: Blob };
@@ -36,6 +37,69 @@ function reqToPromise<T>(req: IDBRequest<T>): Promise<T> {
   });
 }
 
+function toMeta(row: VideoRecord): VideoLibraryMeta {
+  return {
+    id: row.id,
+    name: row.name,
+    size: row.size,
+    type: row.type,
+    createdAt: row.createdAt,
+    roiZones: Array.isArray(row.roiZones) ? row.roiZones : [],
+    poster: row.poster ?? null,
+  };
+}
+
+export function capturePosterFromBlob(blob: Blob): Promise<string | null> {
+  return new Promise((resolve) => {
+    const url = URL.createObjectURL(blob);
+    const video = document.createElement("video");
+    video.muted = true;
+    video.playsInline = true;
+    video.preload = "auto";
+    video.src = url;
+    let done = false;
+    const finish = (data: string | null) => {
+      if (done) return;
+      done = true;
+      window.clearTimeout(timer);
+      URL.revokeObjectURL(url);
+      video.src = "";
+      resolve(data);
+    };
+    const grab = () => {
+      const w = video.videoWidth;
+      const h = video.videoHeight;
+      if (!w || !h) {
+        finish(null);
+        return;
+      }
+      const maxW = 320;
+      const scale = Math.min(1, maxW / w);
+      const canvas = document.createElement("canvas");
+      canvas.width = Math.max(1, Math.round(w * scale));
+      canvas.height = Math.max(1, Math.round(h * scale));
+      const ctx = canvas.getContext("2d");
+      if (!ctx) {
+        finish(null);
+        return;
+      }
+      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+      finish(canvas.toDataURL("image/jpeg", 0.72));
+    };
+    video.addEventListener("seeked", grab, { once: true });
+    video.addEventListener("loadeddata", () => {
+      const t = Math.min(0.4, Math.max(0.05, (video.duration || 1) * 0.08));
+      try {
+        video.currentTime = t;
+      } catch {
+        grab();
+      }
+    });
+    video.addEventListener("error", () => finish(null));
+    const timer = window.setTimeout(() => finish(null), 8000);
+  });
+}
+
 export async function listLibraryVideos(): Promise<VideoLibraryMeta[]> {
   const db = await openDb();
   const rows = await reqToPromise(
@@ -43,11 +107,12 @@ export async function listLibraryVideos(): Promise<VideoLibraryMeta[]> {
   );
   db.close();
   return (rows as VideoRecord[])
-    .map(({ blob: _blob, ...meta }) => meta)
+    .map(toMeta)
     .sort((a, b) => b.createdAt - a.createdAt);
 }
 
 export async function addLibraryVideo(file: File): Promise<VideoLibraryMeta> {
+  const poster = await capturePosterFromBlob(file);
   const record: VideoRecord = {
     id: crypto.randomUUID(),
     name: file.name,
@@ -55,6 +120,7 @@ export async function addLibraryVideo(file: File): Promise<VideoLibraryMeta> {
     type: file.type || "video/mp4",
     createdAt: Date.now(),
     roiZones: [],
+    poster,
     blob: file,
   };
   const db = await openDb();
@@ -71,8 +137,7 @@ export async function addLibraryVideo(file: File): Promise<VideoLibraryMeta> {
     throw err;
   }
   db.close();
-  const { blob: _blob, ...meta } = record;
-  return meta;
+  return toMeta(record);
 }
 
 export async function getLibraryVideo(id: string): Promise<VideoRecord | null> {
@@ -90,12 +155,39 @@ export async function deleteLibraryVideo(id: string): Promise<void> {
   db.close();
 }
 
-export async function saveLibraryRoi(id: string, roiZones: RoiZone[]): Promise<void> {
+async function patchLibraryVideo(
+  id: string,
+  patch: Partial<Pick<VideoLibraryMeta, "roiZones" | "poster">>,
+): Promise<void> {
   const row = await getLibraryVideo(id);
   if (!row) return;
   const db = await openDb();
   await reqToPromise(
-    db.transaction(STORE, "readwrite").objectStore(STORE).put({ ...row, roiZones }),
+    db.transaction(STORE, "readwrite").objectStore(STORE).put({ ...row, ...patch }),
   );
   db.close();
+}
+
+export async function saveLibraryRoi(id: string, roiZones: RoiZone[]): Promise<void> {
+  await patchLibraryVideo(id, { roiZones });
+}
+
+export async function saveLibraryPoster(id: string, poster: string): Promise<void> {
+  await patchLibraryVideo(id, { poster });
+}
+
+/** Fill missing posters for videos added before thumbnails existed. */
+export async function backfillLibraryPosters(
+  onItem?: (id: string, poster: string) => void,
+): Promise<void> {
+  const items = await listLibraryVideos();
+  for (const it of items) {
+    if (it.poster) continue;
+    const row = await getLibraryVideo(it.id);
+    if (!row) continue;
+    const poster = await capturePosterFromBlob(row.blob);
+    if (!poster) continue;
+    await saveLibraryPoster(it.id, poster);
+    onItem?.(it.id, poster);
+  }
 }

@@ -38,6 +38,7 @@ import json
 import logging
 import math
 import os
+import re
 import time
 import uuid
 from datetime import datetime, timezone
@@ -358,6 +359,18 @@ def _resolve_checkout_owner(
     if nearest is None and persons:
         nearest = _closest_visible_person(product_cx, product_cy, persons)
     return nearest
+
+
+def _sanitize_scan_session(raw: str | None) -> str | None:
+    """Stable cart session for Phân tích Video (reuse across frames, isolate from live)."""
+    if not raw:
+        return None
+    s = raw.strip()
+    if not s or len(s) > 80:
+        return None
+    if not re.fullmatch(r"[A-Za-z0-9:_-]+", s):
+        return None
+    return s
 
 
 def _roi_zones_for_frame(
@@ -1235,6 +1248,7 @@ async def process_frame(
     skip_roi: bool = Form(False),
     roi_zones_json: str | None = Form(None, alias="roi_zones"),
     weight_key: str | None = Form(None),
+    scan_session: str | None = Form(None),
     image: UploadFile = File(...),
 ) -> dict[str, Any]:
     frame_started = time.perf_counter()
@@ -1243,6 +1257,10 @@ async def process_frame(
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Empty image upload")
 
     camera_key = str(camera_id) if camera_id else f"{organization_id}:{branch_id}"
+    scan_session_key = _sanitize_scan_session(scan_session)
+    if scan_session_key:
+        # Don't share ByteTrack / checkout RAM with the live till camera.
+        camera_key = f"{camera_key}::video::{scan_session_key}"
     det_weight_path: str | None = None
 
     # DEBUG_AI: collects one image per pipeline step and hands the set to a
@@ -1549,7 +1567,7 @@ async def process_frame(
         # Nhập đơn thủ công từ ảnh upload: mỗi lần là một phiên RIÊNG (đơn mới),
         # emit MỌI sản phẩm nhận được, KHÔNG dedup/đối soát theo phiên live. Nhờ
         # phiên riêng nên không đụng vào giỏ đang chạy của luồng camera.
-        manual_track = f"manual-{uuid.uuid4().hex[:8]}"
+        manual_track = scan_session_key or f"manual-{uuid.uuid4().hex[:8]}"
         present = _aggregate_manual_products(products)
         for sku, (quantity, conf) in present.items():
             event = {

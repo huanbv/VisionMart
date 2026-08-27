@@ -3,10 +3,9 @@
  *
  * Cơ chế:
  *  1. Người dùng upload video (MP4/AVI/MOV...).
- *  2. Video phát trong <video>; mỗi N giây, canvas chụp frame hiện tại → Blob JPEG.
- *  3. Blob được gửi lên POST /ai/ai/frame (manual_scan=false, optional weight_key).
- *  4. Mặc định tạm dừng phát khi đang chờ AI, rồi chạy tiếp — inference chậm
- *     hơn 1× không bỏ khung. Nút Tạm dừng vẫn gửi khung đang đóng băng.
+ *  2. Xem/tua video bình thường — không gửi AI (VPS không GPU vẫn mượt).
+ *  3. Tới đoạn quầy: tạm dừng → Kích hoạt AI tại khung này (vùng thanh toán).
+ *  4. Tuỳ chọn tự chạy từ đây: tua từng bước, video đứng yên lúc inference.
  *  5. Backend nhận events → tạo giỏ hàng → WebSocket thông báo → danh sách giỏ cập nhật.
  *  6. Nút Dừng dừng vòng lặp gửi frame.
  */
@@ -46,7 +45,7 @@ import {
   BorderOuterOutlined,
   CheckCircleOutlined,
   DeleteOutlined,
-  PauseCircleOutlined,
+  ThunderboltOutlined,
   PlayCircleOutlined,
   QrcodeOutlined,
   ReloadOutlined,
@@ -73,6 +72,7 @@ import { listBranches, getOrganization, type Branch } from "@/api/tenancy";
 import { listCameras, getRoiZones, type Camera, type RoiZone } from "@/api/cameras";
 import { tokenStore } from "@/api/client";
 import RoiZoneEditor from "@/components/RoiZoneEditor";
+import VideoLibraryGrid from "@/components/VideoLibraryGrid";
 import { listTrainingJobs, type TrainingJob } from "@/api/aiTraining";
 import {
   mapNormToContent,
@@ -85,6 +85,7 @@ import {
   getLibraryVideo,
   listLibraryVideos,
   saveLibraryRoi,
+  backfillLibraryPosters,
   type VideoLibraryMeta,
 } from "@/utils/videoLibrary";
 
@@ -159,11 +160,11 @@ export default function VideoAnalysisPage() {
   const [libraryItems, setLibraryItems] = useState<VideoLibraryMeta[]>([]);
   const [selectedVideoId, setSelectedVideoId] = useState<string | undefined>();
   const [isRunning, setIsRunning] = useState(false);
+  const [isSending, setIsSending] = useState(false);
   const [isPaused, setIsPaused] = useState(false);
   const [frameInterval, setFrameInterval] = useState(2);
   const [minConfidence, setMinConfidence] = useState(0.6);
   const [cleanBeforeStart, setCleanBeforeStart] = useState(true);
-  const [pauseForAi, setPauseForAi] = useState(true);
   const [weightKey, setWeightKey] = useState<string>("live");
   const [trainingJobs, setTrainingJobs] = useState<TrainingJob[]>([]);
   const [framesProcessed, setFramesProcessed] = useState(0);
@@ -183,7 +184,8 @@ export default function VideoAnalysisPage() {
   const runningRef = useRef(false);
   const userPausedRef = useRef(false);
   const autoPausingRef = useRef(false);
-  const loopWakeRef = useRef<Set<() => void>>(new Set());
+  const scanSessionRef = useRef<string | null>(null);
+  const sendingRef = useRef(false);
   const lastDetectionsRef = useRef<any[]>([]);
   const selectedVideoIdRef = useRef<string | undefined>(undefined);
   const videoUrlRef = useRef<string | null>(null);
@@ -231,7 +233,13 @@ export default function VideoAnalysisPage() {
       .then((z) => {
         setRoiZones(z);
         const vidId = selectedVideoIdRef.current;
-        if (vidId) void saveLibraryRoi(vidId, z);
+        if (vidId) {
+          void saveLibraryRoi(vidId, z).then(() =>
+            setLibraryItems((prev) =>
+              prev.map((it) => (it.id === vidId ? { ...it, roiZones: z } : it)),
+            ),
+          );
+        }
         message.success(
           z.length
             ? `Đã nạp ${z.length} vùng từ camera — chỉnh lại nếu góc video khác`
@@ -371,10 +379,23 @@ export default function VideoAnalysisPage() {
   }, [videoUrl, drawDetectionsOverlay]);
 
   useEffect(() => {
+    let cancelled = false;
     listLibraryVideos()
-      .then(setLibraryItems)
-      .catch(() => setLibraryItems([]));
+      .then((items) => {
+        if (!cancelled) setLibraryItems(items);
+        return backfillLibraryPosters((id, poster) => {
+          if (!cancelled) {
+            setLibraryItems((prev) =>
+              prev.map((it) => (it.id === id ? { ...it, poster } : it)),
+            );
+          }
+        });
+      })
+      .catch(() => {
+        if (!cancelled) setLibraryItems([]);
+      });
     return () => {
+      cancelled = true;
       if (videoUrlRef.current) URL.revokeObjectURL(videoUrlRef.current);
     };
   }, []);
@@ -554,9 +575,10 @@ export default function VideoAnalysisPage() {
     stopRef.current = true;
     runningRef.current = false;
     setIsRunning(false);
-    setIsPaused(false);
+    setIsSending(false);
     setHasStartedAnalysis(false);
     videoStartTimeRef.current = null;
+    scanSessionRef.current = null;
     if (videoUrlRef.current) URL.revokeObjectURL(videoUrlRef.current);
     const file = new File([row.blob], row.name, { type: row.type || "video/mp4" });
     const url = URL.createObjectURL(row.blob);
@@ -568,7 +590,14 @@ export default function VideoAnalysisPage() {
     setFramesProcessed(0);
     setFramesAccepted(0);
     setLastFrameResult(null);
-    addLog("info", `📂 Đã chọn video: ${row.name}`, `Kích thước: ${(row.size / 1024 / 1024).toFixed(1)} MB`);
+    const n = row.roiZones?.length ?? 0;
+    addLog(
+      "info",
+      `📂 Đã chọn video: ${row.name}`,
+      n
+        ? `Dùng lại ${n} vùng thanh toán đã lưu — không cần vẽ lại`
+        : `Kích thước: ${(row.size / 1024 / 1024).toFixed(1)} MB · chưa có vùng, hãy vẽ trước khi phân tích`,
+    );
   }, [addLog]);
 
   const handleVideoUpload = (file: File) => {
@@ -601,6 +630,7 @@ export default function VideoAnalysisPage() {
       stopRef.current = true;
       runningRef.current = false;
       setIsRunning(false);
+      scanSessionRef.current = null;
       if (videoUrlRef.current) URL.revokeObjectURL(videoUrlRef.current);
       setVideoFile(null);
       setVideoUrl(null);
@@ -630,22 +660,20 @@ export default function VideoAnalysisPage() {
     const canvas = canvasRef.current;
     if (!video || !canvas || !organizationId || !branchId) return;
     if (video.ended) return;
+    if (sendingRef.current) return;
+    sendingRef.current = true;
 
-    let autoPaused = false;
-    if (pauseForAi && !video.paused && !userPausedRef.current) {
-      autoPausingRef.current = true;
-      video.pause();
-      autoPausingRef.current = false;
-      autoPaused = true;
-    }
+    autoPausingRef.current = true;
+    video.pause();
+    autoPausingRef.current = false;
+    userPausedRef.current = true;
+    setIsPaused(true);
 
     canvas.width = video.videoWidth || 640;
     canvas.height = video.videoHeight || 480;
     const ctx = canvas.getContext("2d");
     if (!ctx) {
-      if (autoPaused && !userPausedRef.current && !stopRef.current) {
-        video.play().catch(() => {});
-      }
+      sendingRef.current = false;
       return;
     }
     ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
@@ -654,9 +682,7 @@ export default function VideoAnalysisPage() {
       canvas.toBlob(resolve, "image/jpeg", 0.85)
     );
     if (!blob) {
-      if (autoPaused && !userPausedRef.current && !stopRef.current) {
-        video.play().catch(() => {});
-      }
+      sendingRef.current = false;
       return;
     }
 
@@ -664,9 +690,13 @@ export default function VideoAnalysisPage() {
     form.append("organization_id", organizationId);
     form.append("branch_id", branchId);
     if (cameraId) form.append("camera_id", cameraId);
-    form.append("manual_scan", "false");
+    // Quét như Tải ảnh: một giỏ theo vùng thanh toán, không tách theo từng người trong khung.
+    form.append("manual_scan", "true");
     form.append("min_confidence", String(minConfidence));
     form.append("recognize_face", "false");
+    if (scanSessionRef.current) {
+      form.append("scan_session", scanSessionRef.current);
+    }
     if (weightKey && weightKey !== "live") {
       form.append("weight_key", weightKey);
     }
@@ -702,7 +732,6 @@ export default function VideoAnalysisPage() {
         ? result.model.split(/[/\\]/).pop()
         : null;
 
-      // Draw detection bounding boxes (people & products) on overlay canvas!
       drawDetectionsOverlay(detections);
 
       setFramesProcessed((n) => n + 1);
@@ -722,145 +751,117 @@ export default function VideoAnalysisPage() {
 
       if (detectedSkus) {
         addLog("add", `🔍 Phát hiện & Nhận dạng SKU: ${detectedSkus}`, `${products} sản phẩm trong khung${elapsedPart}`);
+      } else {
+        addLog("info", "AI đã quét khung này", `${persons} người · ${products} SP${elapsedPart || ""}`);
       }
     } catch (err) {
       addLog("error", "Lỗi gửi frame", String(err));
     } finally {
-      if (autoPaused && !userPausedRef.current && !stopRef.current) {
-        video.play().catch(() => {});
-      }
+      sendingRef.current = false;
     }
-  }, [organizationId, branchId, cameraId, minConfidence, addLog, drawDetectionsOverlay, roiZones, pauseForAi, weightKey]);
+  }, [organizationId, branchId, cameraId, minConfidence, addLog, drawDetectionsOverlay, roiZones, weightKey]);
 
-  const wakeLoop = useCallback(() => {
-    loopWakeRef.current.forEach((resolve) => resolve());
-    loopWakeRef.current.clear();
-  }, []);
-
-  const waitMsOrWake = useCallback((ms: number) => {
-    return new Promise<void>((resolve) => {
+  const waitSeeked = (video: HTMLVideoElement) =>
+    new Promise<void>((resolve) => {
       const done = () => {
-        loopWakeRef.current.delete(done);
-        window.clearTimeout(timer);
+        video.removeEventListener("seeked", done);
         resolve();
       };
-      loopWakeRef.current.add(done);
-      const timer = window.setTimeout(done, ms);
+      video.addEventListener("seeked", done);
+      window.setTimeout(done, 800);
     });
-  }, []);
 
-  const waitWhileUserPaused = useCallback(() => {
+  const ensureAnalysisSession = async () => {
+    if (scanSessionRef.current) return;
+    const token = `vid-${(selectedVideoId || "tmp").replace(/[^A-Za-z0-9_-]/g, "").slice(0, 40)}-${Date.now().toString(36)}`;
+    scanSessionRef.current = token;
+    videoStartTimeRef.current = Date.now();
+    setHasStartedAnalysis(true);
+    if (cleanBeforeStart && carts.length > 0 && branchId) {
+      try {
+        await bulkAbandonCarts(carts.map((c) => c.id), branchId);
+        setCarts([]);
+        addLog("remove", `🗑️ Đã dọn ${carts.length} giỏ hàng cũ`, "Giỏ mới cho phiên phân tích này");
+      } catch { /* non-fatal */ }
+    } else if (cleanBeforeStart) {
+      setCarts([]);
+    }
+    await resetSession(cameraId);
+    setFramesProcessed(0);
+    setFramesAccepted(0);
+  };
+
+  const handleActivateAi = async () => {
     const video = videoRef.current;
-    return new Promise<void>((resolve) => {
-      if (!video || !video.paused || video.ended || stopRef.current || !userPausedRef.current) {
-        resolve();
-        return;
-      }
-      const finish = () => {
-        video.removeEventListener("play", finish);
-        video.removeEventListener("seeked", finish);
-        window.clearInterval(poll);
-        resolve();
-      };
-      video.addEventListener("play", finish);
-      video.addEventListener("seeked", finish);
-      const poll = window.setInterval(() => {
-        if (stopRef.current || !userPausedRef.current || !video.paused) finish();
-      }, 200);
-    });
-  }, []);
+    if (!video || !videoUrl) { message.warning("Chưa chọn video"); return; }
+    if (!organizationId || !branchId) { message.warning("Chưa chọn chi nhánh"); return; }
+    if (!video.videoWidth) {
+      message.warning("Chờ video tải xong, tua tới đoạn cần quét, rồi kích hoạt AI");
+      return;
+    }
+    await ensureAnalysisSession();
+    video.pause();
+    userPausedRef.current = true;
+    setIsPaused(true);
+    setIsSending(true);
+    const t = video.currentTime;
+    addLog("info", "⚡ Kích hoạt AI tại khung này", `t=${t.toFixed(1)}s · tạm dừng video · quét vùng thanh toán`);
+    await captureAndSendFrame();
+    setIsSending(false);
+    loadCarts();
+  };
 
-  const runLoop = useCallback(async () => {
+  const runStepLoop = useCallback(async () => {
     if (runningRef.current) return;
     runningRef.current = true;
     stopRef.current = false;
     const video = videoRef.current;
     if (!video) { runningRef.current = false; return; }
 
-    const modelHint = weightKey !== "live" ? ` · model ${weightKey.split("/").pop()}` : " · model live";
-    addLog("info", "▶️ Bắt đầu phân tích video", `Gửi frame mỗi ${frameInterval}s${pauseForAi ? " · tạm video khi gửi AI" : ""}${modelHint}`);
+    addLog("info", "▶️ Tự chạy AI từ đây", `Video đứng yên, mỗi ${frameInterval}s tua tới khung kế (phù hợp VPS không GPU)`);
 
     while (!stopRef.current) {
-      if (video.ended) {
-        addLog("info", "🏁 Video kết thúc", "Phân tích hoàn tất");
+      if (video.ended || video.currentTime >= (video.duration || 0) - 0.05) {
+        addLog("info", "🏁 Hết video", "Đã quét tới cuối");
         break;
       }
       await captureAndSendFrame();
       if (stopRef.current) break;
-      if (userPausedRef.current && video.paused) {
-        await waitWhileUserPaused();
-      } else {
-        await waitMsOrWake(frameInterval * 1000);
+      const next = video.currentTime + frameInterval;
+      if (next >= (video.duration || next)) {
+        addLog("info", "🏁 Hết video", "Đã quét tới cuối");
+        break;
       }
+      video.currentTime = next;
+      await waitSeeked(video);
     }
 
     runningRef.current = false;
     setIsRunning(false);
-    setIsPaused(false);
-  }, [captureAndSendFrame, frameInterval, addLog, pauseForAi, weightKey, waitMsOrWake, waitWhileUserPaused]);
+  }, [captureAndSendFrame, frameInterval, addLog]);
 
-  const handleStart = async () => {
+  const handleStepFromHere = async () => {
     const video = videoRef.current;
-    if (!video || !videoUrl) { message.warning("Chưa tải video"); return; }
+    if (!video || !videoUrl) { message.warning("Chưa chọn video"); return; }
     if (!organizationId || !branchId) { message.warning("Chưa chọn chi nhánh"); return; }
-
-    // Ghi lại thời điểm bắt đầu phân tích video
-    videoStartTimeRef.current = Date.now();
-    setHasStartedAnalysis(true);
-
-    // 1. Dọn giỏ cũ nếu được bật
-    if (cleanBeforeStart && carts.length > 0) {
-      try {
-        await bulkAbandonCarts(carts.map((c) => c.id), branchId);
-        setCarts([]);
-        addLog("remove", `🗑️ Đã dọn ${carts.length} giỏ hàng cũ`, "Chuẩn bị phân tích video mới");
-      } catch { /* non-fatal */ }
-    } else if (cleanBeforeStart) {
-      setCarts([]);
-    }
-
-    // 2. Reset checkout session -> 1 giỏ mới cho video
-    await resetSession(cameraId);
-
-    // 3. Reset video, overlay & logs
-    video.currentTime = 0;
-    video.play().catch(() => {});
-    clearOverlayCanvas();
+    await ensureAnalysisSession();
+    video.pause();
+    userPausedRef.current = true;
+    setIsPaused(true);
     setIsRunning(true);
-    setIsPaused(false);
-    userPausedRef.current = false;
-    setFramesProcessed(0);
-    setFramesAccepted(0);
-    setLogs([]);
-    runLoop();
+    runStepLoop();
   };
 
   const handleStop = () => {
     stopRef.current = true;
     userPausedRef.current = false;
-    wakeLoop();
     setIsRunning(false);
-    setIsPaused(false);
+    setIsSending(false);
+    scanSessionRef.current = null;
     videoRef.current?.pause();
-    clearOverlayCanvas();
-    addLog("info", "⏹️ Đã dừng phân tích video");
+    setIsPaused(true);
+    addLog("info", "⏹️ Đã dừng AI — có thể tua video tiếp, không gửi thêm frame");
     loadCarts();
-  };
-
-  const handlePause = () => {
-    const video = videoRef.current;
-    if (!video) return;
-    if (video.paused && userPausedRef.current) {
-      userPausedRef.current = false;
-      video.play().catch(() => {});
-      setIsPaused(false);
-      wakeLoop();
-    } else {
-      userPausedRef.current = true;
-      video.pause();
-      setIsPaused(true);
-      wakeLoop();
-    }
   };
 
   const onCheckout = async (cart: Cart) => {
@@ -975,65 +976,47 @@ export default function VideoAnalysisPage() {
         }
       >
         <Row gutter={[16, 16]}>
+          <Col span={24}>
+            <Space direction="vertical" style={{ width: "100%" }} size="small">
+              <Space wrap style={{ width: "100%", justifyContent: "space-between" }}>
+                <Typography.Text strong>Thư viện video</Typography.Text>
+                <Upload
+                  accept="video/*"
+                  multiple
+                  beforeUpload={handleVideoUpload}
+                  showUploadList={false}
+                  disabled={isRunning}
+                >
+                  <Button icon={<UploadOutlined />} disabled={isRunning}>
+                    Thêm video vào thư viện
+                  </Button>
+                </Upload>
+              </Space>
+              <VideoLibraryGrid
+                items={libraryItems}
+                selectedId={selectedVideoId}
+                disabled={isRunning}
+                onSelect={(id) => void activateLibraryVideo(id)}
+                onDelete={(id) => void handleDeleteLibraryVideo(id)}
+              />
+              <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                Mỗi ô là một video — vùng thanh toán vẽ trên video đó được nhớ riêng.
+                Chọn lại là dùng lại bản đồ, không phải vẽ mỗi lần test.
+              </Typography.Text>
+            </Space>
+          </Col>
           {/* Controls */}
           <Col xs={24} md={9}>
             <Space direction="vertical" style={{ width: "100%" }} size="middle">
-              <Upload
-                accept="video/*"
-                multiple
-                beforeUpload={handleVideoUpload}
-                showUploadList={false}
-                disabled={isRunning}
-              >
-                <Button icon={<UploadOutlined />} style={{ width: "100%" }} disabled={isRunning}>
-                  Thêm video vào thư viện
-                </Button>
-              </Upload>
-              <Select
-                style={{ width: "100%" }}
-                placeholder={libraryItems.length ? "Chọn video đã lưu để test" : "Chưa có video — hãy thêm file"}
-                value={selectedVideoId}
-                onChange={(id) => void activateLibraryVideo(id)}
-                disabled={isRunning || libraryItems.length === 0}
-                options={libraryItems.map((v) => ({
-                  value: v.id,
-                  label: `${v.name} (${(v.size / 1024 / 1024).toFixed(1)} MB)`,
-                }))}
-                showSearch
-                optionFilterProp="label"
-              />
-              {selectedVideoId && (
-                <Popconfirm
-                  title="Xóa video này khỏi thư viện máy?"
-                  onConfirm={() => void handleDeleteLibraryVideo(selectedVideoId)}
-                  okText="Xóa"
-                  cancelText="Không"
-                  disabled={isRunning}
-                >
-                  <Button
-                    danger
-                    size="small"
-                    icon={<DeleteOutlined />}
-                    disabled={isRunning}
-                    style={{ width: "100%" }}
-                  >
-                    Xóa video đang chọn
-                  </Button>
-                </Popconfirm>
-              )}
-              <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                Video lưu trên trình duyệt này — lần sau chỉ cần chọn lại, không tải lên nữa.
-                Vùng thanh toán được nhớ theo từng video.
-              </Typography.Text>
-
               <Button
                 icon={<BorderOuterOutlined />}
                 onClick={openRoiEditor}
                 disabled={!videoFile || isRunning}
                 style={{ width: "100%" }}
               >
-                Vẽ vùng thanh toán trên video
-                {roiZones.length > 0 ? ` (${roiZones.length})` : ""}
+                {roiZones.length > 0
+                  ? `Sửa vùng thanh toán (${roiZones.length})`
+                  : "Vẽ vùng thanh toán cho video này"}
               </Button>
               <Button
                 size="small"
@@ -1045,18 +1028,17 @@ export default function VideoAnalysisPage() {
               </Button>
               {roiZones.length > 0 ? (
                 <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                  AI chỉ nhận diện trong {roiZones.length} vùng đã vẽ trên khung video
-                  (không dùng vùng camera live nếu góc máy khác).
+                  Đã nhớ {roiZones.length} vùng cho video đang chọn — lần sau chọn lại ô này sẽ dùng luôn.
                 </Typography.Text>
               ) : (
                 <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                  Chưa có vùng — AI quét toàn khung. Nên vẽ vùng mặt quầy trước khi phân tích.
+                  Video này chưa có vùng — AI quét toàn khung. Vẽ vùng mặt quầy một lần, lần sau không phải vẽ lại.
                 </Typography.Text>
               )}
 
               <Card size="small" style={{ background: "#fafafa" }}>
                 <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                  Gửi frame AI mỗi (giây):
+                  Gửi / tua khung AI mỗi (giây) — chỉ khi bấm “Tự chạy AI từ đây”:
                 </Typography.Text>
                 <Row align="middle" gutter={8}>
                   <Col flex="auto">
@@ -1092,25 +1074,20 @@ export default function VideoAnalysisPage() {
                     checked={cleanBeforeStart}
                     onChange={setCleanBeforeStart}
                     size="small"
-                    disabled={isRunning}
+                    disabled={isRunning || isSending}
                   />
                   <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                    Don sach gio cu truoc khi bat dau
+                    Dọn giỏ cũ khi kích hoạt AI lần đầu
                   </Typography.Text>
                 </Space>
 
-                <Space style={{ marginTop: 8 }} align="start">
-                  <Switch
-                    checked={pauseForAi}
-                    onChange={setPauseForAi}
-                    size="small"
-                    disabled={isRunning}
-                  />
-                  <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                    Tạm dừng video khi đang gửi AI — để hệ thống kịp nhận diện,
-                    không bỏ khung vì inference chậm hơn phát 1×
-                  </Typography.Text>
-                </Space>
+                <Alert
+                  type="info"
+                  showIcon
+                  style={{ marginTop: 10 }}
+                  message="Xem video trước, AI sau"
+                  description="Phát/tua video bình thường (không tốn GPU). Tới đoạn quầy thì tạm dừng rồi bấm Kích hoạt AI — VPS không GPU không phải vừa phát vừa nhận diện."
+                />
 
                 <Typography.Text type="secondary" style={{ fontSize: 12, marginTop: 12, display: "block" }}>
                   Model để test (không triển khai live):
@@ -1130,37 +1107,35 @@ export default function VideoAnalysisPage() {
                 </Typography.Text>
               </Card>
 
-              <Space style={{ width: "100%", justifyContent: "center" }} size="middle">
-                {!isRunning ? (
+              <Space direction="vertical" style={{ width: "100%" }} size="small">
+                <Button
+                  type="primary"
+                  icon={<ThunderboltOutlined />}
+                  onClick={() => void handleActivateAi()}
+                  disabled={!videoFile || !branchId || isSending || isRunning}
+                  loading={isSending}
+                  size="large"
+                  style={{ width: "100%", fontWeight: 600 }}
+                >
+                  Kích hoạt AI tại khung này
+                </Button>
+                <Space style={{ width: "100%", justifyContent: "center" }} wrap>
                   <Button
-                    type="primary"
                     icon={<PlayCircleOutlined />}
-                    onClick={handleStart}
-                    disabled={!videoFile || !branchId}
-                    size="large"
-                    style={{ minWidth: 160, fontWeight: 600 }}
+                    onClick={() => void handleStepFromHere()}
+                    disabled={!videoFile || !branchId || isSending || isRunning}
                   >
-                    ▶ Bắt đầu phân tích
+                    Tự chạy AI từ đây
                   </Button>
-                ) : (
-                  <>
-                    <Button icon={isPaused ? <PlayCircleOutlined /> : <PauseCircleOutlined />} onClick={handlePause} size="large">
-                      {isPaused ? "Tiếp tục" : "Tạm dừng"}
+                  {(isRunning || isSending) && (
+                    <Button danger type="primary" icon={<StopOutlined />} onClick={handleStop}>
+                      Dừng AI
                     </Button>
-                    <Button
-                      danger type="primary"
-                      icon={<StopOutlined />}
-                      onClick={handleStop}
-                      size="large"
-                      style={{ minWidth: 120, fontWeight: 600 }}
-                    >
-                      ⏹ Dừng
-                    </Button>
-                  </>
-                )}
+                  )}
+                </Space>
               </Space>
 
-              {(framesProcessed > 0 || isRunning) && (
+              {(framesProcessed > 0 || isRunning || isSending) && (
                 <Card size="small" style={{ background: "#f6ffed", border: "1px solid #b7eb8f" }}>
                   <Row gutter={16}>
                     <Col span={12}>
@@ -1175,7 +1150,10 @@ export default function VideoAnalysisPage() {
                       📊 Frame gần nhất: {lastFrameResult}
                     </Typography.Text>
                   )}
-                  {isRunning && (
+                  {isSending && (
+                    <Progress percent={100} status="active" showInfo={false} strokeColor="#faad14" style={{ marginTop: 8, marginBottom: 0 }} />
+                  )}
+                  {isRunning && !isSending && (
                     <Progress percent={100} status="active" showInfo={false} strokeColor="#52c41a" style={{ marginTop: 8, marginBottom: 0 }} />
                   )}
                 </Card>
@@ -1184,7 +1162,7 @@ export default function VideoAnalysisPage() {
               <Card size="small" title="📋 Nhật ký sự kiện AI" style={{ maxHeight: 260, overflowY: "auto" }}>
                 {logs.length === 0 ? (
                   <Typography.Text type="secondary" style={{ fontSize: 11 }}>
-                    Chưa có sự kiện. Tải video và nhấn Bắt đầu phân tích.
+                    Chưa có sự kiện. Phát video tới đoạn quầy, tạm dừng, rồi Kích hoạt AI.
                   </Typography.Text>
                 ) : (
                   <Timeline
@@ -1226,21 +1204,17 @@ export default function VideoAnalysisPage() {
                     onLoadedData={() => drawDetectionsOverlay(lastDetectionsRef.current)}
                     onLoadedMetadata={() => drawDetectionsOverlay(lastDetectionsRef.current)}
                     onPause={() => {
-                      if (autoPausingRef.current || stopRef.current) return;
-                      if (runningRef.current) {
-                        userPausedRef.current = true;
-                        setIsPaused(true);
-                        wakeLoop();
-                      }
+                      if (autoPausingRef.current) return;
+                      setIsPaused(true);
                     }}
                     onPlay={() => {
                       if (autoPausingRef.current) return;
-                      userPausedRef.current = false;
                       setIsPaused(false);
-                      wakeLoop();
-                    }}
-                    onSeeked={() => {
-                      if (runningRef.current && userPausedRef.current) wakeLoop();
+                      if (runningRef.current) {
+                        stopRef.current = true;
+                        runningRef.current = false;
+                        setIsRunning(false);
+                      }
                     }}
                   />
                   <canvas
@@ -1262,12 +1236,17 @@ export default function VideoAnalysisPage() {
                 </div>
               )}
               <canvas ref={canvasRef} style={{ display: "none" }} />
-              {isRunning && !isPaused && (
-                <div style={{ position: "absolute", top: 10, right: 10, background: "rgba(82,196,26,0.92)", color: "#fff", padding: "4px 12px", borderRadius: 20, fontSize: 12, fontWeight: 700, boxShadow: "0 2px 8px rgba(0,0,0,0.25)" }}>
-                  🔴 AI đang phân tích
+              {isSending && (
+                <div style={{ position: "absolute", top: 10, right: 10, background: "rgba(250,140,22,0.92)", color: "#fff", padding: "4px 12px", borderRadius: 20, fontSize: 12, fontWeight: 700, boxShadow: "0 2px 8px rgba(0,0,0,0.25)" }}>
+                  ⚡ Đang gửi AI
                 </div>
               )}
-              {isPaused && (
+              {isRunning && !isSending && (
+                <div style={{ position: "absolute", top: 10, right: 10, background: "rgba(82,196,26,0.92)", color: "#fff", padding: "4px 12px", borderRadius: 20, fontSize: 12, fontWeight: 700, boxShadow: "0 2px 8px rgba(0,0,0,0.25)" }}>
+                  AI tự chạy từ đây
+                </div>
+              )}
+              {isPaused && !isSending && !isRunning && videoUrl && (
                 <div style={{ position: "absolute", top: 10, right: 10, background: "rgba(250,140,22,0.92)", color: "#fff", padding: "4px 12px", borderRadius: 20, fontSize: 12, fontWeight: 700 }}>
                   ⏸ Đã tạm dừng
                 </div>
@@ -1280,12 +1259,11 @@ export default function VideoAnalysisPage() {
                 description={
                   <ol style={{ margin: 0, paddingLeft: 18, fontSize: 13 }}>
                     <li>Chọn chi nhánh và camera quầy (để ghi giỏ vào đúng chi nhánh)</li>
-                    <li>Nhấn <strong>"Thêm video vào thư viện"</strong> (có thể nhiều file). Lần sau chỉ cần chọn lại trong danh sách</li>
-                    <li>Tua tới khung thấy mặt quầy, nhấn <strong>"Vẽ vùng thanh toán trên video"</strong> — AI chỉ quét trong vùng đó</li>
-                    <li>Chọn tần suất gửi frame (2s phù hợp với hầu hết video)</li>
-                    <li>Nhấn <strong>"▶ Bắt đầu phân tích"</strong> — AI quét từng frame tự động</li>
-                    <li>Sản phẩm được nhận diện sẽ tự thêm vào giỏ hàng bên dưới</li>
-                    <li>Nhấn <strong>"⏹ Dừng"</strong> để kết thúc bất cứ lúc nào</li>
+                    <li>Nhấn <strong>"Thêm video vào thư viện"</strong> — hiện dạng lưới. Bấm ô để chọn</li>
+                    <li>Vẽ vùng thanh toán <strong>một lần cho từng video</strong>; lần sau chọn lại ô đó là dùng bản đồ đã lưu</li>
+                    <li>Phát/tua video <strong>bình thường</strong> tới đoạn cần quét (chưa gửi AI)</li>
+                    <li>Tạm dừng, nhấn <strong>Kích hoạt AI tại khung này</strong> — quét vùng thanh toán, một giỏ</li>
+                    <li>Tuỳ chọn <strong>Tự chạy AI từ đây</strong> nếu muốn tua từng bước (VPS không GPU)</li>
                   </ol>
                 }
                 type="info"
