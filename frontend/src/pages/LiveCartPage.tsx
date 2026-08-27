@@ -7,6 +7,7 @@ import {
   Col,
   Divider,
   Empty,
+  Image,
   List,
   Popconfirm,
   Row,
@@ -45,6 +46,7 @@ import {
   checkoutCart,
   confirmCheckoutStaff,
   getCartCustomerPhotoUrl,
+  getCartLinePhotoUrl,
   getCheckoutQr,
   listCarts,
   removeCartLine,
@@ -243,6 +245,73 @@ function CartCustomerPhoto({ cartId, size = 36 }: { cartId: string; size?: numbe
         border: "1.5px solid #2f54eb",
         backgroundColor: "#f5f5f5",
       }}
+    />
+  );
+}
+
+/**
+ * Crop cận cảnh sản phẩm lúc AI detect — cùng khuôn blob JWT với
+ * CartCustomerPhoto. Người gọi phải unmount để revoke URL.
+ */
+function CartLinePhoto({
+  cartId,
+  lineId,
+  size = 48,
+}: {
+  cartId: string;
+  lineId: string;
+  size?: number;
+}) {
+  const [url, setUrl] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    let objectUrl: string | null = null;
+    getCartLinePhotoUrl(cartId, lineId)
+      .then((u) => {
+        if (cancelled) {
+          URL.revokeObjectURL(u);
+          return;
+        }
+        objectUrl = u;
+        setUrl(u);
+      })
+      .catch(() => {
+        if (!cancelled) setUrl(null);
+      });
+    return () => {
+      cancelled = true;
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    };
+  }, [cartId, lineId]);
+
+  if (!url) {
+    return (
+      <div
+        style={{
+          width: size,
+          height: size,
+          borderRadius: 6,
+          background: "#f5f5f5",
+          border: "1px solid #d9d9d9",
+          flexShrink: 0,
+        }}
+      />
+    );
+  }
+  return (
+    <Image
+      src={url}
+      alt="Crop sản phẩm"
+      width={size}
+      height={size}
+      style={{
+        objectFit: "cover",
+        borderRadius: 6,
+        border: "1px solid #d9d9d9",
+        flexShrink: 0,
+      }}
+      preview={{ mask: "Xem cận cảnh" }}
     />
   );
 }
@@ -1204,6 +1273,15 @@ export default function LiveCartPage() {
                       ]}
                     >
                       <List.Item.Meta
+                        avatar={
+                          line.has_photo ? (
+                            <CartLinePhoto
+                              cartId={cart.id}
+                              lineId={line.line_id}
+                              size={52}
+                            />
+                          ) : undefined
+                        }
                         title={
                           <Space>
                             <Typography.Text strong>{line.product_name}</Typography.Text>

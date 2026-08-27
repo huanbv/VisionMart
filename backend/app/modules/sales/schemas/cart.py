@@ -12,6 +12,8 @@ from app.modules.sales.infrastructure.models import CartSource, CartStatus
 
 
 class CartLine(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
     line_id: str
     product_id: uuid.UUID
     sku: str
@@ -26,6 +28,9 @@ class CartLine(BaseModel):
     # and Principle 2: every AI prediction is probabilistic.
     confidence: float = 1.0
     added_at: datetime
+    # True khi ai-engine đã lưu crop cận cảnh lúc detect. Frontend gọi
+    # GET /carts/{id}/lines/{line_id}/photo — không trả MinIO key ra ngoài.
+    has_photo: bool = False
 
 
 class CartResponse(BaseModel):

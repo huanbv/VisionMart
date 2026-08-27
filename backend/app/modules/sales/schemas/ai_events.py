@@ -38,6 +38,7 @@ class AICartEventRequest(BaseModel):
     confidence: float = Field(default=1.0, ge=0.0, le=1.0)
     customer_id: uuid.UUID | None = None
     customer_photo_key: str | None = Field(default=None, max_length=512)
+    product_photo_key: str | None = Field(default=None, max_length=512)
     occurred_at: datetime | None = None
 
 

@@ -132,6 +132,7 @@ _TRACK_ALIAS: dict[str, dict[int, str]] = {}
 #     "state": "CANDIDATE" | "ASSOCIATED" | "FALLBACK",
 #     "unassigned_since": float | None,
 #     "counted": bool,                 # đã phát product_scanned chưa
+#     "x1","y1","x2","y2": float,      # bbox YOLO khung gần nhất — crop giỏ
 # } }
 _PHYSICAL_PRODUCTS: dict[str, dict[str, dict[str, Any]]] = {}
 
@@ -991,6 +992,98 @@ def _aggregate_manual_products(
     return aggregated
 
 
+def _remember_product_box(pp: dict[str, Any], product: TrackedObject) -> None:
+    """Keep the latest YOLO box so checkout can crop a close-up for the cart."""
+    pp["x1"] = float(product.x1)
+    pp["y1"] = float(product.y1)
+    pp["x2"] = float(product.x2)
+    pp["y2"] = float(product.y2)
+
+
+def _best_product_for_sku(
+    products: list[tuple[TrackedObject, str]], sku: str
+) -> TrackedObject | None:
+    matches = [p for p, s in products if s == sku]
+    if not matches:
+        return None
+    return max(matches, key=lambda p: float(p.confidence))
+
+
+def product_crop_jpeg(
+    frame_bgr: Any,
+    x1: float,
+    y1: float,
+    x2: float,
+    y2: float,
+) -> bytes | None:
+    """Close-up JPEG of one detection. None if the box is unusable."""
+    import cv2
+
+    from app.vision.crop.cropper import crop_detection, is_degenerate_box
+
+    if frame_bgr is None or getattr(frame_bgr, "size", 0) == 0:
+        return None
+    h, w = frame_bgr.shape[:2]
+    if is_degenerate_box(x1, y1, x2, y2, w, h):
+        return None
+    crop = crop_detection(frame_bgr, x1, y1, x2, y2, padding=0.12, min_size=24)
+    if crop is None:
+        return None
+    ok, buf = cv2.imencode(".jpg", crop.image, [int(cv2.IMWRITE_JPEG_QUALITY), 85])
+    if not ok:
+        return None
+    return buf.tobytes()
+
+
+def _upload_product_crop(
+    frame_bgr: Any,
+    *,
+    x1: float,
+    y1: float,
+    x2: float,
+    y2: float,
+    organization_id: uuid.UUID,
+    event_id: str,
+) -> str | None:
+    jpeg = product_crop_jpeg(frame_bgr, x1, y1, x2, y2)
+    if not jpeg:
+        return None
+    try:
+        from app.services import object_storage
+
+        key = f"carts/product-crops/{organization_id}/{event_id}.jpg"
+        object_storage.put_bytes(key, jpeg, "image/jpeg")
+        return key
+    except Exception:  # noqa: BLE001
+        logger.exception("upload product_photo_key failed for event=%s", event_id)
+        return None
+
+
+def _attach_product_photo(
+    event: dict[str, Any],
+    frame_bgr: Any,
+    *,
+    x1: float,
+    y1: float,
+    x2: float,
+    y2: float,
+) -> None:
+    """Attach MinIO key of a close-up crop; never fail the cart event."""
+    if frame_bgr is None:
+        return
+    key = _upload_product_crop(
+        frame_bgr,
+        x1=x1,
+        y1=y1,
+        x2=x2,
+        y2=y2,
+        organization_id=uuid.UUID(str(event["organization_id"])),
+        event_id=str(event["event_id"]),
+    )
+    if key:
+        event["product_photo_key"] = key
+
+
 @router.post("/frame")
 async def process_frame(
     organization_id: uuid.UUID = Form(...),
@@ -1264,6 +1357,14 @@ async def process_frame(
                 "customer_id": str(customer_id) if customer_id else None,
                 "occurred_at": datetime.now(timezone.utc).isoformat(),
             }
+            _attach_product_photo(
+                event,
+                tracking.frame_bgr,
+                x1=product.x1,
+                y1=product.y1,
+                x2=product.x2,
+                y2=product.y2,
+            )
             result = await _post_event(event)
             emitted.append({"event": event, "backend": result})
 
@@ -1298,6 +1399,16 @@ async def process_frame(
                 "customer_id": str(customer_id) if customer_id else None,
                 "occurred_at": datetime.now(timezone.utc).isoformat(),
             }
+            best = _best_product_for_sku(products, sku)
+            if best is not None:
+                _attach_product_photo(
+                    event,
+                    tracking.frame_bgr,
+                    x1=best.x1,
+                    y1=best.y1,
+                    x2=best.x2,
+                    y2=best.y2,
+                )
             result = await _post_event(event)
             logger.warning(
                 "CHECKOUT EVENT RESULT: sku=%s session=%s backend=%s",
@@ -1373,6 +1484,7 @@ async def process_frame(
                 pp["current_track_id"] = product.track_id
                 pp["cx"], pp["cy"] = product.cx, product.cy
                 pp["last_seen"] = now
+                _remember_product_box(pp, product)
                 claimed_this_frame.add(logical_id)
                 seen_logical_ids.add(logical_id)
             else:
@@ -1404,6 +1516,7 @@ async def process_frame(
                 pp["current_track_id"] = product.track_id
                 pp["cx"], pp["cy"] = product.cx, product.cy
                 pp["last_seen"] = now
+                _remember_product_box(pp, product)
                 alias[product.track_id] = bridged_id
                 claimed_this_frame.add(bridged_id)
                 seen_logical_ids.add(bridged_id)
@@ -1427,6 +1540,10 @@ async def process_frame(
                 "state": "CANDIDATE",
                 "unassigned_since": now,
                 "counted": False,
+                "x1": float(product.x1),
+                "y1": float(product.y1),
+                "x2": float(product.x2),
+                "y2": float(product.y2),
             }
             claimed_this_frame.add(logical_id)
             seen_logical_ids.add(logical_id)
@@ -1555,6 +1672,15 @@ async def process_frame(
                 "customer_photo_key": customer_photo_key,
                 "occurred_at": datetime.now(timezone.utc).isoformat(),
             }
+            if all(k in pp for k in ("x1", "y1", "x2", "y2")):
+                _attach_product_photo(
+                    event,
+                    tracking.frame_bgr,
+                    x1=float(pp["x1"]),
+                    y1=float(pp["y1"]),
+                    x2=float(pp["x2"]),
+                    y2=float(pp["y2"]),
+                )
             pending_events.append(event)
 
         if pending_events:

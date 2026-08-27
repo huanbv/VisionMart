@@ -140,6 +140,7 @@ class AiCartEventService:
                 source_event_id=event.event_id,
                 global_track_id=global_track_id,
                 confidence=event.confidence,
+                photo_key=event.product_photo_key,
             )
         except ConflictError:
             return "rejected_insufficient_stock", cart, None

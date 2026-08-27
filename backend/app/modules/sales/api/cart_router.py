@@ -78,9 +78,16 @@ def build_checkout_service(session: AsyncSession) -> CheckoutService:
     )
 
 
+def _line_to_schema(raw: dict) -> CartLine:
+    payload = dict(raw)
+    payload["has_photo"] = bool(payload.get("photo_key"))
+    payload.pop("photo_key", None)
+    return CartLine.model_validate(payload)
+
+
 def _cart_to_response(cart: ShoppingCart) -> CartResponse:
     raw_lines = cart.items or []
-    lines: list[CartLine] = [CartLine.model_validate(raw) for raw in raw_lines]
+    lines: list[CartLine] = [_line_to_schema(raw) for raw in raw_lines]
     return CartResponse(
         id=cart.id,
         organization_id=cart.organization_id,
@@ -186,6 +193,53 @@ async def get_cart_customer_photo(
     def _fetch() -> bytes:
         client = storage._get_client()
         obj = client.get_object(storage._settings.MINIO_BUCKET, cart.customer_photo_key)
+        try:
+            return obj.read()
+        finally:
+            obj.close()
+            obj.release_conn()
+
+    try:
+        data = await asyncio.to_thread(_fetch)
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(
+            status.HTTP_502_BAD_GATEWAY, detail=f"Lỗi lưu trữ: {exc}"
+        ) from exc
+
+    return Response(
+        content=data,
+        media_type="image/jpeg",
+        headers={"Cache-Control": "private, max-age=3600"},
+    )
+
+
+@router.get("/{cart_id}/lines/{line_id}/photo")
+async def get_cart_line_photo(
+    cart_id: uuid.UUID,
+    line_id: str,
+    current: CurrentUser = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> Response:
+    """Crop cận cảnh sản phẩm lúc AI detect — đính cạnh tên trong danh sách giỏ."""
+    from app.services.object_storage import MinioStorage
+
+    try:
+        cart = await build_cart_service(session).get(current.organization_id, cart_id)
+    except NotFoundError as e:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, str(e))
+    line = next(
+        (li for li in (cart.items or []) if str(li.get("line_id")) == line_id),
+        None,
+    )
+    key = (line or {}).get("photo_key") if line else None
+    if not key:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Dòng giỏ chưa có ảnh crop")
+
+    storage = MinioStorage()
+
+    def _fetch() -> bytes:
+        client = storage._get_client()
+        obj = client.get_object(storage._settings.MINIO_BUCKET, key)
         try:
             return obj.read()
         finally:

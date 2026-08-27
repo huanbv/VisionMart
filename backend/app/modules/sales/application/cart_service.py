@@ -174,6 +174,7 @@ class CartService:
         source_event_id: str | None,
         global_track_id: str | None = None,
         confidence: float = 1.0,
+        photo_key: str | None = None,
     ) -> ShoppingCart:
         cart = await cart_lookup.require_active(self._carts, organization_id, cart_id)
         product = await self._products.get_by_id(organization_id, product_id)
@@ -194,6 +195,7 @@ class CartService:
             source_event_id=source_event_id,
             global_track_id=global_track_id,
             confidence=confidence,
+            photo_key=photo_key,
         )
         lines.append(line)
         cart.items = lines
@@ -280,9 +282,10 @@ class CartService:
         source_event_id: str | None,
         global_track_id: str | None = None,
         confidence: float = 1.0,
+        photo_key: str | None = None,
     ) -> dict[str, Any]:
         subtotal = unit_price * quantity
-        return {
+        line: dict[str, Any] = {
             "line_id": uuid.uuid4().hex,
             "product_id": str(product.id),
             "sku": product.sku,
@@ -292,19 +295,13 @@ class CartService:
             "subtotal": str(subtotal),
             "added_via": added_via,
             "source_event_id": source_event_id,
-            # Best-effort anonymous cross-camera visitor id — see
-            # visitor_linker.py. Not authoritative for billing (cart
-            # identity is scoped per camera-local track), only for
-            # reconstructing a shopper's journey across cameras.
             "global_track_id": global_track_id,
-            # AI's detection confidence for this pickup (1.0 for
-            # manually/staff-added lines, where a human is already the
-            # source of truth). Never treated as guaranteed-correct — see
-            # compute_overall_confidence() and the confidence warning shown
-            # to staff before they confirm a checkout.
             "confidence": float(confidence),
             "added_at": _now().isoformat(),
         }
+        if photo_key:
+            line["photo_key"] = photo_key
+        return line
 
     def _sum_total(self, lines: list[dict[str, Any]]) -> Decimal:
         total = Decimal("0")

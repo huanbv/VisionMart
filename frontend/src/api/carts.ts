@@ -22,6 +22,9 @@ export interface CartLine {
   // truth without a way to review it.
   confidence: number;
   added_at: string;
+  // true khi ai-engine đã crop cận cảnh lúc detect — gọi
+  // GET /carts/{id}/lines/{line_id}/photo (JWT blob, như ảnh khách).
+  has_photo?: boolean;
 }
 
 export interface Cart {
@@ -143,6 +146,17 @@ export async function getCartCustomerPhotoUrl(cartId: string): Promise<string> {
   const { data } = await apiClient.get(`/carts/${cartId}/customer-photo`, {
     responseType: "blob",
   });
+  return URL.createObjectURL(data as Blob);
+}
+
+export async function getCartLinePhotoUrl(
+  cartId: string,
+  lineId: string,
+): Promise<string> {
+  const { data } = await apiClient.get(
+    `/carts/${cartId}/lines/${lineId}/photo`,
+    { responseType: "blob" },
+  );
   return URL.createObjectURL(data as Blob);
 }
 
