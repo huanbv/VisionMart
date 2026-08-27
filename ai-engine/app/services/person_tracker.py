@@ -652,12 +652,15 @@ def dense_detect_on_model(
     from app.services.model_path import is_custom_detection_weight
 
     if is_custom_detection_weight():
-        # Bbox-trained SKU weights: one full-frame (or ROI crop) pass — tiling
-        # was for classifier weights labeled as the whole image.
+        # Weights were trained on bottle crops. Full-frame 640 letterbox
+        # shrinks a 7Up on the counter to ~20px and YOLO returns n=0 while
+        # the live HUD still shows two people. Infer on the pay-zone crop.
         if roi_rect is not None:
             rx1, ry1, rx2, ry2 = roi_rect
-            rx1, ry1 = max(0, rx1), max(0, ry1)
-            rx2, ry2 = min(w, max(rx1 + 1, rx2)), min(h, max(ry1 + 1, ry2))
+            pad = 16
+            rx1, ry1 = max(0, rx1 - pad), max(0, ry1 - pad)
+            rx2, ry2 = min(w, rx2 + pad), min(h, ry2 + pad)
+            rx2, ry2 = max(rx1 + 1, rx2), max(ry1 + 1, ry2)
             crop = img[ry1:ry2, rx1:rx2]
             if crop.size:
                 _run_predict(crop, float(rx1), float(ry1))
@@ -1076,30 +1079,39 @@ async def track_frame_detailed(
                 if latest_boxes:
                     _LATEST_PERSON_BOXES[camera_key] = latest_boxes
 
-        # 2. Products. Full-image classifier weights need blob→crop; bbox-trained
-        # custom weights need full-frame predict (same setting as labeled_scenes).
+        # 2. Products. Crop-trained SKU weights: YOLO on the pay-zone crop
+        # (not the full 1080p frame). Stock COCO still uses blob→crop.
         if dense_detect:
             from app.services.model_path import is_custom_detection_weight
             from app.services.region_detect import detect_products_from_regions
 
             conf = max(0.0, min(1.0, product_min_confidence))
+            persons_now = [
+                o for o in out if str(o.class_name).lower() == "person"
+            ]
             if is_custom_detection_weight():
-                det_results = model_det.predict(
-                    source=det_img,
-                    conf=conf,
-                    iou=0.45,
-                    max_det=24,
-                    verbose=False,
+                products = dense_detect_on_model(
+                    model_det,
+                    det_img,
+                    layout="scan",
+                    roi_rect=roi_rect,
                 )
-                if det_results:
-                    for box in _boxes_from_yolo_result(det_results[0], id_base=1):
-                        if str(box.class_name).lower() == "person":
-                            continue
-                        out.append(box)
+                if not products:
+                    products = detect_products_from_regions(
+                        model_det,
+                        det_img,
+                        persons_now,
+                        roi_rect,
+                        conf_min=min(conf, 0.25),
+                    )
+                    if products:
+                        logger.warning(
+                            "DENSE DET fallback blobs: n=%d classes=%s",
+                            len(products),
+                            [d.class_name for d in products],
+                        )
+                out.extend(products)
             else:
-                persons_now = [
-                    o for o in out if str(o.class_name).lower() == "person"
-                ]
                 out.extend(
                     detect_products_from_regions(
                         model_det,
