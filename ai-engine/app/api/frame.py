@@ -1162,15 +1162,42 @@ def _best_product_for_sku(
     return max(matches, key=lambda p: float(p.confidence))
 
 
+def _caption_product_crop(image_bgr: Any, text: str) -> None:
+    """Paint product name/SKU on a tight crop (copy the array first)."""
+    from app.vision.overlay.unicode_text import draw_label, measure_text
+
+    label = (text or "").strip()
+    if image_bgr is None or not label:
+        return
+    h, w = image_bgr.shape[:2]
+    size = max(11, min(18, max(1, w // 7)))
+    tw, th = measure_text(label, size)
+    if tw + 8 > w and size > 10:
+        size = max(10, size - 3)
+        tw, th = measure_text(label, size)
+    y = max(0, h - th - 8)
+    draw_label(
+        image_bgr,
+        label,
+        x=3,
+        y=y,
+        fg_bgr=(255, 255, 255),
+        bg_bgr=(40, 160, 50),
+        size=size,
+    )
+
+
 def product_crop_jpeg(
     frame_bgr: Any,
     x1: float,
     y1: float,
     x2: float,
     y2: float,
+    label: str | None = None,
 ) -> bytes | None:
     """Close-up JPEG of one detection. None if the box is unusable."""
     import cv2
+    import numpy as np
 
     from app.vision.crop.cropper import crop_detection, is_degenerate_box
 
@@ -1182,7 +1209,11 @@ def product_crop_jpeg(
     crop = crop_detection(frame_bgr, x1, y1, x2, y2, padding=0.12, min_size=24)
     if crop is None:
         return None
-    ok, buf = cv2.imencode(".jpg", crop.image, [int(cv2.IMWRITE_JPEG_QUALITY), 85])
+    # crop.image is a view into the frame — copy before drawing a caption.
+    image = np.ascontiguousarray(crop.image.copy())
+    if label:
+        _caption_product_crop(image, str(label))
+    ok, buf = cv2.imencode(".jpg", image, [int(cv2.IMWRITE_JPEG_QUALITY), 85])
     if not ok:
         return None
     return buf.tobytes()
@@ -1197,8 +1228,9 @@ def _upload_product_crop(
     y2: float,
     organization_id: uuid.UUID,
     event_id: str,
+    label: str | None = None,
 ) -> str | None:
-    jpeg = product_crop_jpeg(frame_bgr, x1, y1, x2, y2)
+    jpeg = product_crop_jpeg(frame_bgr, x1, y1, x2, y2, label=label)
     if not jpeg:
         return None
     try:
@@ -1220,10 +1252,12 @@ def _attach_product_photo(
     y1: float,
     x2: float,
     y2: float,
+    label: str | None = None,
 ) -> None:
     """Attach MinIO key of a close-up crop; never fail the cart event."""
     if frame_bgr is None:
         return
+    caption = (label or str(event.get("product_sku") or "")).strip() or None
     key = _upload_product_crop(
         frame_bgr,
         x1=x1,
@@ -1232,6 +1266,7 @@ def _attach_product_photo(
         y2=y2,
         organization_id=uuid.UUID(str(event["organization_id"])),
         event_id=str(event["event_id"]),
+        label=caption,
     )
     if key:
         event["product_photo_key"] = key

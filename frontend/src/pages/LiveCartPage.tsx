@@ -46,7 +46,6 @@ import {
   checkoutCart,
   confirmCheckoutStaff,
   getCartCustomerPhotoUrl,
-  getCartLinePhotoUrl,
   getCartScanPhotoUrl,
   getCheckoutQr,
   listCarts,
@@ -59,6 +58,7 @@ import { type Branch, listBranches } from "@/api/tenancy";
 import { type Camera, analyzeCameraFrame, getAiAutoScan, listCameras, setAiAutoScan, triggerCameraScan } from "@/api/cameras";
 import { tokenStore } from "@/api/client";
 import LiveCameraView, { type LiveStreamStatus } from "@/components/LiveCameraView";
+import CartLinePhoto from "@/components/CartLinePhoto";
 
 const REFRESH_MS = 5_000;
 
@@ -328,73 +328,6 @@ function CartScanPhoto({ cartId }: { cartId: string }) {
         preview={{ mask: "Phóng to" }}
       />
     </div>
-  );
-}
-
-/**
- * Crop cận cảnh sản phẩm lúc AI detect — cùng khuôn blob JWT với
- * CartCustomerPhoto. Người gọi phải unmount để revoke URL.
- */
-function CartLinePhoto({
-  cartId,
-  lineId,
-  size = 48,
-}: {
-  cartId: string;
-  lineId: string;
-  size?: number;
-}) {
-  const [url, setUrl] = useState<string | null>(null);
-
-  useEffect(() => {
-    let cancelled = false;
-    let objectUrl: string | null = null;
-    getCartLinePhotoUrl(cartId, lineId)
-      .then((u) => {
-        if (cancelled) {
-          URL.revokeObjectURL(u);
-          return;
-        }
-        objectUrl = u;
-        setUrl(u);
-      })
-      .catch(() => {
-        if (!cancelled) setUrl(null);
-      });
-    return () => {
-      cancelled = true;
-      if (objectUrl) URL.revokeObjectURL(objectUrl);
-    };
-  }, [cartId, lineId]);
-
-  if (!url) {
-    return (
-      <div
-        style={{
-          width: size,
-          height: size,
-          borderRadius: 6,
-          background: "#f5f5f5",
-          border: "1px solid #d9d9d9",
-          flexShrink: 0,
-        }}
-      />
-    );
-  }
-  return (
-    <Image
-      src={url}
-      alt="Crop sản phẩm"
-      width={size}
-      height={size}
-      style={{
-        objectFit: "cover",
-        borderRadius: 6,
-        border: "1px solid #d9d9d9",
-        flexShrink: 0,
-      }}
-      preview={{ mask: "Xem cận cảnh" }}
-    />
   );
 }
 
@@ -1363,6 +1296,7 @@ export default function LiveCartPage() {
                               cartId={cart.id}
                               lineId={line.line_id}
                               size={52}
+                              alt={line.product_name || line.sku}
                             />
                           ) : undefined
                         }

@@ -67,10 +67,12 @@ import {
   removeCartLine,
   type Cart,
   type CartCheckoutQrResponse,
+  type CartLine,
 } from "@/api/carts";
 import { listBranches, getOrganization, type Branch } from "@/api/tenancy";
 import { listCameras, getRoiZones, type Camera, type RoiZone } from "@/api/cameras";
 import { tokenStore } from "@/api/client";
+import CartLinePhoto from "@/components/CartLinePhoto";
 import RoiZoneEditor from "@/components/RoiZoneEditor";
 import VideoLibraryGrid from "@/components/VideoLibraryGrid";
 import { listTrainingJobs, type TrainingJob } from "@/api/aiTraining";
@@ -1352,7 +1354,7 @@ export default function VideoAnalysisPage() {
                     <List
                       size="small"
                       dataSource={cart.lines}
-                      renderItem={(line: any) => (
+                      renderItem={(line: CartLine) => (
                         <List.Item
                           key={line.line_id}
                           extra={
@@ -1366,16 +1368,32 @@ export default function VideoAnalysisPage() {
                             </Space>
                           }
                         >
-                          <Space size="small">
-                            <Tag color="blue" style={{ fontWeight: 600 }}>{line.sku}</Tag>
-                            <Typography.Text style={{ fontSize: 12 }}>{line.product_name}</Typography.Text>
-                            <Tag>x{line.quantity}</Tag>
-                            {line.confidence != null && line.confidence < 0.7 && (
-                              <Tooltip title={`Độ tin cậy AI: ${(line.confidence * 100).toFixed(0)}%`}>
-                                <Tag color="orange">⚠️ {(line.confidence * 100).toFixed(0)}%</Tag>
-                              </Tooltip>
-                            )}
-                          </Space>
+                          <List.Item.Meta
+                            avatar={
+                              line.has_photo ? (
+                                <CartLinePhoto
+                                  cartId={cart.id}
+                                  lineId={line.line_id}
+                                  size={56}
+                                  alt={line.product_name || line.sku}
+                                />
+                              ) : undefined
+                            }
+                            title={
+                              <Space size="small" wrap>
+                                <Typography.Text strong style={{ fontSize: 13 }}>
+                                  {line.product_name}
+                                </Typography.Text>
+                                <Tag color="blue" style={{ fontWeight: 600 }}>{line.sku}</Tag>
+                                <Tag>x{line.quantity}</Tag>
+                                {line.confidence != null && line.confidence < 0.7 && (
+                                  <Tooltip title={`Độ tin cậy AI: ${(line.confidence * 100).toFixed(0)}%`}>
+                                    <Tag color="orange">⚠️ {(line.confidence * 100).toFixed(0)}%</Tag>
+                                  </Tooltip>
+                                )}
+                              </Space>
+                            }
+                          />
                         </List.Item>
                       )}
                     />
