@@ -1450,7 +1450,7 @@ export default function VideoAnalysisPage() {
           {trace && <OpenCvStageGallery trace={trace} stageUrls={stageUrls} />}
           <ThesisAppendix
             sections={appendixSections}
-            intro="Luồng: thư viện video → lấy khung (tạm dừng) → ROI trên file → OpenCV → YOLOv8/ByteTrack → crop → MobileNetV3 → giỏ AI → đơn hàng. Sao chép Markdown hoặc In PDF."
+            intro="Luồng: thư viện video → lấy khung (tạm dừng) → ROI trên file → OpenCV → YOLOv8/ByteTrack → crop → MobileNetV3 → giỏ AI → đơn hàng. Mỗi mục có công thức, ý nghĩa ký hiệu và mã nguồn — sao chép Markdown hoặc In PDF."
           />
         </Space>
       )}

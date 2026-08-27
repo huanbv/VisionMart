@@ -2,14 +2,17 @@
  * Shared thesis lab UI: per-stage images + algorithm names + copyable source.
  * Used by Tải ảnh & Quét and Phân tích Video.
  */
-import { Button, Card, Col, Collapse, Empty, Image, Row, Space, Tag, Typography, message } from "antd";
+import { Button, Card, Col, Collapse, Empty, Image, Row, Space, Tag, Tooltip, Typography, message } from "antd";
 import { CopyOutlined, DownloadOutlined } from "@ant-design/icons";
 
 import type { DebugStep, PipelineTraceResult, TraceStage } from "@/api/cameras";
 import {
+  explainRuntimeParams,
   formatAlgorithmMarkdown,
   formatAppendixMarkdown,
   lookupAlgorithm,
+  PARAM_GLOSSARY,
+  type AlgorithmDef,
 } from "@/pages/imageScanAlgorithms";
 
 const { Paragraph, Text, Title } = Typography;
@@ -26,6 +29,67 @@ function downloadDataUrl(url: string, filename: string) {
   a.href = url;
   a.download = filename;
   a.click();
+}
+
+export function ThesisFormulaBlock({
+  def,
+  params,
+}: {
+  def: AlgorithmDef;
+  params?: Record<string, unknown>;
+}) {
+  const runtime = explainRuntimeParams(params);
+  return (
+    <div className="algo-explain">
+      <Paragraph className="algo-purpose" style={{ marginBottom: 8, fontSize: 13 }}>
+        {def.purpose}
+      </Paragraph>
+      {def.formulas.length > 0 && (
+        <div style={{ marginBottom: 8 }}>
+          <Text strong style={{ fontSize: 12 }}>
+            Công thức — dùng để làm gì
+          </Text>
+          {def.formulas.map((f, i) => (
+            <div key={i} style={{ marginTop: 6 }}>
+              <pre className="algo-formula">{f.expr}</pre>
+              <Text type="secondary" style={{ fontSize: 12 }}>
+                {f.purpose}
+              </Text>
+            </div>
+          ))}
+        </div>
+      )}
+      {def.symbols.length > 0 && (
+        <div style={{ marginBottom: 8 }}>
+          <Text strong style={{ fontSize: 12 }}>
+            Thuộc tính / ký hiệu
+          </Text>
+          <ul className="algo-symbols">
+            {def.symbols.map((s) => (
+              <li key={s.name}>
+                <Text code>{s.name}</Text> — {s.meaning}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+      {runtime.length > 0 && (
+        <div>
+          <Text strong style={{ fontSize: 12 }}>
+            Tham số lần chạy này
+          </Text>
+          <ul className="algo-symbols">
+            {runtime.map((p) => (
+              <li key={p.name}>
+                <Text code>{p.name}</Text> = {p.value}
+                {p.meaning ? ` — ${p.meaning}` : ""}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+    </div>
+  );
 }
 
 export function AlgorithmSnippet({
@@ -55,7 +119,25 @@ export function AlgorithmSnippet({
       <Collapse
         size="small"
         style={{ marginTop: 6 }}
+        defaultActiveKey={["explain"]}
         items={[
+          {
+            key: "explain",
+            label: "Công thức, thuộc tính & mục đích (luận văn)",
+            children: (
+              <div>
+                <ThesisFormulaBlock def={def} params={params} />
+                <Button
+                  className="no-print"
+                  size="small"
+                  icon={<CopyOutlined />}
+                  onClick={() => copyThesisText(md, "Đã copy công thức + thuộc tính (Markdown)")}
+                >
+                  Sao chép diễn giải (Markdown)
+                </Button>
+              </div>
+            ),
+          },
           {
             key: "code",
             label: "Mã nguồn + tài liệu",
@@ -73,7 +155,7 @@ export function AlgorithmSnippet({
                   icon={<CopyOutlined />}
                   onClick={() => copyThesisText(md, "Đã copy mục này (Markdown)")}
                 >
-                  Sao chép mục này
+                  Sao chép mục này (công thức + mã)
                 </Button>
               </div>
             ),
@@ -90,7 +172,7 @@ export function DebugStepGallery({ steps }: { steps: DebugStep[] }) {
     <Card title={`Ảnh từng giai đoạn AI (${steps.length} bước)`}>
       <Paragraph type="secondary" style={{ marginTop: 0 }}>
         Chuỗi DEBUG trên khung vừa kích hoạt: ảnh gốc → OpenCV → YOLO → crop → phân loại SKU.
-        Tải JPEG hoặc mở mã nguồn để chèn luận văn.
+        Mở mục công thức để chép diễn giải ký hiệu vào luận văn; tải JPEG để chèn hình.
       </Paragraph>
       <Row gutter={[12, 12]}>
         {steps.map((s, i) => (
@@ -185,8 +267,12 @@ export function OpenCvStageGallery({
                 <Empty description="Không có JPEG" />
               )}
               <Text type="secondary" style={{ fontSize: 11 }}>
-                {s.stage} · {s.elapsed_ms.toFixed(1)} ms · sáng {s.metrics.brightness.toFixed(0)} · nét{" "}
-                {s.metrics.blur_score.toFixed(0)}
+                {s.stage} · {s.elapsed_ms.toFixed(1)} ms ·{" "}
+                <Tooltip title={PARAM_GLOSSARY.brightness}>sáng {s.metrics.brightness.toFixed(0)}</Tooltip>
+                {" · "}
+                <Tooltip title={PARAM_GLOSSARY.contrast}>tương phản {s.metrics.contrast.toFixed(0)}</Tooltip>
+                {" · "}
+                <Tooltip title={PARAM_GLOSSARY.blur_score}>nét {s.metrics.blur_score.toFixed(0)}</Tooltip>
               </Text>
               <AlgorithmSnippet stage={s.stage} title={s.label} params={s.params} elapsedMs={s.elapsed_ms} />
             </Card>
@@ -215,7 +301,7 @@ export function ThesisAppendix({
   const markdown = formatAppendixMarkdown(sections);
   return (
     <Card
-      title="Phụ lục thuật toán & mã nguồn (copy vào luận văn)"
+      title="Phụ lục thuật toán, công thức & mã nguồn (copy vào luận văn)"
       extra={
         <Space className="no-print">
           <Button size="small" icon={<CopyOutlined />} onClick={() => copyThesisText(markdown, "Đã copy phụ lục (Markdown)")}>
@@ -229,7 +315,7 @@ export function ThesisAppendix({
     >
       <Paragraph type="secondary">
         {intro ??
-          "Dán vào Word: Markdown hoặc In / lưu PDF. Tên thuật toán kèm tài liệu (YOLOv8, ByteTrack, CLAHE, MobileNetV3, …)."}
+          "Mỗi mục: mục đích trong pipeline, công thức (ký hiệu dùng để làm gì), tham số lần chạy, rồi mã nguồn. Dán Markdown vào Word hoặc In / lưu PDF."}
       </Paragraph>
       {sections.map((s, i) => {
         const def = lookupAlgorithm(s.stage);
@@ -254,6 +340,7 @@ export function ThesisAppendix({
                 {s.elapsedMs} ms
               </Text>
             )}
+            <ThesisFormulaBlock def={def} params={s.params} />
             <pre className="algo-code">{def.code}</pre>
             <Button
               className="no-print"
@@ -270,7 +357,7 @@ export function ThesisAppendix({
                 )
               }
             >
-              Sao chép mục này
+              Sao chép mục này (công thức + mã)
             </Button>
           </div>
         );
@@ -289,6 +376,24 @@ export const THESIS_CODE_CSS = `
     line-height: 1.45;
     white-space: pre-wrap;
     word-break: break-word;
+  }
+  pre.algo-formula {
+    background: #f0f5ff;
+    border-left: 3px solid #2f54eb;
+    border-radius: 0 6px 6px 0;
+    padding: 8px 10px;
+    font-size: 13px;
+    line-height: 1.5;
+    white-space: pre-wrap;
+    word-break: break-word;
+    font-family: "Cambria Math", Cambria, "Times New Roman", serif;
+    margin: 4px 0;
+  }
+  ul.algo-symbols {
+    margin: 4px 0 0;
+    padding-left: 18px;
+    font-size: 12px;
+    line-height: 1.55;
   }
   @media print {
     .no-print, .ant-layout-sider, .ant-layout-header { display: none !important; }

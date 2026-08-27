@@ -8,7 +8,6 @@ import {
   Button,
   Card,
   Col,
-  Collapse,
   Divider,
   Empty,
   Image,
@@ -71,9 +70,14 @@ import { listModels } from "@/api/aiReview";
 import CartLinePhoto from "@/components/CartLinePhoto";
 import CartLineSkuButton from "@/components/CartLineSkuButton";
 import {
-  formatAlgorithmMarkdown,
+  AlgorithmSnippet,
+  THESIS_CODE_CSS,
+  ThesisAppendix,
+} from "@/components/ThesisPipelineLab";
+import {
   formatAppendixMarkdown,
   lookupAlgorithm,
+  PARAM_GLOSSARY,
 } from "@/pages/imageScanAlgorithms";
 
 const { Title, Paragraph, Text } = Typography;
@@ -200,62 +204,6 @@ function copyText(text: string, ok = "Đã copy vào clipboard") {
   void navigator.clipboard.writeText(text).then(
     () => message.success(ok),
     () => message.error("Trình duyệt không cho copy"),
-  );
-}
-
-function AlgorithmSnippet({
-  stage,
-  title,
-  params,
-  elapsedMs,
-}: {
-  stage: string;
-  title?: string;
-  params?: Record<string, unknown>;
-  elapsedMs?: number | null;
-}) {
-  const def = lookupAlgorithm(stage);
-  if (!def) return null;
-  const md = formatAlgorithmMarkdown(stage, { title: title ?? def.algorithm, params, elapsedMs });
-  return (
-    <div style={{ marginTop: 8 }}>
-      <Tag color="geekblue" style={{ whiteSpace: "normal", height: "auto" }}>
-        {def.algorithm}
-      </Tag>
-      <div>
-        <Text type="secondary" style={{ fontSize: 11 }}>
-          {def.algorithmEn}
-        </Text>
-      </div>
-      <Collapse
-        size="small"
-        style={{ marginTop: 6 }}
-        items={[
-          {
-            key: "code",
-            label: "Mã nguồn + tài liệu",
-            children: (
-              <div>
-                <Paragraph style={{ marginBottom: 6, fontSize: 12 }}>
-                  {def.citation}
-                  <br />
-                  <Text code>{def.file}</Text>
-                </Paragraph>
-                <pre className="algo-code">{def.code}</pre>
-                <Button
-                  className="no-print"
-                  size="small"
-                  icon={<CopyOutlined />}
-                  onClick={() => copyText(md, "Đã copy mục này (Markdown)")}
-                >
-                  Sao chép mục này
-                </Button>
-              </div>
-            ),
-          },
-        ]}
-      />
-    </div>
   );
 }
 
@@ -683,23 +631,12 @@ export default function ImageScanPage() {
   return (
     <Space direction="vertical" size="large" style={{ width: "100%" }} className="image-scan-lab">
       <style>{`
-        pre.algo-code {
-          background: #f6f8fa;
-          border: 1px solid #eaeaea;
-          border-radius: 6px;
-          padding: 8px 10px;
-          font-size: 11px;
-          line-height: 1.45;
-          white-space: pre-wrap;
-          word-break: break-word;
-        }
+        ${THESIS_CODE_CSS}
         .image-scan-qr svg { width: 100%; height: 100%; display: block; }
         @media print {
           .no-print, .ant-layout-sider, .ant-layout-header, .ant-layout-footer { display: none !important; }
           .ant-layout, .ant-layout-content { margin: 0 !important; padding: 0 !important; }
           .image-scan-lab { color: #000; }
-          .print-break { break-inside: avoid; page-break-inside: avoid; }
-          .ant-collapse-content { display: block !important; height: auto !important; }
         }
       `}</style>
       <div>
@@ -709,7 +646,7 @@ export default function ImageScanPage() {
         <Paragraph type="secondary" style={{ marginBottom: 0 }}>
           Tải một ảnh quầy (hoặc chụp live). Chọn <strong>Train AI</strong> (crop 1 SKU) hoặc{" "}
           <strong>Train từ nhãn bbox</strong> để so sánh; mặc định là model đang triển khai (live).
-          Hệ thống ghi từng bước OpenCV rồi YOLO / crop / SKU kèm ảnh, tên thuật toán và mã nguồn.
+          Hệ thống ghi từng bước OpenCV rồi YOLO / crop / SKU kèm ảnh, công thức, thuộc tính và mã nguồn.
           Giỏ tạo từ ảnh nằm riêng phía dưới — không lẫn giỏ live của quầy.
         </Paragraph>
       </div>
@@ -863,7 +800,7 @@ export default function ImageScanPage() {
       {debugSteps.length > 0 && (
         <Card title={`Ảnh từng giai đoạn AI (${debugSteps.length} bước)`}>
           <Paragraph type="secondary" style={{ marginTop: 0 }}>
-            Chuỗi DEBUG: ảnh gốc → OpenCV → YOLO → crop → phân loại SKU → khung kết quả. Tải từng JPEG để chèn luận văn.
+            Chuỗi DEBUG: ảnh gốc → OpenCV → YOLO → crop → phân loại SKU. Mở mục công thức để chép diễn giải ký hiệu vào luận văn.
           </Paragraph>
           <Row gutter={[12, 12]}>
             {debugSteps.map((s, i) => (
@@ -940,8 +877,12 @@ export default function ImageScanPage() {
                     <Empty description="Không có JPEG" />
                   )}
                   <Text type="secondary" style={{ fontSize: 11 }}>
-                    {s.stage} · {s.elapsed_ms.toFixed(1)} ms · sáng {s.metrics.brightness.toFixed(0)} · nét{" "}
-                    {s.metrics.blur_score.toFixed(0)}
+                    {s.stage} · {s.elapsed_ms.toFixed(1)} ms ·{" "}
+                    <Tooltip title={PARAM_GLOSSARY.brightness}>sáng {s.metrics.brightness.toFixed(0)}</Tooltip>
+                    {" · "}
+                    <Tooltip title={PARAM_GLOSSARY.contrast}>tương phản {s.metrics.contrast.toFixed(0)}</Tooltip>
+                    {" · "}
+                    <Tooltip title={PARAM_GLOSSARY.blur_score}>nét {s.metrics.blur_score.toFixed(0)}</Tooltip>
                   </Text>
                   <AlgorithmSnippet
                     stage={s.stage}
@@ -1208,70 +1149,10 @@ export default function ImageScanPage() {
         )}
       </Card>
 
-      {appendixSections.length > 0 && (
-        <Card
-          title="Phụ lục thuật toán & mã nguồn (copy vào luận văn)"
-          extra={
-            <Button
-              className="no-print"
-              size="small"
-              icon={<CopyOutlined />}
-              onClick={() => copyText(appendixMarkdown, "Đã copy phụ lục thuật toán (Markdown)")}
-            >
-              Sao chép toàn bộ
-            </Button>
-          }
-        >
-          <Paragraph type="secondary">
-            Dán vào Word: giữ định dạng Markdown hoặc In / lưu PDF. Tên thuật toán kèm tài liệu gốc (Gonzalez &amp; Woods,
-            YOLOv8, ByteTrack, MobileNetV3, CLAHE, …).
-          </Paragraph>
-          {appendixSections.map((s, i) => {
-            const def = lookupAlgorithm(s.stage);
-            if (!def) return null;
-            return (
-              <div key={`${s.stage}-${i}`} className="print-break" style={{ marginBottom: 20 }}>
-                <Title level={5} style={{ marginBottom: 4 }}>
-                  {i + 1}. {s.title}
-                </Title>
-                <Space wrap size={[4, 4]}>
-                  <Tag color="geekblue">{def.algorithm}</Tag>
-                  <Tag>{def.algorithmEn}</Tag>
-                </Space>
-                <div>
-                  <Text type="secondary" style={{ fontSize: 12 }}>
-                    {def.citation}
-                  </Text>
-                </div>
-                <Text code>{def.file}</Text>
-                {s.elapsedMs != null && (
-                  <Text type="secondary" style={{ marginLeft: 8, fontSize: 12 }}>
-                    {s.elapsedMs} ms
-                  </Text>
-                )}
-                <pre className="algo-code">{def.code}</pre>
-                <Button
-                  className="no-print"
-                  size="small"
-                  icon={<CopyOutlined />}
-                  onClick={() =>
-                    copyText(
-                      formatAlgorithmMarkdown(s.stage, {
-                        title: `${i + 1}. ${s.title}`,
-                        params: s.params,
-                        elapsedMs: s.elapsedMs,
-                      }),
-                      "Đã copy mục này",
-                    )
-                  }
-                >
-                  Sao chép mục này
-                </Button>
-              </div>
-            );
-          })}
-        </Card>
-      )}
+      <ThesisAppendix
+        sections={appendixSections}
+        intro="Mỗi mục: mục đích trong pipeline siêu thị, công thức (ký hiệu dùng để làm gì), tham số lần quét, rồi mã nguồn. Dán Markdown vào Word hoặc In / lưu PDF."
+      />
     </Space>
   );
 }
