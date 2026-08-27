@@ -41,6 +41,8 @@ from app.modules.sales.schemas.cart import (
     CartLine,
     CartListResponse,
     CartResponse,
+    CartRetagLineRequest,
+    CartRetagLineResponse,
 )
 from app.modules.tenancy.infrastructure.repositories import (
     SqlAlchemyBranchRepository,
@@ -343,6 +345,71 @@ async def remove_cart_line(
     except ConflictError as e:
         raise HTTPException(status.HTTP_409_CONFLICT, str(e))
     return _cart_to_response(cart)
+
+
+@router.post("/{cart_id}/lines/{line_id}/sku", response_model=CartRetagLineResponse)
+async def retag_cart_line(
+    cart_id: uuid.UUID,
+    line_id: str,
+    payload: CartRetagLineRequest,
+    current: CurrentUser = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> CartRetagLineResponse:
+    """Đổi SKU trên dòng giỏ. Có crop thì đưa vào tập học (checkout_mismatch)."""
+    try:
+        cart, correction = await build_cart_service(session).retag_line(
+            current.organization_id,
+            cart_id,
+            line_id,
+            product_id=payload.product_id,
+        )
+    except NotFoundError as e:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, str(e))
+    except (ValidationError, ConflictError) as e:
+        raise HTTPException(status.HTTP_409_CONFLICT, str(e))
+
+    added = False
+    photo_key = (correction or {}).get("photo_key") if correction else None
+    if photo_key:
+        from app.modules.ai_training.application.review_service import (
+            ReviewError,
+            ReviewService,
+        )
+        from app.services.object_storage import MinioStorage
+
+        try:
+            conf_raw = correction.get("confidence") if correction else None
+            try:
+                conf = float(conf_raw) if conf_raw is not None else None
+            except (TypeError, ValueError):
+                conf = None
+            await ReviewService(session, MinioStorage()).record_human_sku_correction(
+                organization_id=current.organization_id,
+                crop_key=str(photo_key),
+                confirmed_product_id=correction["confirmed_product_id"],
+                reviewed_by=current.user_id,
+                predicted_product_id=correction.get("predicted_product_id"),
+                predicted_class=correction.get("predicted_sku"),
+                confirmed_sku=correction.get("confirmed_sku"),
+                confidence=conf,
+            )
+            added = True
+        except ReviewError:
+            added = False
+        except Exception:  # noqa: BLE001 — sửa đơn không phụ thuộc MinIO/học
+            import logging
+
+            logging.getLogger(__name__).exception(
+                "sku correction saved on cart but not in training cart=%s line=%s",
+                cart_id,
+                line_id,
+            )
+            added = False
+
+    return CartRetagLineResponse(
+        cart=_cart_to_response(cart),
+        added_to_training=added,
+    )
 
 
 @router.post("/{cart_id}/checkout", response_model=CartCheckoutResponse)

@@ -342,6 +342,59 @@ class ReviewService:
         await self._session.commit()
         return int(result.rowcount or 0)
 
+    async def record_human_sku_correction(
+        self,
+        *,
+        organization_id: uuid.UUID,
+        crop_key: str,
+        confirmed_product_id: uuid.UUID,
+        reviewed_by: uuid.UUID | None,
+        predicted_product_id: uuid.UUID | None = None,
+        predicted_class: str | None = None,
+        confidence: float | None = None,
+        confirmed_sku: str | None = None,
+        image_size_bytes: int = 0,
+    ) -> ReviewCandidate:
+        """Admin đổi SKU trên giỏ — nhãn người, đưa crop thẳng vào tập học.
+
+        Tái sử dụng MinIO key của crop giỏ (không copy file). ``approve``
+        ngay vì staff đã chọn SKU đúng khi nhìn ảnh, không phải đoán model.
+        """
+        key = (crop_key or "").strip()
+        if not key:
+            raise ReviewError("product crop required")
+        if is_non_product_class(predicted_class):
+            raise ReviewError("skip non-product class")
+
+        note = "Admin sửa SKU trên giỏ"
+        old = (predicted_class or "").strip()
+        new = (confirmed_sku or "").strip()
+        if old and new:
+            note = f"Admin sửa SKU trên giỏ: {old} → {new}"
+
+        candidate = ReviewCandidate(
+            organization_id=organization_id,
+            camera_id=None,
+            storage_key=key,
+            crop_key=key,
+            bbox=None,
+            image_size_bytes=int(image_size_bytes or 0),
+            source="checkout_mismatch",
+            status="pending",
+            predicted_product_id=predicted_product_id,
+            predicted_class=predicted_class,
+            confidence=confidence,
+        )
+        self._session.add(candidate)
+        await self._session.flush()
+        return await self.approve(
+            organization_id=organization_id,
+            candidate_id=candidate.id,
+            confirmed_product_id=confirmed_product_id,
+            reviewed_by=reviewed_by,
+            note=note,
+        )
+
     async def _get(
         self, organization_id: uuid.UUID, candidate_id: uuid.UUID
     ) -> ReviewCandidate:

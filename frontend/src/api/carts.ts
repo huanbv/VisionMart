@@ -116,6 +116,18 @@ export async function removeCartLine(
   return data;
 }
 
+export async function retagCartLine(
+  cartId: string,
+  lineId: string,
+  productId: string,
+): Promise<{ cart: Cart; added_to_training: boolean }> {
+  const { data } = await apiClient.post<{ cart: Cart; added_to_training: boolean }>(
+    `/carts/${cartId}/lines/${lineId}/sku`,
+    { product_id: productId },
+  );
+  return data;
+}
+
 export async function checkoutCart(cartId: string): Promise<CartCheckoutResponse> {
   const { data } = await apiClient.post<CartCheckoutResponse>(
     `/carts/${cartId}/checkout`,

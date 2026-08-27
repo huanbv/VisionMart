@@ -65,6 +65,21 @@ def compute_overall_confidence(lines: list[dict[str, Any]]) -> float:
     return float(weighted_sum / total_weight)
 
 
+def apply_sku_to_line(line: dict[str, Any], product: Product) -> dict[str, Any]:
+    """Keep crop, quantity, and line id; swap catalog fields to the SKU staff chose."""
+    quantity = int(line.get("quantity") or 1)
+    unit_price = Decimal(str(product.unit_price))
+    updated = dict(line)
+    updated["product_id"] = str(product.id)
+    updated["sku"] = product.sku
+    updated["product_name"] = product.name
+    updated["unit_price"] = str(unit_price)
+    updated["subtotal"] = str(unit_price * quantity)
+    updated["confidence"] = 1.0
+    updated["added_via"] = "staff_correction"
+    return updated
+
+
 class CartService:
     def __init__(
         self,
@@ -254,6 +269,62 @@ class CartService:
             await self._events.publish(sales_events.cart_abandoned(cart))
 
         return cart
+
+    async def retag_line(
+        self,
+        organization_id: uuid.UUID,
+        cart_id: uuid.UUID,
+        line_id: str,
+        *,
+        product_id: uuid.UUID,
+    ) -> tuple[ShoppingCart, dict[str, Any] | None]:
+        """Đổi SKU trên đúng dòng — giữ crop, sửa giá/tồn. Trả payload học nếu có ảnh."""
+        cart = await cart_lookup.require_active(self._carts, organization_id, cart_id)
+        lines = list(cart.items or [])
+        target = next((li for li in lines if li.get("line_id") == line_id), None)
+        if target is None:
+            raise NotFoundError("Cart line not found")
+
+        old_product_id = uuid.UUID(str(target["product_id"]))
+        if old_product_id == product_id:
+            return cart, None
+
+        product = await self._products.get_by_id(organization_id, product_id)
+        if product is None:
+            raise NotFoundError("Product not found")
+
+        quantity = int(target.get("quantity") or 1)
+        # Reserve the replacement first so a stock miss leaves the original line intact.
+        await inventory_reservation.reserve(
+            self._inventories, organization_id, cart.branch_id, product_id, quantity
+        )
+        await inventory_reservation.release(
+            self._inventories, organization_id, cart.branch_id, old_product_id, quantity
+        )
+
+        old_sku = str(target.get("sku") or "")
+        updated = apply_sku_to_line(target, product)
+        cart.items = [
+            updated if li.get("line_id") == line_id else li for li in lines
+        ]
+        from sqlalchemy.orm.attributes import flag_modified
+
+        flag_modified(cart, "items")
+        cart.total_amount = self._sum_total(list(cart.items or []))
+        await self._carts.commit()
+        await self._carts.refresh(cart)
+        await self._events.publish(sales_events.cart_line_added(cart))
+
+        photo_key = str(updated.get("photo_key") or "").strip() or None
+        correction = {
+            "photo_key": photo_key,
+            "predicted_product_id": old_product_id,
+            "predicted_sku": old_sku,
+            "confirmed_product_id": product.id,
+            "confirmed_sku": product.sku,
+            "confidence": target.get("confidence"),
+        }
+        return cart, correction
 
     async def abandon(self, organization_id: uuid.UUID, cart_id: uuid.UUID) -> ShoppingCart:
         cart = await cart_lookup.get_cart(self._carts, organization_id, cart_id)

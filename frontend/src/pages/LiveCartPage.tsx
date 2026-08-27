@@ -59,6 +59,7 @@ import { type Camera, analyzeCameraFrame, getAiAutoScan, listCameras, setAiAutoS
 import { tokenStore } from "@/api/client";
 import LiveCameraView, { type LiveStreamStatus } from "@/components/LiveCameraView";
 import CartLinePhoto from "@/components/CartLinePhoto";
+import CartLineSkuButton from "@/components/CartLineSkuButton";
 
 const REFRESH_MS = 5_000;
 
@@ -1279,6 +1280,12 @@ export default function LiveCartPage() {
                   renderItem={(line) => (
                     <List.Item
                       actions={[
+                        <CartLineSkuButton
+                          key="sku"
+                          cart={cart}
+                          line={line}
+                          onDone={() => void load()}
+                        />,
                         <Tooltip key="del" title="Xóa dòng">
                           <Button
                             size="small"
@@ -1304,6 +1311,9 @@ export default function LiveCartPage() {
                           <Space>
                             <Typography.Text strong>{line.product_name}</Typography.Text>
                             <Tag>{line.sku}</Tag>
+                            {line.added_via === "staff_correction" && (
+                              <Tag color="green">Admin sửa</Tag>
+                            )}
                             {line.added_via === "ai" && (
                               <Tooltip title="Độ tin cậy nhận diện của AI cho sản phẩm này">
                                 <Tag color={line.confidence < 0.75 ? "red" : "purple"}>

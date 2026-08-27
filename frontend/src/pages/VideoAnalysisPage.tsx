@@ -73,6 +73,7 @@ import { listBranches, getOrganization, type Branch } from "@/api/tenancy";
 import { listCameras, getRoiZones, type Camera, type RoiZone } from "@/api/cameras";
 import { tokenStore } from "@/api/client";
 import CartLinePhoto from "@/components/CartLinePhoto";
+import CartLineSkuButton from "@/components/CartLineSkuButton";
 import RoiZoneEditor from "@/components/RoiZoneEditor";
 import VideoLibraryGrid from "@/components/VideoLibraryGrid";
 import { listTrainingJobs, type TrainingJob } from "@/api/aiTraining";
@@ -1361,9 +1362,16 @@ export default function VideoAnalysisPage() {
                             <Space>
                               <Typography.Text strong style={{ fontSize: 12 }}>{formatMoney(line.subtotal, cart.currency)}</Typography.Text>
                               {cart.status === "active" && (
-                                <Tooltip title="Xóa dòng">
-                                  <Button size="small" danger icon={<DeleteOutlined />} onClick={() => onRemoveLine(cart, line.line_id)} />
-                                </Tooltip>
+                                <>
+                                  <CartLineSkuButton
+                                    cart={cart}
+                                    line={line}
+                                    onDone={() => void loadCarts()}
+                                  />
+                                  <Tooltip title="Xóa dòng">
+                                    <Button size="small" danger icon={<DeleteOutlined />} onClick={() => onRemoveLine(cart, line.line_id)} />
+                                  </Tooltip>
+                                </>
                               )}
                             </Space>
                           }
@@ -1386,7 +1394,10 @@ export default function VideoAnalysisPage() {
                                 </Typography.Text>
                                 <Tag color="blue" style={{ fontWeight: 600 }}>{line.sku}</Tag>
                                 <Tag>x{line.quantity}</Tag>
-                                {line.confidence != null && line.confidence < 0.7 && (
+                                {line.added_via === "staff_correction" && (
+                                  <Tag color="green">Admin sửa</Tag>
+                                )}
+                                {line.added_via === "ai" && line.confidence != null && line.confidence < 0.7 && (
                                   <Tooltip title={`Độ tin cậy AI: ${(line.confidence * 100).toFixed(0)}%`}>
                                     <Tag color="orange">⚠️ {(line.confidence * 100).toFixed(0)}%</Tag>
                                   </Tooltip>

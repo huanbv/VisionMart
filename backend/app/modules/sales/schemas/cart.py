@@ -86,6 +86,15 @@ class CartAddLineRequest(BaseModel):
     source_event_id: str | None = Field(default=None, max_length=80)
 
 
+class CartRetagLineRequest(BaseModel):
+    product_id: uuid.UUID
+
+
+class CartRetagLineResponse(BaseModel):
+    cart: CartResponse
+    added_to_training: bool
+
+
 class CartCheckoutResponse(BaseModel):
     cart_id: uuid.UUID
     order_id: uuid.UUID
