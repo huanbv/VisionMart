@@ -7,6 +7,7 @@ from app.api.frame import (
     _collapse_duplicate_persons,
     _nearest_person_for_product,
     _person_by_hand_near_product,
+    _resolve_checkout_owner,
 )
 from app.services.person_tracker import TrackedObject
 
@@ -195,15 +196,9 @@ def test_two_people_trajectory_picks_who_approached(monkeypatch):
         y2=480,
     )
 
-    def fake_ids(_camera_key, _now, _window):
-        return [1, 2]
-
     def fake_near(_camera_key, pid, *_args, **_kwargs):
         return 99.0 if pid == 1 else None
 
-    monkeypatch.setattr(
-        "app.services.person_tracker.get_recent_trajectory_person_ids", fake_ids
-    )
     monkeypatch.setattr("app.api.frame.trajectory_last_near_ts", fake_near)
     out = _nearest_person_for_product(
         "cam-traj",
@@ -216,3 +211,114 @@ def test_two_people_trajectory_picks_who_approached(monkeypatch):
     )
     assert out is not None
     assert out.track_id == 1
+
+
+def test_reaching_arm_left_of_torso_collapses_to_one_shopper():
+    torso = TrackedObject(
+        track_id=1,
+        class_name="person",
+        confidence=0.9,
+        x1=400,
+        y1=80,
+        x2=720,
+        y2=520,
+    )
+    arm = TrackedObject(
+        track_id=2,
+        class_name="person",
+        confidence=0.6,
+        x1=200,
+        y1=180,
+        x2=390,
+        y2=360,
+    )
+    kept = _collapse_duplicate_persons([torso, arm])
+    assert len(kept) == 1
+    assert kept[0].track_id == 1
+
+
+def test_absent_reid_id_is_not_invented_from_trajectory(monkeypatch):
+    shopper = TrackedObject(
+        track_id=1,
+        class_name="person",
+        confidence=0.9,
+        x1=400,
+        y1=40,
+        x2=700,
+        y2=520,
+    )
+
+    def fake_near(_camera_key, pid, *_args, **_kwargs):
+        return 99.0 if pid == 2 else None
+
+    monkeypatch.setattr("app.api.frame.trajectory_last_near_ts", fake_near)
+    out = _nearest_person_for_product(
+        "cam-ghost",
+        250,
+        400,
+        [shopper],
+        now=100.0,
+        frame_w=960,
+        frame_h=540,
+    )
+    assert out is None
+
+
+def test_one_shopper_two_skus_share_the_same_owner():
+    shopper = TrackedObject(
+        track_id=1,
+        class_name="person",
+        confidence=0.9,
+        x1=400,
+        y1=40,
+        x2=720,
+        y2=530,
+    )
+    sting = _resolve_checkout_owner(
+        "cam-cart",
+        240,
+        420,
+        [shopper],
+        now=100.0,
+        frame_w=960,
+        frame_h=540,
+    )
+    noodles = _resolve_checkout_owner(
+        "cam-cart",
+        310,
+        430,
+        [shopper],
+        now=100.0,
+        frame_w=960,
+        frame_h=540,
+    )
+    assert sting is not None and noodles is not None
+    assert sting.track_id == noodles.track_id == 1
+
+
+def test_ghost_trajectory_owner_is_remapped_to_visible_shopper(monkeypatch):
+    shopper = TrackedObject(
+        track_id=1,
+        class_name="person",
+        confidence=0.9,
+        x1=400,
+        y1=40,
+        x2=720,
+        y2=530,
+    )
+
+    def fake_near(_camera_key, pid, *_args, **_kwargs):
+        return 99.0 if pid == 2 else None
+
+    monkeypatch.setattr("app.api.frame.trajectory_last_near_ts", fake_near)
+    owner = _resolve_checkout_owner(
+        "cam-cart",
+        250,
+        420,
+        [shopper],
+        now=100.0,
+        frame_w=960,
+        frame_h=540,
+    )
+    assert owner is not None
+    assert owner.track_id == 1

@@ -238,33 +238,121 @@ def _checkout_hand_reach_px() -> float:
     return float(get_vision_config().checkout_hand_reach_px)
 
 
+def _person_box_area(person: TrackedObject) -> float:
+    return max(1.0, (person.x2 - person.x1) * (person.y2 - person.y1))
+
+
+def _center_in_expanded_box(
+    inner: TrackedObject, outer: TrackedObject, pad: float = 0.35
+) -> bool:
+    """Arm/hand boxes sit just outside the torso; a padded torso still owns them."""
+    width = max(1.0, outer.x2 - outer.x1)
+    height = max(1.0, outer.y2 - outer.y1)
+    return (
+        outer.x1 - width * pad <= inner.cx <= outer.x2 + width * pad
+        and outer.y1 - height * pad <= inner.cy <= outer.y2 + height * pad
+    )
+
+
+def _reaching_arm_duplicate(a: TrackedObject, b: TrackedObject) -> bool:
+    """Torso + arm reaching the counter often sit side-by-side with IoU ~0.
+
+    Two full-size shoppers standing close stay separate: similar box area
+    plus a gap is a second person, not a ghost ReID id.
+    """
+    y_overlap = min(a.y2, b.y2) - max(a.y1, b.y1)
+    min_h = min(a.y2 - a.y1, b.y2 - b.y1)
+    if min_h <= 0.0 or y_overlap < 0.35 * min_h:
+        return False
+    x_gap = max(0.0, max(a.x1, b.x1) - min(a.x2, b.x2))
+    max_w = max(a.x2 - a.x1, b.x2 - b.x1)
+    if x_gap > 0.45 * max_w:
+        return False
+    smaller, larger = sorted((_person_box_area(a), _person_box_area(b)))
+    return smaller / larger < 0.55
+
+
+def _same_shopper_person_boxes(a: TrackedObject, b: TrackedObject) -> bool:
+    return (
+        box_iou(a, b) >= 0.22
+        or _center_in_box(a, b)
+        or _center_in_box(b, a)
+        or _center_in_expanded_box(a, b)
+        or _center_in_expanded_box(b, a)
+        or _reaching_arm_duplicate(a, b)
+    )
+
+
 def _collapse_duplicate_persons(persons: list[TrackedObject]) -> list[TrackedObject]:
     """Pose/ReID often emits two boxes on one shopper (torso + arm).
 
     Two track ids → two carts (Khách hàng #2 vs Phiên quầy). Merge overlapping
-    person boxes before opening checkout sessions.
+    or reaching-arm person boxes before opening checkout sessions.
     """
     if len(persons) < 2:
         return list(persons)
     ordered = sorted(
         persons,
-        key=lambda p: (p.x2 - p.x1) * (p.y2 - p.y1),
+        key=lambda p: _person_box_area(p),
         reverse=True,
     )
     kept: list[TrackedObject] = []
     for person in ordered:
-        duplicate = False
-        for other in kept:
-            if (
-                box_iou(person, other) >= 0.22
-                or _center_in_box(person, other)
-                or _center_in_box(other, person)
-            ):
-                duplicate = True
-                break
-        if not duplicate:
-            kept.append(person)
+        if any(_same_shopper_person_boxes(person, other) for other in kept):
+            continue
+        kept.append(person)
     return kept
+
+
+def _closest_visible_person(
+    product_cx: float,
+    product_cy: float,
+    persons: list[TrackedObject],
+    max_dist: float | None = None,
+) -> TrackedObject | None:
+    """Nearest shopper in the current frame, including legs-over-counter boxes."""
+    if max_dist is None:
+        max_dist = _checkout_person_assoc_max_dist_px()
+    best: TrackedObject | None = None
+    best_d = float("inf")
+    for person in persons:
+        dist = math.hypot(person.cx - product_cx, person.cy - product_cy)
+        if dist > max_dist or dist >= best_d:
+            continue
+        best_d = dist
+        best = person
+    return best
+
+
+def _resolve_checkout_owner(
+    camera_key: str,
+    product_cx: float,
+    product_cy: float,
+    persons: list[TrackedObject],
+    now: float,
+    frame_w: float,
+    frame_h: float,
+) -> TrackedObject | None:
+    """One visible shopper at the counter owns every SKU in that frame.
+
+    `_nearest_person_for_product` used to return a synthetic box for a ReID
+    id that already left the frame (trajectory ghost). That opened
+    `checkout-p2-*` while the real bottle fell through to `checkout-noperson`
+    because the remaining torso box was tagged legs-only.
+    """
+    nearest = _nearest_person_for_product(
+        camera_key, product_cx, product_cy, persons, now, frame_w, frame_h
+    )
+    visible = {p.track_id: p for p in persons}
+    if nearest is not None and nearest.track_id not in visible:
+        nearest = None
+    if nearest is None and persons:
+        nearest = _closest_person_by_centroid(product_cx, product_cy, persons)
+    if nearest is None and len(persons) == 1:
+        return persons[0]
+    if nearest is None and persons:
+        nearest = _closest_visible_person(product_cx, product_cy, persons)
+    return nearest
 
 
 def _checkout_person_session(
@@ -791,15 +879,15 @@ def _nearest_person_for_product(
     frame_w: float,
     frame_h: float,
 ) -> TrackedObject | None:
-    """Chủ sở hữu ở quầy: cổ tay → quỹ đạo (cửa sổ + bán kính admin) → một mình.
+    """Chủ sở hữu ở quầy: cổ tay → quỹ đạo của người ĐANG thấy → một mình.
 
+    Quỹ đạo chỉ xét id còn trong ``persons`` (sau collapse). Id ReID ma đã
+    rời khung không được bịa box giả — caller checkout sẽ mở giỏ #2.
     Khi >= 2 người, không đoán theo tâm bbox nếu không có cổ tay/quỹ đạo —
     khách đứng cạnh hay bị nhận nhầm. Fallback tâm có trần
     ``CHECKOUT_PERSON_ASSOC_MAX_DIST_PX`` nằm ở vòng gọi
     ``_closest_person_by_centroid``.
     """
-    from app.services.person_tracker import get_recent_trajectory_person_ids
-
     by_hand = _person_by_hand_near_product(persons, product_cx, product_cy)
     if by_hand is not None:
         return by_hand
@@ -807,15 +895,11 @@ def _nearest_person_for_product(
     window = _trajectory_window_seconds()
     reach_radius = _trajectory_reach_dist_px()
     current_ids: dict[int, TrackedObject] = {p.track_id: p for p in persons}
-    recent_ids = get_recent_trajectory_person_ids(camera_key, now, window)
-    all_ids = set(current_ids) | set(recent_ids)
 
     best_person: TrackedObject | None = None
     best_ts = -1.0
-    best_id: int | None = None
-    for pid in all_ids:
-        visible = current_ids.get(pid)
-        if visible is not None and _person_overlap_is_legs_only(visible, product_cy):
+    for pid, visible in current_ids.items():
+        if _person_overlap_is_legs_only(visible, product_cy):
             continue
         touched_at = trajectory_last_near_ts(
             camera_key,
@@ -832,21 +916,10 @@ def _nearest_person_for_product(
             continue
         if touched_at > best_ts:
             best_ts = touched_at
-            best_person = current_ids.get(pid)
-            best_id = pid
+            best_person = visible
 
-    if best_id is not None:
-        if best_person is not None:
-            return best_person
-        return TrackedObject(
-            track_id=best_id,
-            class_name="person",
-            confidence=-1.0,
-            x1=0.0,
-            y1=0.0,
-            x2=0.0,
-            y2=0.0,
-        )
+    if best_person is not None:
+        return best_person
 
     if len(persons) == 1:
         person = persons[0]
@@ -1361,9 +1434,14 @@ async def process_frame(
     now = time.time()
     _cleanup_stale_state(now)
 
-    present_track_keys = {_track_key(camera_key, p.track_id) for p in persons}
-    for key in present_track_keys:
-        _TRACK_LAST_SEEN[key] = now
+    persons_for_cart = _collapse_duplicate_persons(persons) if is_checkout else list(persons)
+    kept_person_ids = {p.track_id for p in persons_for_cart}
+    for person in persons:
+        key = _track_key(camera_key, person.track_id)
+        if (not is_checkout) or person.track_id in kept_person_ids:
+            _TRACK_LAST_SEEN[key] = now
+        else:
+            _TRACK_LAST_SEEN.pop(key, None)
 
     pairs = _pair_products_with_persons(persons, products, camera_key)
 
@@ -1470,7 +1548,6 @@ async def process_frame(
         alias = _TRACK_ALIAS.setdefault(camera_key, {})
         phys = _PHYSICAL_PRODUCTS.setdefault(camera_key, {})
 
-        persons_for_cart = _collapse_duplicate_persons(persons)
         if len(persons_for_cart) < len(persons):
             logger.warning(
                 "CHECKOUT PERSON COLLAPSE: %d -> %d ids=%s",
@@ -1592,13 +1669,15 @@ async def process_frame(
             pp = phys[logical_id]
             if pp["session_key"] is not None:
                 continue
-            nearest = _nearest_person_for_product(
-                camera_key, pp["cx"], pp["cy"], persons_for_cart, now, _traj_fw, _traj_fh
+            nearest = _resolve_checkout_owner(
+                camera_key,
+                pp["cx"],
+                pp["cy"],
+                persons_for_cart,
+                now,
+                _traj_fw,
+                _traj_fh,
             )
-            if nearest is None and persons_for_cart:
-                nearest = _closest_person_by_centroid(
-                    pp["cx"], pp["cy"], persons_for_cart
-                )
             if nearest is not None:
                 session_key = person_sessions.get(nearest.track_id)
                 if session_key is None:
