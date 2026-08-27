@@ -47,7 +47,7 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, s
 
 from app.security import require_api_key
 from app.services import review_capture, sku_identifier, telemetry_client
-from app.services.det_nms import cluster_winner_take_all
+from app.services.det_nms import _center_in_box, box_iou, cluster_winner_take_all
 from app.services.face_recognizer import get_face_recognizer
 from app.services.lookalike import reset_slots as reset_lookalike_slots
 from app.services.lookalike import skus_are_lookalikes, stabilize_lookalikes
@@ -235,6 +235,35 @@ def _trajectory_reach_dist_px() -> float:
 def _checkout_hand_reach_px() -> float:
     """Wrist must be within this radius of a product to count as the placer."""
     return float(get_vision_config().checkout_hand_reach_px)
+
+
+def _collapse_duplicate_persons(persons: list[TrackedObject]) -> list[TrackedObject]:
+    """Pose/ReID often emits two boxes on one shopper (torso + arm).
+
+    Two track ids → two carts (Khách hàng #2 vs Phiên quầy). Merge overlapping
+    person boxes before opening checkout sessions.
+    """
+    if len(persons) < 2:
+        return list(persons)
+    ordered = sorted(
+        persons,
+        key=lambda p: (p.x2 - p.x1) * (p.y2 - p.y1),
+        reverse=True,
+    )
+    kept: list[TrackedObject] = []
+    for person in ordered:
+        duplicate = False
+        for other in kept:
+            if (
+                box_iou(person, other) >= 0.22
+                or _center_in_box(person, other)
+                or _center_in_box(other, person)
+            ):
+                duplicate = True
+                break
+        if not duplicate:
+            kept.append(person)
+    return kept
 
 
 def _checkout_person_session(
@@ -1270,11 +1299,19 @@ async def process_frame(
         alias = _TRACK_ALIAS.setdefault(camera_key, {})
         phys = _PHYSICAL_PRODUCTS.setdefault(camera_key, {})
 
-        # 0) Giữ phiên của MỌI người đang thấy trong khung — kể cả người chưa
-        # ghép được với sản phẩm nào ở khung này — để epoch của họ không xoay
-        # chỉ vì khung này họ chưa cầm/đặt gì.
+        persons_for_cart = _collapse_duplicate_persons(persons)
+        if len(persons_for_cart) < len(persons):
+            logger.warning(
+                "CHECKOUT PERSON COLLAPSE: %d -> %d ids=%s",
+                len(persons),
+                len(persons_for_cart),
+                [p.track_id for p in persons_for_cart],
+            )
+
+        # 0) Giữ phiên của người còn lại sau khi gộp box trùng — không mở
+        # session cho ghost ReID (ID 1 + ID 2 cùng một khách).
         person_sessions: dict[int, str] = {}
-        for p in persons:
+        for p in persons_for_cart:
             session_key, prev_session = _checkout_person_session(camera_key, p.track_id, now)
             person_sessions[p.track_id] = session_key
             if prev_session:
@@ -1378,8 +1415,10 @@ async def process_frame(
             if pp["session_key"] is not None:
                 continue
             nearest = _nearest_person_for_product(
-                camera_key, pp["cx"], pp["cy"], persons, now, _traj_fw, _traj_fh
+                camera_key, pp["cx"], pp["cy"], persons_for_cart, now, _traj_fw, _traj_fh
             )
+            if nearest is None and len(persons_for_cart) == 1:
+                nearest = persons_for_cart[0]
             if nearest is not None:
                 session_key = person_sessions.get(nearest.track_id)
                 if session_key is None:
@@ -1403,17 +1442,20 @@ async def process_frame(
             # the scene and might associate on the next live frames. A
             # single trigger-scan (or a product filling the frame) would
             # otherwise sit in CANDIDATE forever and never emit.
-            if not persons:
+            if not persons_for_cart:
                 logger.warning(
                     "CHECKOUT NO PERSON: logical=%s sku=%s — fallback ngay (không đợi grace %.0fs)",
                     logical_id, pp["sku"], grace,
                 )
-            elif getattr(vision_cfg, "checkout_scan_mode", False):
-                logger.warning(
-                    "CHECKOUT SCAN: logical=%s sku=%s — thêm giỏ ngay (không đợi wrist/grace %.0fs)",
-                    logical_id, pp["sku"], grace,
-                )
             elif now - pp["unassigned_since"] < grace:
+                continue
+            else:
+                # Còn >= 2 khách phân biệt, chưa thấy cổ tay — không mở giỏ
+                # noperson thứ hai (tách một đơn thành Phiên quầy + Khách hàng).
+                logger.warning(
+                    "CHECKOUT WAIT: logical=%s sku=%s — %d người, chưa ghép cổ tay",
+                    logical_id, pp["sku"], len(persons_for_cart),
+                )
                 continue
             fallback_track, _fb_prev = _checkout_session_track(camera_key, now, True)
             # fallback_track đã có dạng "checkout-<epoch>" (xem

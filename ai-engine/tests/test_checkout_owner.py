@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from app.api.frame import (
+    _collapse_duplicate_persons,
     _nearest_person_for_product,
     _person_by_hand_near_product,
 )
@@ -88,3 +89,50 @@ def test_legs_in_pay_zone_does_not_claim_payer():
         frame_h=540,
     )
     assert out is None
+
+
+def test_overlapping_torso_and_arm_boxes_collapse_to_one_shopper():
+    torso = TrackedObject(
+        track_id=2,
+        class_name="person",
+        confidence=0.9,
+        x1=400,
+        y1=80,
+        x2=620,
+        y2=520,
+    )
+    arm = TrackedObject(
+        track_id=1,
+        class_name="person",
+        confidence=0.7,
+        x1=480,
+        y1=160,
+        x2=600,
+        y2=360,
+    )
+    kept = _collapse_duplicate_persons([torso, arm])
+    assert len(kept) == 1
+    assert kept[0].track_id == 2
+
+
+def test_two_separated_shoppers_are_not_merged():
+    left = TrackedObject(
+        track_id=1,
+        class_name="person",
+        confidence=0.9,
+        x1=40,
+        y1=80,
+        x2=160,
+        y2=500,
+    )
+    right = TrackedObject(
+        track_id=2,
+        class_name="person",
+        confidence=0.9,
+        x1=500,
+        y1=80,
+        x2=640,
+        y2=500,
+    )
+    kept = _collapse_duplicate_persons([left, right])
+    assert {p.track_id for p in kept} == {1, 2}
