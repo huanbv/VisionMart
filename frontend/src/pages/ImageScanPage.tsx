@@ -33,6 +33,7 @@ import {
   CopyOutlined,
   DeleteOutlined,
   DownloadOutlined,
+  FileWordOutlined,
   PrinterOutlined,
   QrcodeOutlined,
   ReloadOutlined,
@@ -67,6 +68,11 @@ import {
 } from "@/api/carts";
 import { listTrainingJobs, type TrainingJob } from "@/api/aiTraining";
 import { listModels } from "@/api/aiReview";
+import {
+  downloadThesisWord,
+  loadThesisImageFromBase64,
+  loadThesisImageFromUrl,
+} from "@/lib/thesisWordExport";
 import CartLinePhoto from "@/components/CartLinePhoto";
 import CartLineSkuButton from "@/components/CartLineSkuButton";
 import {
@@ -228,6 +234,8 @@ export default function ImageScanPage() {
   const [trainingJobs, setTrainingJobs] = useState<TrainingJob[]>([]);
   const [weightKey, setWeightKey] = useState("live");
   const [liveModelFile, setLiveModelFile] = useState("");
+  const [exportingWord, setExportingWord] = useState(false);
+  const [scanSourceLabel, setScanSourceLabel] = useState("");
   const stageUrlsRef = useRef<string[]>([]);
   const previewRef = useRef<string | null>(null);
 
@@ -432,6 +440,7 @@ export default function ImageScanPage() {
     const localUrl = URL.createObjectURL(file);
     previewRef.current = localUrl;
     setPreviewUrl(localUrl);
+    setScanSourceLabel(source === "live" ? "Khung camera live (JPEG)" : `Ảnh tải lên: ${file.name}`);
     setLogs([]);
     setPhase(0);
     addLog(
@@ -628,6 +637,98 @@ export default function ImageScanPage() {
     [carts],
   );
 
+  const exportThesisWord = async () => {
+    if (!analyze && !trace) {
+      message.warning("Quét một ảnh trước khi xuất Word");
+      return;
+    }
+    setExportingWord(true);
+    try {
+      const [preview, opencvStages, aiStages] = await Promise.all([
+        loadThesisImageFromUrl(previewUrl),
+        Promise.all(
+          (trace?.stages ?? []).map(async (s) => ({
+            key: s.stage,
+            title: s.label,
+            elapsedMs: s.elapsed_ms,
+            params: s.params,
+            metrics: s.metrics,
+            image: await loadThesisImageFromUrl(stageUrls[s.order]),
+          })),
+        ),
+        Promise.all(
+          debugSteps.map(async (s) => ({
+            key: s.step,
+            title: s.label,
+            elapsedMs: s.elapsed_ms,
+            params: s.params,
+            image: await loadThesisImageFromBase64(s.image_jpeg_b64),
+          })),
+        ),
+      ]);
+      const branchName = branches.find((b) => b.id === branchId)?.name;
+      const cameraName = cameras.find((c) => c.id === cameraId)?.name;
+      const filename = await downloadThesisWord({
+        kind: "image",
+        context: {
+          branchName,
+          cameraName,
+          detectorTitle: detectorDesc.title,
+          detectorDetail: detectorDesc.detail,
+          modelFile: analyze?.model ? fileName(analyze.model) : liveModelFile,
+          elapsedMs: analyze?.elapsed_ms,
+          sourceLabel: scanSourceLabel || "Ảnh tĩnh",
+          opencvMs: trace?.opencv_ms,
+          quality: trace?.quality
+            ? {
+                quality_score: trace.quality.quality_score,
+                brightness: trace.quality.brightness,
+                contrast: trace.quality.contrast,
+                blur_score: trace.quality.blur_score,
+                is_blurry: trace.quality.is_blurry,
+                is_low_quality: trace.quality.is_low_quality,
+                reason: trace.quality.reason,
+              }
+            : undefined,
+        },
+        notes: logs.map((l) => ({
+          time: l.time,
+          phase: l.phase,
+          kind: l.kind,
+          message: l.message,
+          detail: l.detail,
+        })),
+        detections: (analyze?.detections ?? []).map((d) => ({
+          label: d.name || d.class_name,
+          sku: d.sku,
+          confidence: d.confidence,
+        })),
+        preview,
+        opencvStages,
+        aiStages,
+        carts: carts.map((c) => ({
+          id: c.id,
+          status: c.status,
+          sessionId: c.session_id,
+          total: c.total_amount,
+          currency: c.currency,
+          lines: (c.lines || []).map((line) => ({
+            sku: line.sku,
+            name: line.product_name,
+            qty: line.quantity,
+            subtotal: line.subtotal,
+            confidence: line.confidence,
+          })),
+        })),
+      });
+      message.success(`Đã tải ${filename}`);
+    } catch (err) {
+      message.error(axiosDetail(err, "Không xuất được file Word"));
+    } finally {
+      setExportingWord(false);
+    }
+  };
+
   return (
     <Space direction="vertical" size="large" style={{ width: "100%" }} className="image-scan-lab">
       <style>{`
@@ -648,6 +749,8 @@ export default function ImageScanPage() {
           <strong>Train từ nhãn bbox</strong> để so sánh; mặc định là model đang triển khai (live).
           Hệ thống ghi từng bước OpenCV rồi YOLO / crop / SKU kèm ảnh, công thức, thuộc tính và mã nguồn.
           Giỏ tạo từ ảnh nằm riêng phía dưới — không lẫn giỏ live của quầy.
+          Sau khi quét xong, <strong>Xuất Word (A4, luận văn)</strong> tạo file .docx Times New Roman 13pt:
+          mô tả thí nghiệm, nhật ký, ảnh trung gian, công thức và giỏ hàng — bố cục báo cáo, không phải ảnh chụp giao diện.
         </Paragraph>
       </div>
 
@@ -702,6 +805,16 @@ export default function ImageScanPage() {
           </Button>
           <Button icon={<PrinterOutlined />} onClick={() => window.print()} disabled={!trace && !analyze}>
             In / lưu PDF
+          </Button>
+          <Button
+            type="primary"
+            ghost
+            icon={<FileWordOutlined />}
+            loading={exportingWord}
+            disabled={(!trace && !analyze) || busy}
+            onClick={() => void exportThesisWord()}
+          >
+            Xuất Word (A4, luận văn)
           </Button>
           <Button
             icon={<CopyOutlined />}

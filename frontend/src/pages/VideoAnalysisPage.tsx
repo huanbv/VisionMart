@@ -46,6 +46,7 @@ import {
   BorderOuterOutlined,
   CheckCircleOutlined,
   DeleteOutlined,
+  FileWordOutlined,
   ThunderboltOutlined,
   PlayCircleOutlined,
   QrcodeOutlined,
@@ -85,6 +86,11 @@ import {
   type ThesisAppendixSection,
 } from "@/components/ThesisPipelineLab";
 import { lookupAlgorithm } from "@/pages/imageScanAlgorithms";
+import {
+  downloadThesisWord,
+  loadThesisImageFromBase64,
+  loadThesisImageFromUrl,
+} from "@/lib/thesisWordExport";
 import { listTrainingJobs, type TrainingJob } from "@/api/aiTraining";
 import {
   mapNormToContent,
@@ -194,6 +200,7 @@ export default function VideoAnalysisPage() {
   const [stageUrls, setStageUrls] = useState<Record<number, string>>({});
   const [traceHint, setTraceHint] = useState<string | null>(null);
   const [thesisTime, setThesisTime] = useState<number | null>(null);
+  const [exportingWord, setExportingWord] = useState(false);
   const stageUrlsRef = useRef<string[]>([]);
 
   const [carts, setCarts] = useState<Cart[]>([]);
@@ -1062,6 +1069,112 @@ export default function VideoAnalysisPage() {
 
   const totalRevenue = useMemo(() => carts.reduce((sum, c) => sum + Number(c.total_amount || 0), 0), [carts]);
 
+  const exportThesisWord = async () => {
+    if (!debugSteps.length && !trace && !carts.length && !logs.length) {
+      message.warning("Kích hoạt AI tại một khung (ghi luận văn) trước khi xuất Word");
+      return;
+    }
+    setExportingWord(true);
+    try {
+      const snap = captureVideoSnapshot();
+      const videoName = libraryItems.find((it) => it.id === selectedVideoId)?.name || videoFile?.name;
+      const [preview, opencvStages, aiStages] = await Promise.all([
+        snap ? loadThesisImageFromBase64(snap) : Promise.resolve(null),
+        Promise.all(
+          (trace?.stages ?? []).map(async (s) => ({
+            key: s.stage,
+            title: s.label,
+            elapsedMs: s.elapsed_ms,
+            params: s.params,
+            metrics: s.metrics,
+            image: await loadThesisImageFromUrl(stageUrls[s.order]),
+          })),
+        ),
+        Promise.all(
+          debugSteps.map(async (s) => ({
+            key: s.step,
+            title: s.label,
+            elapsedMs: s.elapsed_ms,
+            params: s.params,
+            image: await loadThesisImageFromBase64(s.image_jpeg_b64),
+          })),
+        ),
+      ]);
+      const dets = lastDetectionsRef.current as Array<{
+        name?: string;
+        class_name?: string;
+        sku?: string | null;
+        confidence?: number;
+      }>;
+      const filename = await downloadThesisWord({
+        kind: "video",
+        context: {
+          branchName: branches.find((b) => b.id === branchId)?.name,
+          cameraName: selectedCamera?.name,
+          detectorTitle: detectorDesc.title,
+          detectorDetail: detectorDesc.detail,
+          sourceLabel: videoName
+            ? `Video «${videoName}»${thesisTime != null ? ` · t = ${thesisTime.toFixed(1)} s` : ""}`
+            : "Khung video",
+          videoTimeSec: thesisTime,
+          framesProcessed: framesProcessed || undefined,
+          roiCount: roiZones.length,
+          opencvMs: trace?.opencv_ms,
+          quality: trace?.quality
+            ? {
+                quality_score: trace.quality.quality_score,
+                brightness: trace.quality.brightness,
+                contrast: trace.quality.contrast,
+                blur_score: trace.quality.blur_score,
+                is_blurry: trace.quality.is_blurry,
+                is_low_quality: trace.quality.is_low_quality,
+                reason: trace.quality.reason,
+              }
+            : undefined,
+        },
+        notes: logs.map((l) => ({
+          time: l.time,
+          kind: l.type,
+          message: l.message,
+          detail: l.detail,
+        })),
+        detections: dets.map((d) => ({
+          label: d.name || d.class_name || "đối tượng",
+          sku: d.sku,
+          confidence: typeof d.confidence === "number" ? d.confidence : 0,
+        })),
+        preview,
+        opencvStages,
+        aiStages,
+        carts: carts.map((c) => ({
+          id: c.id,
+          status: c.status,
+          sessionId: c.session_id,
+          total: c.total_amount,
+          currency: c.currency,
+          lines: (c.lines || []).map((line) => ({
+            sku: line.sku,
+            name: line.product_name,
+            qty: line.quantity,
+            subtotal: line.subtotal,
+            confidence: line.confidence,
+          })),
+        })),
+      });
+      message.success(`Đã tải ${filename}`);
+    } catch (err) {
+      message.error(
+        isAxiosError(err) && err.response?.data?.detail
+          ? String(err.response.data.detail)
+          : err instanceof Error
+            ? err.message
+            : "Không xuất được file Word",
+      );
+    } finally {
+      setExportingWord(false);
+    }
+  };
+
   return (
     <>
     <Space direction="vertical" size="large" style={{ width: "100%" }}>
@@ -1258,8 +1371,9 @@ export default function VideoAnalysisPage() {
                 </Tag>
                 <Typography.Text type="secondary" style={{ fontSize: 11, display: "block", marginTop: 4 }}>
                   {detectorDesc.detail}. Chọn job Train AI hoặc Train từ nhãn bbox để so sánh.
-                  Camera live không đổi. <strong>Kích hoạt AI tại khung này</strong> ghi ảnh từng giai đoạn + mã nguồn cho luận văn;
+                  Camera live không đổi. <strong>Kích hoạt AI tại khung này</strong> ghi ảnh từng giai đoạn cho luận văn;
                   tự chạy nhiều khung thì không đính JPEG mỗi frame (tránh quá tải).
+                  Sau khi có nhật ký, <strong>Xuất Word A4</strong> ra file .docx Times New Roman 13pt (ảnh, công thức, ghi chú) — không xuất nguyên màn hình lab.
                 </Typography.Text>
               </Card>
 
@@ -1274,6 +1388,16 @@ export default function VideoAnalysisPage() {
                   style={{ width: "100%", fontWeight: 600 }}
                 >
                   Kích hoạt AI tại khung này (ghi luận văn)
+                </Button>
+                <Button
+                  icon={<FileWordOutlined />}
+                  onClick={() => void exportThesisWord()}
+                  loading={exportingWord}
+                  disabled={isSending || isRunning || (!debugSteps.length && !trace && !logs.length && !carts.length)}
+                  size="large"
+                  style={{ width: "100%" }}
+                >
+                  Xuất Word A4 (luận văn)
                 </Button>
                 <Space style={{ width: "100%", justifyContent: "center" }} wrap>
                   <Button
@@ -1441,7 +1565,16 @@ export default function VideoAnalysisPage() {
               description={
                 <>
                   {detectorDesc.detail}
-                  {traceHint ? ` OpenCV: ${traceHint}` : ""}
+                  {traceHint ? ` OpenCV: ${traceHint}` : ""}{" "}
+                  <Button
+                    className="no-print"
+                    size="small"
+                    icon={<FileWordOutlined />}
+                    loading={exportingWord}
+                    onClick={() => void exportThesisWord()}
+                  >
+                    Xuất Word A4
+                  </Button>
                 </>
               }
             />
