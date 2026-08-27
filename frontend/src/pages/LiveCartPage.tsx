@@ -81,7 +81,11 @@ const SOURCE_LABEL: Record<string, string> = {
   mobile_app: "Mobile",
 };
 
-type ScanDetection = { sku?: string | null; class_name?: string };
+type ScanDetection = {
+  sku?: string | null;
+  class_name?: string;
+  confidence?: number;
+};
 type ScanEvent = {
   event?: { product_sku?: string | null };
   backend?: {
@@ -90,12 +94,30 @@ type ScanEvent = {
   };
 };
 
+function detectionLine(detections: ScanDetection[]): string {
+  if (!detections.length) return "";
+  return detections
+    .map((d) => {
+      const name = d.sku || d.class_name || "?";
+      const pct =
+        d.confidence != null && Number.isFinite(d.confidence)
+          ? ` ${Math.round(d.confidence * 100)}%`
+          : "";
+      return `${name}${pct}`;
+    })
+    .join(", ");
+}
+
 function reportScanOutcome(
   detections: ScanDetection[],
   events: ScanEvent[],
   addLog: (type: AiLogItem["type"], messageText: string, detail?: string) => void,
   sourceLabel: string,
 ) {
+  const seen = detectionLine(detections);
+  if (seen) {
+    addLog("scan", `${sourceLabel} — YOLO thấy`, seen);
+  }
   const withSku = detections.filter((d) => d.sku);
   const newlyAdded = events.filter(
     (e) => e.backend?.body?.accepted && !e.backend?.body?.reason,

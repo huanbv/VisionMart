@@ -125,6 +125,34 @@ def test_offset_boxes_on_one_bottle_collapse_to_one():
     assert out[0].class_name == "du_7u"
 
 
+def test_adjacent_7up_and_sting_on_counter_keep_both():
+    """Two drinks ~70px apart must not become one 7Up with a Sting crop."""
+    reset_slots()
+    frame = np.full((400, 400, 3), 30, dtype=np.uint8)
+    _paint_bottle(frame, 80, 80, 150, 280, (40, 210, 40))
+    _paint_bottle(frame, 165, 80, 235, 280, (20, 20, 210))
+    seven = _box("du_7u", 0.48, 80, 80, 150, 280, tid=1)
+    sting = _box("du_sti", 0.52, 165, 80, 235, 280, tid=2)
+    out = stabilize_lookalikes("cam-adj", [seven, sting], frame, now=50.0)
+    assert {d.class_name for d in out} == {"du_7u", "du_sti"}
+    by_cls = {d.class_name: d for d in out}
+    assert by_cls["du_7u"].track_id == 1
+    assert by_cls["du_sti"].track_id == 2
+
+
+def test_winner_box_follows_chosen_class_not_max_conf():
+    """Crop must follow the SKU we keep, not the louder YOLO box."""
+    reset_slots()
+    frame = np.full((400, 400, 3), 30, dtype=np.uint8)
+    _paint_bottle(frame, 100, 80, 160, 280, (40, 210, 40))
+    sting = _box("du_sti", 0.70, 100, 80, 160, 280, tid=1)
+    seven = _box("du_7u", 0.40, 102, 82, 158, 278, tid=2)
+    out = stabilize_lookalikes("cam-crop", [sting, seven], frame, now=1.0)
+    assert len(out) == 1
+    assert out[0].class_name == "du_7u"
+    assert out[0].track_id == 2
+
+
 def test_sticky_survives_multi_second_miss():
     reset_slots()
     gray = np.full((400, 400, 3), 80, dtype=np.uint8)

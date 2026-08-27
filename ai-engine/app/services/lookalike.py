@@ -149,12 +149,21 @@ def _union_crop(frame: np.ndarray | None, dets: list[Any]) -> np.ndarray | None:
     return _crop(frame, _Box())
 
 
+def _color_disagrees(frame: np.ndarray | None, a: Any, b: Any) -> bool:
+    """Two boxes with strong opposite 7Up/Sting colors are two bottles."""
+    ha, ra = color_vote_7up_sting(_crop(frame, a))
+    hb, rb = color_vote_7up_sting(_crop(frame, b))
+    if not ha or not hb or ha == hb:
+        return False
+    return ra >= 1.15 and rb >= 1.15
+
+
 def _same_bottle(a: Any, b: Any) -> bool:
     """True when two 7Up/Sting boxes are parts of one standing bottle.
 
-    Live logs showed both classes surviving because centers sat ~60–90px
-    apart — wider than the old 36px NMS, still one object.
-    Side-by-side bottles have a much larger horizontal gap.
+    Overlap / containment catches the usual dual-class fire on one object.
+    A wide horizontal gap is two bottles on the counter — do not merge those,
+    or the cart keeps 7Up and crops the Sting box (highest YOLO score).
     """
     if box_iou(a, b) >= 0.12 or _center_in_box(a, b) or _center_in_box(b, a):
         return True
@@ -166,18 +175,22 @@ def _same_bottle(a: Any, b: Any) -> bool:
     bh = max(1.0, b.y2 - b.y1)
     horiz = abs(acx - bcx)
     vert = abs(acy - bcy)
-    max_w = max(aw, bw)
+    min_w = min(aw, bw)
     max_h = max(ah, bh)
-    col = max(48.0, 0.35 * max_h, 0.85 * max_w)
+    if horiz >= max(40.0, 0.55 * min_w):
+        return False
+    col = max(36.0, 0.30 * max_h, 0.45 * min_w)
     if horiz < col and vert < max(140.0, 1.05 * max_h):
         return True
     iy1, iy2 = max(a.y1, b.y1), min(a.y2, b.y2)
     ih = max(0.0, iy2 - iy1)
     vert_ov = ih / min(ah, bh)
-    return vert_ov >= 0.30 and horiz < max(64.0, 0.95 * max_w)
+    return vert_ov >= 0.45 and horiz < max(40.0, 0.50 * min_w)
 
 
-def _cluster_same_bottle(dets: list[Any]) -> list[list[Any]]:
+def _cluster_same_bottle(
+    dets: list[Any], frame_bgr: np.ndarray | None
+) -> list[list[Any]]:
     clusters: list[list[Any]] = []
     for d in sorted(dets, key=lambda x: x.confidence, reverse=True):
         placed = False
@@ -185,10 +198,13 @@ def _cluster_same_bottle(dets: list[Any]) -> list[list[Any]]:
         for cluster in clusters:
             if class_group(cluster[0].class_name) != group:
                 continue
-            if any(_same_bottle(d, other) for other in cluster):
-                cluster.append(d)
-                placed = True
-                break
+            if not any(_same_bottle(d, other) for other in cluster):
+                continue
+            if any(_color_disagrees(frame_bgr, d, other) for other in cluster):
+                continue
+            cluster.append(d)
+            placed = True
+            break
         if not placed:
             clusters.append([d])
     return clusters
@@ -297,7 +313,7 @@ def stabilize_lookalikes(
         return detections
 
     out = list(other)
-    for cluster in _cluster_same_bottle(look):
+    for cluster in _cluster_same_bottle(look, frame_bgr):
         group = class_group(cluster[0].class_name)
         assert group is not None
         cx = sum(d.cx for d in cluster) / len(cluster)
@@ -311,18 +327,21 @@ def stabilize_lookalikes(
         top = max(cluster, key=lambda d: d.confidence)
         yolo_cls = str(top.class_name).strip().lower()
         chosen = _resolve_class(yolo_cls, hint, ratio, slot)
+        matching = [d for d in cluster if str(d.class_name).lower() == chosen]
+        box = max(matching, key=lambda d: d.confidence) if matching else top
         yolo_names = [str(d.class_name).lower() for d in cluster]
         if len(cluster) > 1 or chosen != yolo_cls or (slot and chosen != slot["class_name"]):
             logger.warning(
-                "LOOKALIKE: yolo=%s -> %s n=%d color=%s/%.1f sticky=%s",
+                "LOOKALIKE: yolo=%s -> %s n=%d color=%s/%.1f sticky=%s box_tid=%s",
                 yolo_names,
                 chosen,
                 len(cluster),
                 hint,
                 ratio,
                 None if slot is None else slot["class_name"],
+                box.track_id,
             )
-        winner = replace(top, class_name=chosen)
+        winner = replace(box, class_name=chosen)
         out.append(winner)
         _touch_slot(slots, group, cx, cy, chosen, ts)
 
