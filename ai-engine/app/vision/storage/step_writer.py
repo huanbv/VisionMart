@@ -88,6 +88,18 @@ STEP_ORDER: tuple[str, ...] = (
     "result",
 )
 
+# Vietnamese captions for the thesis / lab UI. Keep in sync with STEP_ORDER.
+STEP_LABELS: dict[str, str] = {
+    "original": "Ảnh gốc",
+    "preprocess": "Sau tiền xử lý OpenCV",
+    "detection": "YOLO — khung phát hiện",
+    "crop": "Crop sản phẩm",
+    "enhanced": "Crop tăng cường",
+    "classifier": "Phân loại SKU",
+    "ocr": "OCR",
+    "result": "Kết quả gán SKU",
+}
+
 
 @dataclass
 class StepArtifact:
@@ -200,6 +212,33 @@ class DebugCollector:
             )
         )
 
+    def encode_inline(
+        self, *, quality: int = 80, max_edge: int = 1280
+    ) -> list[dict[str, Any]]:
+        """JPEG+base64 of each captured step — for one-shot lab / thesis scans.
+
+        Live 30 fps never calls this: encoding here is paid on the request
+        path. A still upload for a report is the intended caller.
+        """
+        if not self._artifacts:
+            return []
+        order = {name: i for i, name in enumerate(STEP_ORDER)}
+        out: list[dict[str, Any]] = []
+        for art in sorted(self._artifacts, key=lambda a: order.get(a.step, 99)):
+            b64 = _jpeg_b64(art.image, quality=quality, max_edge=max_edge)
+            if not b64:
+                continue
+            out.append(
+                {
+                    "step": art.step,
+                    "label": STEP_LABELS.get(art.step, art.step),
+                    "elapsed_ms": art.elapsed_ms,
+                    "params": _jsonable(art.params),
+                    "image_jpeg_b64": b64,
+                }
+            )
+        return out
+
 
 def build_prefix(camera_key: str, frame_uid: str, when: datetime | None = None) -> str:
     d = (when or datetime.now(timezone.utc)).strftime("%Y/%m/%d")
@@ -209,6 +248,48 @@ def build_prefix(camera_key: str, frame_uid: str, when: datetime | None = None) 
 
 def new_frame_uid() -> str:
     return uuid.uuid4().hex
+
+
+def _jsonable(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {str(k): _jsonable(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_jsonable(v) for v in value]
+    if isinstance(value, (str, int, float, bool)) or value is None:
+        return value
+    try:
+        return value.item()  # numpy scalar
+    except Exception:
+        return str(value)
+
+
+def _jpeg_b64(image: Any, *, quality: int, max_edge: int) -> str | None:
+    import base64
+
+    import cv2
+
+    if image is None:
+        return None
+    frame = image
+    try:
+        h, w = frame.shape[:2]
+        longest = max(h, w)
+        if longest > max_edge:
+            scale = max_edge / float(longest)
+            frame = cv2.resize(
+                frame,
+                (max(1, int(w * scale)), max(1, int(h * scale))),
+                interpolation=cv2.INTER_AREA,
+            )
+        ok, buf = cv2.imencode(
+            ".jpg", frame, [int(cv2.IMWRITE_JPEG_QUALITY), int(quality)]
+        )
+        if not ok:
+            return None
+        return base64.b64encode(buf.tobytes()).decode("ascii")
+    except Exception:
+        logger.exception("debug collector: jpeg encode failed")
+        return None
 
 
 def get_stats() -> WriterStats:

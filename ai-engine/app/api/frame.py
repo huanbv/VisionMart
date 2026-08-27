@@ -1284,6 +1284,7 @@ async def process_frame(
     roi_zones_json: str | None = Form(None, alias="roi_zones"),
     weight_key: str | None = Form(None),
     scan_session: str | None = Form(None),
+    include_debug_steps: bool = Form(False),
     image: UploadFile = File(...),
 ) -> dict[str, Any]:
     frame_started = time.perf_counter()
@@ -1306,8 +1307,11 @@ async def process_frame(
     # the `.add(...)` calls below need no guards. Never awaited — see
     # app/vision/storage/step_writer.py for why storage must not block a
     # frame.
+    debug_ai_on = step_writer.should_debug(get_vision_config())
+    # Lab/thesis stills ask for JPEGs in the JSON. That is not the live
+    # DEBUG_AI path (async MinIO) — enable the collector either way.
     debug = step_writer.DebugCollector(
-        camera_key, enabled=step_writer.should_debug(get_vision_config())
+        camera_key, enabled=debug_ai_on or include_debug_steps
     )
     if debug.enabled:
         # The raw frame as it arrived, before any enhancement. Requires a
@@ -2015,7 +2019,12 @@ async def process_frame(
     # raised. `debug_frame_uid` lets the admin UI jump straight to this
     # frame's artifacts, and is null when debugging is off or the sample
     # was dropped — existing clients ignore the extra key.
-    debug_written = debug.flush()
+    inline_steps: list[dict[str, Any]] = []
+    if include_debug_steps:
+        inline_steps = debug.encode_inline()
+    # Only the live DEBUG_AI sampler writes MinIO; lab inline JPEGs must
+    # not fill object storage on every thesis scan.
+    debug_written = debug.flush() if debug_ai_on else False
 
     # Telemetry for the admin dashboard. Buffered and flushed in the
     # background — nothing here awaits the network. Entirely optional: when
@@ -2088,4 +2097,5 @@ async def process_frame(
         # this line changed shape or meaning.
         "vision": get_last_vision_result(camera_key),
         "debug_frame_uid": debug.frame_uid if debug_written else None,
+        **({"debug_steps": inline_steps} if include_debug_steps else {}),
     }

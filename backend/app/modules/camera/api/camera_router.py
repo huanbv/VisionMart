@@ -375,6 +375,10 @@ async def analyze_camera_frame(
     camera_id: uuid.UUID,
     image: UploadFile = File(...),
     model: str | None = None,
+    include_debug_steps: bool = Query(
+        False,
+        description="Return JPEG of each AI stage (lab / thesis). Slow; not for cashier live.",
+    ),
     current: CurrentUser = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
 ) -> dict:
@@ -444,6 +448,7 @@ async def analyze_camera_frame(
             manual_scan=True,
             skip_roi=True,
             min_confidence=0.35,
+            include_debug_steps=include_debug_steps,
         )
     except AIEngineError as exc:
         frame_error = str(exc)

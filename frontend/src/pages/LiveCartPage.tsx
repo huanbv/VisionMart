@@ -38,6 +38,7 @@ import {
   UploadOutlined,
 } from "@ant-design/icons";
 import { isAxiosError } from "axios";
+import { Link } from "react-router-dom";
 
 import {
   abandonCart,
@@ -871,6 +872,11 @@ export default function LiveCartPage() {
                   Tải ảnh & Quét
                 </Button>
               </span>
+            </Tooltip>
+            <Tooltip title="Trang riêng: thanh tiến trình từng giai đoạn AI, nhật ký và ảnh để đưa vào luận văn.">
+              <Link to="/image-scan">
+                <Button icon={<CloudUploadOutlined />}>Nhật ký giai đoạn</Button>
+              </Link>
             </Tooltip>
             <Space>
               <Typography.Text type="secondary">AI tự động</Typography.Text>

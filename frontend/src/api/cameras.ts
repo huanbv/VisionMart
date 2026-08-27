@@ -160,6 +160,14 @@ export interface FramePipelineEvent {
   };
 }
 
+export interface DebugStep {
+  step: string;
+  label: string;
+  elapsed_ms: number | null;
+  params: Record<string, unknown>;
+  image_jpeg_b64: string;
+}
+
 export interface FramePipelineResult {
   model?: string;
   image?: { width: number; height: number; format: string; size_bytes: number };
@@ -176,6 +184,7 @@ export interface FramePipelineResult {
   is_checkout_zone: boolean;
   customer_id: string | null;
   emitted_events: FramePipelineEvent[];
+  debug_steps?: DebugStep[];
 }
 
 export interface AnalyzeResult {
@@ -192,15 +201,18 @@ export interface AnalyzeResult {
 export async function analyzeCameraFrame(
   id: string,
   file: File,
-  model?: string,
+  options?: { model?: string; includeDebugSteps?: boolean },
 ): Promise<AnalyzeResult> {
   const form = new FormData();
   form.append("image", file);
+  const params: Record<string, string> = {};
+  if (options?.model) params.model = options.model;
+  if (options?.includeDebugSteps) params.include_debug_steps = "true";
   const { data } = await apiClient.post<AnalyzeResult>(
     `/cameras/${id}/analyze`,
     form,
     {
-      params: model ? { model } : undefined,
+      params: Object.keys(params).length ? params : undefined,
       headers: { "Content-Type": "multipart/form-data" },
       timeout: UPLOAD_TIMEOUT_MS,
     },
