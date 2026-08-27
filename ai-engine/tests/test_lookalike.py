@@ -27,7 +27,24 @@ def _paint_bottle(frame: np.ndarray, x1: int, y1: int, x2: int, y2: int, bgr: tu
     frame[y1:y2, x1:x2] = bgr
 
 
-def test_green_crop_is_7up():
+def test_yellow_green_crop_is_7up_not_sting():
+    """Warm-light 7Up is yellow-green; that must not count as Sting orange."""
+    crop = np.zeros((160, 70, 3), dtype=np.uint8)
+    crop[:, :] = (40, 210, 160)
+    assert color_hint_7up_sting(crop) == "du_7u"
+
+
+def test_yolo_and_green_flip_sticky_sting():
+    """7Up used to stay Sting for 10s after the first red-biased frame."""
+    reset_slots()
+    gray = np.full((400, 400, 3), 80, dtype=np.uint8)
+    stabilize_lookalikes("cam-flip", [_box("du_sti", 0.50, 100, 80, 160, 280)], gray, now=1.0)
+    frame = np.full((400, 400, 3), 30, dtype=np.uint8)
+    _paint_bottle(frame, 100, 80, 160, 280, (40, 210, 40))
+    out = stabilize_lookalikes(
+        "cam-flip", [_box("du_7u", 0.48, 102, 82, 158, 278, tid=2)], frame, now=1.3
+    )
+    assert out[0].class_name == "du_7u"
     crop = np.zeros((160, 70, 3), dtype=np.uint8)
     crop[:, :] = (40, 210, 40)
     assert color_hint_7up_sting(crop) == "du_7u"
@@ -142,3 +159,28 @@ def test_bridge_treats_7up_sting_as_same_physical_product():
     )
     assert hit == "DU-7U:1:1"
     frame_mod._PHYSICAL_PRODUCTS.pop("cam-bridge", None)
+
+
+def test_bridge_lookalike_updates_sku_for_cart():
+    from app.api import frame as frame_mod
+
+    frame_mod._PHYSICAL_PRODUCTS["cam-flip-sku"] = {
+        "DU-STI:1:1": {
+            "sku": "DU-STI",
+            "cx": 200.0,
+            "cy": 200.0,
+            "last_seen": 50.0,
+            "counted": True,
+            "session_key": "person-1",
+            "current_track_id": 1,
+        }
+    }
+    frame_mod._CHECKOUT_SCANNED["cam-flip-sku:person-1"] = {
+        "DU-STI": {"logical_ids": {"DU-STI:1:1"}},
+    }
+    hit = frame_mod._find_bridge_match(
+        "cam-flip-sku", "DU-7U", 205.0, 198.0, now=50.4, claimed_this_frame=set()
+    )
+    assert hit == "DU-STI:1:1"
+    frame_mod._PHYSICAL_PRODUCTS.pop("cam-flip-sku", None)
+    frame_mod._CHECKOUT_SCANNED.pop("cam-flip-sku:person-1", None)

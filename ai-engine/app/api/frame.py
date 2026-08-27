@@ -1387,6 +1387,20 @@ async def process_frame(
             )
             if bridged_id is not None:
                 pp = phys[bridged_id]
+                if sku != pp["sku"] and skus_are_lookalikes(pp["sku"], sku):
+                    old_sku = pp["sku"]
+                    logger.warning(
+                        "CHECKOUT LOOKALIKE SKU: %s -> %s logical=%s (cap nhat gio, khong giu Sting khi da la 7Up)",
+                        old_sku, sku, bridged_id,
+                    )
+                    if pp.get("counted") and pp.get("session_key"):
+                        scanned_key = f"{camera_key}:{pp['session_key']}"
+                        bucket = _CHECKOUT_SCANNED.get(scanned_key, {}).get(old_sku)
+                        if bucket and bridged_id in bucket.get("logical_ids", ()):
+                            bucket["logical_ids"].discard(bridged_id)
+                        pp["pending_return_sku"] = old_sku
+                        pp["counted"] = False
+                    pp["sku"] = sku
                 pp["current_track_id"] = product.track_id
                 pp["cx"], pp["cy"] = product.cx, product.cy
                 pp["last_seen"] = now
@@ -1480,6 +1494,24 @@ async def process_frame(
         pending_events: list[dict[str, Any]] = []
         for logical_id in seen_logical_ids:
             pp = phys[logical_id]
+            old_sku = pp.pop("pending_return_sku", None)
+            if old_sku and pp.get("session_key"):
+                pending_events.append(
+                    {
+                        "event_id": uuid.uuid4().hex,
+                        "event_type": "product_returned",
+                        "organization_id": str(organization_id),
+                        "branch_id": str(branch_id),
+                        "camera_id": str(camera_id) if camera_id else None,
+                        "track_id": pp["session_key"],
+                        "product_id": None,
+                        "product_sku": old_sku,
+                        "quantity": 1,
+                        "confidence": 1.0,
+                        "customer_id": str(customer_id) if customer_id else None,
+                        "occurred_at": datetime.now(timezone.utc).isoformat(),
+                    }
+                )
             if pp["session_key"] is None or pp["counted"]:
                 continue
             scanned_key = f"{camera_key}:{pp['session_key']}"
@@ -1526,8 +1558,11 @@ async def process_frame(
             pending_events.append(event)
 
         if pending_events:
-            event_results = await asyncio.gather(*[_post_event(e) for e in pending_events])
-            for e, r in zip(pending_events, event_results):
+            returns = [e for e in pending_events if e["event_type"] == "product_returned"]
+            rest = [e for e in pending_events if e["event_type"] != "product_returned"]
+            ordered = returns + rest
+            for e in ordered:
+                r = await _post_event(e)
                 logger.warning(
                     "CHECKOUT EVENT RESULT: sku=%s session=%s backend=%s",
                     e["product_sku"], e["track_id"], r,

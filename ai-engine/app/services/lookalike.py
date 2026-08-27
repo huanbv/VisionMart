@@ -43,10 +43,12 @@ _SKU_TO_GROUP: dict[str, frozenset[str]] = {
 # Checkout often misses the bottle for several seconds (n=0). Keep the
 # last SKU at that spot long enough to cover those gaps.
 _SLOT_TTL_SECONDS = 10.0
-_SLOT_MAX_DIST_PX = 96.0
+# One bottle width, not a neighbour SKU on the same counter.
+_SLOT_MAX_DIST_PX = 52.0
 _SLOT_MAX_PER_CAMERA = 24
-# Color must beat the other hue by this much to *flip* a sticky SKU.
-_STRONG_COLOR_RATIO = 2.0
+# Color must beat the other hue by this much to *flip* a sticky SKU
+# when YOLO still disagrees. YOLO+color agreement flips without this.
+_STRONG_COLOR_RATIO = 1.45
 
 # camera_key -> list of spatial slots
 _SLOTS: dict[str, list[dict[str, Any]]] = {}
@@ -98,11 +100,13 @@ def color_vote_7up_sting(crop: np.ndarray | None) -> tuple[str | None, float]:
     chroma = (sat >= 55) & (val >= 45) & (val <= 245)
     if int(chroma.sum()) < 40:
         return None, 0.0
-    green = chroma & (hue >= 35) & (hue <= 85)
-    red = chroma & ((hue <= 12) | (hue >= 165))
-    orange = chroma & (hue > 12) & (hue < 32) & (sat >= 90)
+    # Lime 7Up under warm LEDs sits at hue ~25–40. The old orange band
+    # (12–32) counted that as Sting, so a 7Up bottle stayed red for seconds.
+    green = chroma & (hue >= 25) & (hue <= 95)
+    red = chroma & ((hue <= 8) | (hue >= 170))
+    sting_orange = chroma & (hue > 8) & (hue < 22) & (sat >= 120)
     n_green = int(green.sum())
-    n_red = int(red.sum()) + int(orange.sum())
+    n_red = int(red.sum()) + int(sting_orange.sum())
     total = n_green + n_red
     if total < 40:
         return None, 0.0
@@ -222,14 +226,22 @@ def _resolve_class(
     ratio: float,
     slot: dict[str, Any] | None,
 ) -> str:
-    """Strong color may flip; weak color cannot override a sticky SKU."""
-    strong = bool(hint) and ratio >= _STRONG_COLOR_RATIO
+    """Strong color may flip; YOLO+color agreement beats a stale sticky SKU.
+
+    Sting (red) wins the first frames under warm light; 7Up then sits in the
+    same slot for 10s unless green is allowed to override.
+    """
+    yolo_cls = str(yolo_cls).strip().lower()
+    hint_cls = str(hint).strip().lower() if hint else None
+    strong = bool(hint_cls) and ratio >= _STRONG_COLOR_RATIO
+    if hint_cls and hint_cls == yolo_cls:
+        return yolo_cls
     if strong:
-        return str(hint)
+        return str(hint_cls)
     if slot:
         return str(slot["class_name"])
-    if hint:
-        return str(hint)
+    if hint_cls:
+        return hint_cls
     return yolo_cls
 
 

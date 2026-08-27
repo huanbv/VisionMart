@@ -63,7 +63,7 @@ _MIN_DETECT_EVERY_N = 1
 _MAX_DETECT_EVERY_N = 15
 
 # Duoi nguong nay nhan SKU hien kem dau ? — xem muc _label_with_sku.
-_LIVE_SKU_MIN_CONFIDENCE = 0.55
+_LIVE_SKU_MIN_CONFIDENCE = 0.35
 
 
 def _open_capture(stream_url: str, open_timeout_ms: int) -> cv2.VideoCapture:
