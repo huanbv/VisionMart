@@ -74,6 +74,19 @@ import { listCameras, getRoiZones, type Camera, type RoiZone } from "@/api/camer
 import { tokenStore } from "@/api/client";
 import RoiZoneEditor from "@/components/RoiZoneEditor";
 import { listTrainingJobs, type TrainingJob } from "@/api/aiTraining";
+import {
+  mapNormToContent,
+  mapPixelToContent,
+  videoContentRect,
+} from "@/utils/videoContentRect";
+import {
+  addLibraryVideo,
+  deleteLibraryVideo,
+  getLibraryVideo,
+  listLibraryVideos,
+  saveLibraryRoi,
+  type VideoLibraryMeta,
+} from "@/utils/videoLibrary";
 
 const AI_FRAME_URL = "/ai/ai/frame";
 const AI_RESET_URL = "/ai/ai/reset-session";
@@ -143,6 +156,8 @@ export default function VideoAnalysisPage() {
 
   const [videoFile, setVideoFile] = useState<File | null>(null);
   const [videoUrl, setVideoUrl] = useState<string | null>(null);
+  const [libraryItems, setLibraryItems] = useState<VideoLibraryMeta[]>([]);
+  const [selectedVideoId, setSelectedVideoId] = useState<string | undefined>();
   const [isRunning, setIsRunning] = useState(false);
   const [isPaused, setIsPaused] = useState(false);
   const [frameInterval, setFrameInterval] = useState(2);
@@ -169,6 +184,11 @@ export default function VideoAnalysisPage() {
   const userPausedRef = useRef(false);
   const autoPausingRef = useRef(false);
   const loopWakeRef = useRef<Set<() => void>>(new Set());
+  const lastDetectionsRef = useRef<any[]>([]);
+  const selectedVideoIdRef = useRef<string | undefined>(undefined);
+  const videoUrlRef = useRef<string | null>(null);
+  selectedVideoIdRef.current = selectedVideoId;
+  videoUrlRef.current = videoUrl;
 
   const [roiZones, setRoiZones] = useState<RoiZone[]>([]);
   const [roiEditorOpen, setRoiEditorOpen] = useState(false);
@@ -210,6 +230,8 @@ export default function VideoAnalysisPage() {
     getRoiZones(cameraId)
       .then((z) => {
         setRoiZones(z);
+        const vidId = selectedVideoIdRef.current;
+        if (vidId) void saveLibraryRoi(vidId, z);
         message.success(
           z.length
             ? `Đã nạp ${z.length} vùng từ camera — chỉnh lại nếu góc video khác`
@@ -224,6 +246,8 @@ export default function VideoAnalysisPage() {
     const overlayCanvas = overlayCanvasRef.current;
     if (!video || !overlayCanvas) return;
 
+    lastDetectionsRef.current = Array.isArray(detections) ? detections : [];
+
     const displayW = video.clientWidth || video.videoWidth || 640;
     const displayH = video.clientHeight || video.videoHeight || 480;
 
@@ -236,8 +260,8 @@ export default function VideoAnalysisPage() {
 
     const vidW = video.videoWidth || displayW;
     const vidH = video.videoHeight || displayH;
-    const scaleX = displayW / vidW;
-    const scaleY = displayH / vidH;
+    // Map onto the painted frame (object-fit: contain), not the letterbox bars.
+    const content = videoContentRect(displayW, displayH, vidW, vidH);
 
     // 1. Vẽ Khu vực thanh toán (ROI Payzone)
     const zones = roiZones;
@@ -246,8 +270,7 @@ export default function VideoAnalysisPage() {
       ctx.save();
       ctx.beginPath();
       zone.points.forEach(([nx, ny], idx) => {
-        const px = nx * displayW;
-        const py = ny * displayH;
+        const { x: px, y: py } = mapNormToContent(nx, ny, content);
         if (idx === 0) ctx.moveTo(px, py);
         else ctx.lineTo(px, py);
       });
@@ -262,15 +285,14 @@ export default function VideoAnalysisPage() {
       ctx.fillStyle = isCheckout ? "rgba(250, 173, 20, 0.15)" : "rgba(24, 144, 255, 0.1)";
       ctx.fill();
 
-      const firstX = zone.points[0][0] * displayW;
-      const firstY = zone.points[0][1] * displayH;
+      const labelAt = mapNormToContent(zone.points[0][0], zone.points[0][1], content);
       ctx.font = "bold 12px sans-serif";
       ctx.fillStyle = isCheckout ? "#faad14" : "#1890ff";
       ctx.setLineDash([]);
       ctx.fillText(
         isCheckout ? "🛒 KHU VỰC THANH TOÁN (PAYZONE)" : `📦 ${zone.name.toUpperCase()}`,
-        firstX + 6,
-        firstY + 16
+        labelAt.x + 6,
+        labelAt.y + 16
       );
       ctx.restore();
     });
@@ -289,10 +311,12 @@ export default function VideoAnalysisPage() {
       }
 
       const bbox = d.bbox || {};
-      const x1 = Number(bbox.x1 ?? 0) * scaleX;
-      const y1 = Number(bbox.y1 ?? 0) * scaleY;
-      const x2 = Number(bbox.x2 ?? 0) * scaleX;
-      const y2 = Number(bbox.y2 ?? 0) * scaleY;
+      const p1 = mapPixelToContent(Number(bbox.x1 ?? 0), Number(bbox.y1 ?? 0), vidW, vidH, content);
+      const p2 = mapPixelToContent(Number(bbox.x2 ?? 0), Number(bbox.y2 ?? 0), vidW, vidH, content);
+      const x1 = p1.x;
+      const y1 = p1.y;
+      const x2 = p2.x;
+      const y2 = p2.y;
       const boxW = x2 - x1;
       const boxH = y2 - y1;
 
@@ -330,8 +354,30 @@ export default function VideoAnalysisPage() {
 
   useEffect(() => {
     if (!videoUrl) return;
-    drawDetectionsOverlay([]);
+    drawDetectionsOverlay(lastDetectionsRef.current);
   }, [roiZones, videoUrl, drawDetectionsOverlay]);
+
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video || !videoUrl) return;
+    const redraw = () => drawDetectionsOverlay(lastDetectionsRef.current);
+    const ro = new ResizeObserver(redraw);
+    ro.observe(video);
+    window.addEventListener("resize", redraw);
+    return () => {
+      ro.disconnect();
+      window.removeEventListener("resize", redraw);
+    };
+  }, [videoUrl, drawDetectionsOverlay]);
+
+  useEffect(() => {
+    listLibraryVideos()
+      .then(setLibraryItems)
+      .catch(() => setLibraryItems([]));
+    return () => {
+      if (videoUrlRef.current) URL.revokeObjectURL(videoUrlRef.current);
+    };
+  }, []);
 
   const clearOverlayCanvas = useCallback(() => {
     const overlayCanvas = overlayCanvasRef.current;
@@ -499,23 +545,69 @@ export default function VideoAnalysisPage() {
     };
   }, [branchId, loadCarts, addLog]);
 
-  const handleVideoUpload = (file: File) => {
-    if (videoUrl) URL.revokeObjectURL(videoUrl);
-    const url = URL.createObjectURL(file);
-    setVideoFile(file);
-    setVideoUrl(url);
+  const activateLibraryVideo = useCallback(async (id: string) => {
+    const row = await getLibraryVideo(id);
+    if (!row) {
+      message.error("Không đọc được video trong thư viện");
+      return;
+    }
+    stopRef.current = true;
+    runningRef.current = false;
     setIsRunning(false);
     setIsPaused(false);
     setHasStartedAnalysis(false);
     videoStartTimeRef.current = null;
-    setCarts([]);
+    if (videoUrlRef.current) URL.revokeObjectURL(videoUrlRef.current);
+    const file = new File([row.blob], row.name, { type: row.type || "video/mp4" });
+    const url = URL.createObjectURL(row.blob);
+    setVideoFile(file);
+    setVideoUrl(url);
+    setSelectedVideoId(id);
+    setRoiZones(row.roiZones || []);
+    lastDetectionsRef.current = [];
     setFramesProcessed(0);
     setFramesAccepted(0);
     setLastFrameResult(null);
-    stopRef.current = true;
-    runningRef.current = false;
-    addLog("info", `📂 Đã tải video: ${file.name}`, `Kích thước: ${(file.size / 1024 / 1024).toFixed(1)} MB`);
+    addLog("info", `📂 Đã chọn video: ${row.name}`, `Kích thước: ${(row.size / 1024 / 1024).toFixed(1)} MB`);
+  }, [addLog]);
+
+  const handleVideoUpload = (file: File) => {
+    void (async () => {
+      try {
+        const meta = await addLibraryVideo(file);
+        const items = await listLibraryVideos();
+        setLibraryItems(items);
+        await activateLibraryVideo(meta.id);
+      } catch (err) {
+        if (videoUrlRef.current) URL.revokeObjectURL(videoUrlRef.current);
+        setVideoFile(file);
+        setVideoUrl(URL.createObjectURL(file));
+        setSelectedVideoId(undefined);
+        message.warning(
+          err instanceof Error
+            ? `${err.message} Video vẫn dùng được trong phiên này.`
+            : "Không lưu thư viện — video vẫn dùng được trong phiên này.",
+        );
+      }
+    })();
     return false;
+  };
+
+  const handleDeleteLibraryVideo = async (id: string) => {
+    await deleteLibraryVideo(id);
+    const items = await listLibraryVideos();
+    setLibraryItems(items);
+    if (selectedVideoId === id) {
+      stopRef.current = true;
+      runningRef.current = false;
+      setIsRunning(false);
+      if (videoUrlRef.current) URL.revokeObjectURL(videoUrlRef.current);
+      setVideoFile(null);
+      setVideoUrl(null);
+      setSelectedVideoId(undefined);
+      setRoiZones([]);
+    }
+    message.success("Đã xóa video khỏi thư viện");
   };
 
   const resetSession = async (camId?: string) => {
@@ -877,7 +969,7 @@ export default function VideoAnalysisPage() {
             <VideoCameraOutlined />
             <Typography.Text strong>Phân tích Video AI</Typography.Text>
             <Typography.Text type="secondary" style={{ fontWeight: 400 }}>
-              (upload video → AI nhận diện từng frame → tự động tạo đơn hàng)
+              (thư viện video → AI nhận diện từng frame → tự động tạo đơn hàng)
             </Typography.Text>
           </Space>
         }
@@ -886,11 +978,53 @@ export default function VideoAnalysisPage() {
           {/* Controls */}
           <Col xs={24} md={9}>
             <Space direction="vertical" style={{ width: "100%" }} size="middle">
-              <Upload accept="video/*" beforeUpload={handleVideoUpload} showUploadList={false} maxCount={1}>
-                <Button icon={<UploadOutlined />} style={{ width: "100%" }}>
-                  {videoFile ? `📹 ${videoFile.name}` : "Chọn file video (MP4, AVI...)"}
+              <Upload
+                accept="video/*"
+                multiple
+                beforeUpload={handleVideoUpload}
+                showUploadList={false}
+                disabled={isRunning}
+              >
+                <Button icon={<UploadOutlined />} style={{ width: "100%" }} disabled={isRunning}>
+                  Thêm video vào thư viện
                 </Button>
               </Upload>
+              <Select
+                style={{ width: "100%" }}
+                placeholder={libraryItems.length ? "Chọn video đã lưu để test" : "Chưa có video — hãy thêm file"}
+                value={selectedVideoId}
+                onChange={(id) => void activateLibraryVideo(id)}
+                disabled={isRunning || libraryItems.length === 0}
+                options={libraryItems.map((v) => ({
+                  value: v.id,
+                  label: `${v.name} (${(v.size / 1024 / 1024).toFixed(1)} MB)`,
+                }))}
+                showSearch
+                optionFilterProp="label"
+              />
+              {selectedVideoId && (
+                <Popconfirm
+                  title="Xóa video này khỏi thư viện máy?"
+                  onConfirm={() => void handleDeleteLibraryVideo(selectedVideoId)}
+                  okText="Xóa"
+                  cancelText="Không"
+                  disabled={isRunning}
+                >
+                  <Button
+                    danger
+                    size="small"
+                    icon={<DeleteOutlined />}
+                    disabled={isRunning}
+                    style={{ width: "100%" }}
+                  >
+                    Xóa video đang chọn
+                  </Button>
+                </Popconfirm>
+              )}
+              <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                Video lưu trên trình duyệt này — lần sau chỉ cần chọn lại, không tải lên nữa.
+                Vùng thanh toán được nhớ theo từng video.
+              </Typography.Text>
 
               <Button
                 icon={<BorderOuterOutlined />}
@@ -1081,9 +1215,16 @@ export default function VideoAnalysisPage() {
                     ref={videoRef}
                     src={videoUrl}
                     controls
-                    style={{ width: "100%", maxHeight: 480, display: "block" }}
+                    style={{
+                      width: "100%",
+                      maxHeight: 480,
+                      display: "block",
+                      objectFit: "contain",
+                      background: "#000",
+                    }}
                     onEnded={() => { if (isRunning) handleStop(); }}
-                    onLoadedData={() => drawDetectionsOverlay([])}
+                    onLoadedData={() => drawDetectionsOverlay(lastDetectionsRef.current)}
+                    onLoadedMetadata={() => drawDetectionsOverlay(lastDetectionsRef.current)}
                     onPause={() => {
                       if (autoPausingRef.current || stopRef.current) return;
                       if (runningRef.current) {
@@ -1117,7 +1258,7 @@ export default function VideoAnalysisPage() {
               ) : (
                 <div style={{ height: 320, display: "flex", alignItems: "center", justifyContent: "center", flexDirection: "column", gap: 12 }}>
                   <VideoCameraOutlined style={{ fontSize: 56, color: "#444" }} />
-                  <Typography.Text style={{ color: "#888" }}>Chọn file video để bắt đầu phân tích AI</Typography.Text>
+                  <Typography.Text style={{ color: "#888" }}>Thêm video vào thư viện, rồi chọn file để phân tích</Typography.Text>
                 </div>
               )}
               <canvas ref={canvasRef} style={{ display: "none" }} />
@@ -1133,13 +1274,13 @@ export default function VideoAnalysisPage() {
               )}
             </div>
 
-            {!videoFile && (
+            {!videoUrl && (
               <Alert
                 message="Hướng dẫn sử dụng"
                 description={
                   <ol style={{ margin: 0, paddingLeft: 18, fontSize: 13 }}>
                     <li>Chọn chi nhánh và camera quầy (để ghi giỏ vào đúng chi nhánh)</li>
-                    <li>Nhấn <strong>"Chọn file video"</strong> để tải video lên</li>
+                    <li>Nhấn <strong>"Thêm video vào thư viện"</strong> (có thể nhiều file). Lần sau chỉ cần chọn lại trong danh sách</li>
                     <li>Tua tới khung thấy mặt quầy, nhấn <strong>"Vẽ vùng thanh toán trên video"</strong> — AI chỉ quét trong vùng đó</li>
                     <li>Chọn tần suất gửi frame (2s phù hợp với hầu hết video)</li>
                     <li>Nhấn <strong>"▶ Bắt đầu phân tích"</strong> — AI quét từng frame tự động</li>
@@ -1286,6 +1427,14 @@ export default function VideoAnalysisPage() {
         title="Vẽ vùng thanh toán trên video"
         onApply={(zones) => {
           setRoiZones(zones);
+          const vidId = selectedVideoIdRef.current;
+          if (vidId) {
+            void saveLibraryRoi(vidId, zones).then(() =>
+              setLibraryItems((prev) =>
+                prev.map((it) => (it.id === vidId ? { ...it, roiZones: zones } : it)),
+              ),
+            );
+          }
           drawDetectionsOverlay([]);
         }}
       />

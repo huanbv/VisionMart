@@ -344,10 +344,14 @@ export default function RoiZoneEditor({
               onClick={onCanvasClick}
               style={{
                 width: "100%",
+                height: "auto",
+                maxHeight: 540,
+                objectFit: "contain",
                 cursor: "crosshair",
                 border: "1px solid #434343",
                 borderRadius: 4,
                 background: "#1f1f1f",
+                display: "block",
               }}
             />
           </Spin>
