@@ -55,6 +55,9 @@ class CartResponse(BaseModel):
     # customer_photo_key (MinIO key nội bộ) ra ngoài, frontend gọi
     # GET /carts/{id}/customer-photo khi cần hiển thị.
     has_customer_photo: bool = False
+    # True khi giỏ sinh từ Tải ảnh / Chụp & Quét đã lưu still có nhãn SP.
+    # Frontend gọi GET /carts/{id}/scan-photo — không trả MinIO key.
+    has_scan_photo: bool = False
     expires_at: datetime | None
     converted_at: datetime | None
     created_at: datetime

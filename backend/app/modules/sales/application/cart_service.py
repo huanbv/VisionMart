@@ -162,6 +162,18 @@ class CartService:
         await self._events.publish(sales_events.cart_created(cart))
         return cart
 
+    async def set_scan_photo_key(
+        self,
+        organization_id: uuid.UUID,
+        cart_id: uuid.UUID,
+        scan_photo_key: str,
+    ) -> ShoppingCart:
+        cart = await cart_lookup.get_cart(self._carts, organization_id, cart_id)
+        cart.scan_photo_key = scan_photo_key
+        await self._carts.commit()
+        await self._carts.refresh(cart)
+        return cart
+
     async def add_line(
         self,
         organization_id: uuid.UUID,

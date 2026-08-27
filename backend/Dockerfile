@@ -15,7 +15,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 WORKDIR /app
 
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends build-essential curl libpq-dev \
+    && apt-get install -y --no-install-recommends build-essential curl libpq-dev fonts-dejavu-core \
     && rm -rf /var/lib/apt/lists/*
 
 # ---------- runtime dependencies only ----------

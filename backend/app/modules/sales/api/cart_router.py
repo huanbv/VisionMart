@@ -101,6 +101,7 @@ def _cart_to_response(cart: ShoppingCart) -> CartResponse:
         lines=lines,
         overall_confidence=compute_overall_confidence(raw_lines),
         has_customer_photo=bool(cart.customer_photo_key),
+        has_scan_photo=bool(cart.scan_photo_key),
         expires_at=cart.expires_at,
         converted_at=cart.converted_at,
         created_at=cart.created_at,
@@ -193,6 +194,47 @@ async def get_cart_customer_photo(
     def _fetch() -> bytes:
         client = storage._get_client()
         obj = client.get_object(storage._settings.MINIO_BUCKET, cart.customer_photo_key)
+        try:
+            return obj.read()
+        finally:
+            obj.close()
+            obj.release_conn()
+
+    try:
+        data = await asyncio.to_thread(_fetch)
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(
+            status.HTTP_502_BAD_GATEWAY, detail=f"Lỗi lưu trữ: {exc}"
+        ) from exc
+
+    return Response(
+        content=data,
+        media_type="image/jpeg",
+        headers={"Cache-Control": "private, max-age=3600"},
+    )
+
+
+@router.get("/{cart_id}/scan-photo")
+async def get_cart_scan_photo(
+    cart_id: uuid.UUID,
+    current: CurrentUser = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> Response:
+    """Ảnh Tải ảnh / Chụp & Quét đã vẽ box và tên sản phẩm — phóng to trên giỏ."""
+    from app.services.object_storage import MinioStorage
+
+    try:
+        cart = await build_cart_service(session).get(current.organization_id, cart_id)
+    except NotFoundError as e:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, str(e))
+    if not cart.scan_photo_key:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Giỏ hàng chưa có ảnh quét")
+
+    storage = MinioStorage()
+
+    def _fetch() -> bytes:
+        client = storage._get_client()
+        obj = client.get_object(storage._settings.MINIO_BUCKET, cart.scan_photo_key)
         try:
             return obj.read()
         finally:

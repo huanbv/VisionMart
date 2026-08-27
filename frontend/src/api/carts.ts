@@ -43,6 +43,9 @@ export interface Cart {
   // GET /carts/{id}/customer-photo để lấy ảnh khi cần (không có sẵn URL
   // ngay trong response, tránh ký sẵn hàng loạt link không dùng tới).
   has_customer_photo: boolean;
+  // true khi Tải ảnh / Chụp & Quét đã lưu still có nhãn sản phẩm —
+  // GET /carts/{id}/scan-photo (JWT blob, như ảnh khách).
+  has_scan_photo?: boolean;
   expires_at: string | null;
   converted_at: string | null;
   created_at: string;
@@ -144,6 +147,13 @@ export interface CartCheckoutQrResponse {
  */
 export async function getCartCustomerPhotoUrl(cartId: string): Promise<string> {
   const { data } = await apiClient.get(`/carts/${cartId}/customer-photo`, {
+    responseType: "blob",
+  });
+  return URL.createObjectURL(data as Blob);
+}
+
+export async function getCartScanPhotoUrl(cartId: string): Promise<string> {
+  const { data } = await apiClient.get(`/carts/${cartId}/scan-photo`, {
     responseType: "blob",
   });
   return URL.createObjectURL(data as Blob);

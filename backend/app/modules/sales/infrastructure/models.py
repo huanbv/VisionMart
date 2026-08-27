@@ -85,6 +85,9 @@ class ShoppingCart(Entity):
     # ghép chủ sở hữu). NULL nếu giỏ tạo trước khi có tính năng này, hoặc
     # nếu không xác định được người (session checkout-noperson-*).
     customer_photo_key: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    # Ảnh still Tải ảnh / Chụp & Quét đã vẽ box + tên sản phẩm. NULL với
+    # giỏ live camera (không có một khung nguồn) hoặc giỏ tạo trước cột này.
+    scan_photo_key: Mapped[str | None] = mapped_column(String(512), nullable=True)
     status: Mapped[CartStatus] = mapped_column(
         SAEnum(CartStatus, name="cart_status", values_callable=lambda x: [e.value for e in x]),
         nullable=False,

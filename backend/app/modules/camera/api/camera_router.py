@@ -83,6 +83,37 @@ async def _catalog_sku_names(
         return {}
 
 
+async def _attach_cart_scan_photo(
+    session: AsyncSession,
+    *,
+    organization_id: uuid.UUID,
+    branch_id: uuid.UUID,
+    camera_id: uuid.UUID,
+    image_bytes: bytes,
+    detections: list,
+    pipeline: dict[str, Any] | None,
+    source_width: int = 0,
+    source_height: int = 0,
+) -> None:
+    from app.modules.sales.api.cart_router import build_cart_service
+    from app.modules.sales.application.scan_photo import attach_scan_photo_to_cart
+
+    try:
+        await attach_scan_photo_to_cart(
+            carts=build_cart_service(session),
+            organization_id=organization_id,
+            branch_id=branch_id,
+            camera_id=camera_id,
+            image_bytes=image_bytes,
+            detections=detections,
+            pipeline=pipeline,
+            source_width=source_width,
+            source_height=source_height,
+        )
+    except Exception:  # noqa: BLE001
+        logger.exception("attach scan photo failed camera=%s", camera_id)
+
+
 def _resolve(value: object, unset: bool) -> object:
     if unset:
         return None
@@ -454,6 +485,18 @@ async def analyze_camera_frame(
     )
     record_payload = {**result, "detections": archived}
 
+    await _attach_cart_scan_photo(
+        session,
+        organization_id=current.organization_id,
+        branch_id=camera.branch_id,
+        camera_id=camera_id,
+        image_bytes=content,
+        detections=archived,
+        pipeline=frame_pipeline,
+        source_width=int(image_meta.get("width") or 0),
+        source_height=int(image_meta.get("height") or 0),
+    )
+
     detection_service = DetectionService(SqlAlchemyDetectionRepository(session))
     event = await detection_service.record(
         organization_id=current.organization_id,
@@ -771,6 +814,18 @@ async def trigger_camera_scan(
         roi_zones=camera.roi_zones,
     )
     cap_image = cap_res.get("image") if isinstance(cap_res, dict) else {}
+    pipe_image = frame_res.get("image") if isinstance(frame_res, dict) else {}
+    await _attach_cart_scan_photo(
+        session,
+        organization_id=current.organization_id,
+        branch_id=camera.branch_id,
+        camera_id=camera_id,
+        image_bytes=image_bytes,
+        detections=archived,
+        pipeline=frame_res if isinstance(frame_res, dict) else None,
+        source_width=int((pipe_image or cap_image or {}).get("width") or 0),
+        source_height=int((pipe_image or cap_image or {}).get("height") or 0),
+    )
     detection_service = DetectionService(SqlAlchemyDetectionRepository(session))
     event = await detection_service.record(
         organization_id=current.organization_id,

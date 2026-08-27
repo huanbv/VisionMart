@@ -47,6 +47,7 @@ import {
   confirmCheckoutStaff,
   getCartCustomerPhotoUrl,
   getCartLinePhotoUrl,
+  getCartScanPhotoUrl,
   getCheckoutQr,
   listCarts,
   removeCartLine,
@@ -268,6 +269,65 @@ function CartCustomerPhoto({ cartId, size = 36 }: { cartId: string; size?: numbe
         backgroundColor: "#f5f5f5",
       }}
     />
+  );
+}
+
+/**
+ * Ảnh still Tải ảnh / Chụp & Quét đã vẽ tên sản phẩm — bấm để phóng to.
+ */
+function CartScanPhoto({ cartId }: { cartId: string }) {
+  const [url, setUrl] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    let objectUrl: string | null = null;
+    getCartScanPhotoUrl(cartId)
+      .then((u) => {
+        if (cancelled) {
+          URL.revokeObjectURL(u);
+          return;
+        }
+        objectUrl = u;
+        setUrl(u);
+      })
+      .catch(() => {
+        if (!cancelled) setUrl(null);
+      });
+    return () => {
+      cancelled = true;
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    };
+  }, [cartId]);
+
+  if (!url) {
+    return null;
+  }
+  return (
+    <div
+      style={{
+        marginBottom: 12,
+        padding: 8,
+        background: "#fafafa",
+        border: "1px solid #f0f0f0",
+        borderRadius: 8,
+      }}
+    >
+      <div style={{ fontWeight: 600, fontSize: 12, color: "#595959", marginBottom: 6 }}>
+        Ảnh quét — bấm để phóng to
+      </div>
+      <Image
+        src={url}
+        alt="Ảnh quét với tên sản phẩm"
+        style={{
+          width: "100%",
+          maxHeight: 200,
+          objectFit: "contain",
+          borderRadius: 6,
+          background: "#fff",
+        }}
+        preview={{ mask: "Phóng to" }}
+      />
+    </div>
   );
 }
 
@@ -1241,6 +1301,8 @@ export default function LiveCartPage() {
                   }
                   return null;
                 })()}
+
+                {cart.has_scan_photo ? <CartScanPhoto cartId={cart.id} /> : null}
 
                 {cart.status === "pending_checkout" && cart.overall_confidence < 0.75 && (
                   <Alert
