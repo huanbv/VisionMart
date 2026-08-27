@@ -87,6 +87,11 @@ _STALE_TRACK_SECONDS = 120.0
 # CHECKOUT_SESSION_GAP_SECONDS (30s) để không đụng khách đang trong phiên.
 _STALE_PERSON_SESSION_SECONDS = 1800.0
 
+# YOLO miss on the pay zone must not empty the cart. Keep the last scanned
+# bottles for a few seconds of n=0 frames (same idea as lookalike sticky).
+_LAST_CHECKOUT_PRODUCTS: dict[str, tuple[float, list[tuple[TrackedObject, str]]]] = {}
+_HOLD_CHECKOUT_SECONDS = 8.0
+
 # --- phiên checkout theo từng camera quầy ---
 # camera_key -> (thời điểm quét gần nhất, số thứ tự phiên). Mỗi khách ở quầy
 # là một "phiên": khi có khoảng lặng (không quét được sản phẩm nào) đủ dài,
@@ -868,6 +873,7 @@ async def reset_checkout_session(
                 _PHYSICAL_PRODUCTS.pop(cam_key, None)
                 _CHECKOUT_PERSON_SESSIONS.pop(cam_key, None)
                 reset_lookalike_slots(cam_key)
+                _LAST_CHECKOUT_PRODUCTS.pop(cam_key, None)
         try:
             from app.services.person_tracker import reset_reid
             reset_reid(camera_id)
@@ -883,6 +889,7 @@ async def reset_checkout_session(
         _PHYSICAL_PRODUCTS.clear()
         _CHECKOUT_PERSON_SESSIONS.clear()
         reset_lookalike_slots()
+        _LAST_CHECKOUT_PRODUCTS.clear()
         try:
             from app.services.person_tracker import reset_reid
             for cam_key in list(_CHECKOUT_SESSION.keys()):
@@ -896,6 +903,30 @@ async def reset_checkout_session(
         pass
     logger.info("Checkout session reset requested (camera_id=%s)", camera_id)
     return {"status": "ok", "message": "Checkout session reset successfully"}
+
+
+def _reuse_recent_checkout_products(
+    camera_key: str,
+    products: list[tuple[TrackedObject, str]],
+    now: float,
+) -> list[tuple[TrackedObject, str]]:
+    """Keep last pay-zone SKUs through a few missed frames."""
+    if products:
+        _LAST_CHECKOUT_PRODUCTS[camera_key] = (now, products)
+        return products
+    held = _LAST_CHECKOUT_PRODUCTS.get(camera_key)
+    if not held:
+        return products
+    ts, prev = held
+    if not prev or now - ts > _HOLD_CHECKOUT_SECONDS:
+        return products
+    logger.warning(
+        "FRAME PRODUCTS held: n=%d skus=%s age=%.1fs",
+        len(prev),
+        [s for _, s in prev],
+        now - ts,
+    )
+    return prev
 
 
 def _aggregate_manual_products(
@@ -1094,6 +1125,10 @@ async def process_frame(
             len(products),
             [s for _, s in products],
         )
+
+    now = time.time()
+    if is_checkout:
+        products = _reuse_recent_checkout_products(camera_key, products, now)
 
     if is_checkout:
         from app.services.person_tracker import _cache_latest_product_boxes
@@ -1371,6 +1406,11 @@ async def process_frame(
             if not persons:
                 logger.warning(
                     "CHECKOUT NO PERSON: logical=%s sku=%s — fallback ngay (không đợi grace %.0fs)",
+                    logical_id, pp["sku"], grace,
+                )
+            elif getattr(vision_cfg, "checkout_scan_mode", False):
+                logger.warning(
+                    "CHECKOUT SCAN: logical=%s sku=%s — thêm giỏ ngay (không đợi wrist/grace %.0fs)",
                     logical_id, pp["sku"], grace,
                 )
             elif now - pp["unassigned_since"] < grace:

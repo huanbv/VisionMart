@@ -192,22 +192,29 @@ def _cache_latest_product_boxes(
 
     if frame_w <= 0 or frame_h <= 0:
         return
+    product_boxes = [
+        {
+            "class_name": d.class_name,
+            "confidence": float(d.confidence),
+            "bbox_norm": (
+                max(0.0, min(1.0, d.x1 / frame_w)),
+                max(0.0, min(1.0, d.y1 / frame_h)),
+                max(0.0, min(1.0, d.x2 / frame_w)),
+                max(0.0, min(1.0, d.y2 / frame_h)),
+            ),
+        }
+        for d in detections
+        if str(d.class_name).lower() != "person"
+    ]
+    # A YOLO miss must not wipe the HUD — checkout frames often return n=0
+    # while the bottles are still on the counter.
+    if not product_boxes:
+        cached = _LATEST_PRODUCT_BOXES.get(camera_key)
+        if cached and cached.get("boxes") and time.time() - cached["timestamp"] < 8.0:
+            return
     _LATEST_PRODUCT_BOXES[camera_key] = {
         "timestamp": time.time(),
-        "boxes": [
-            {
-                "class_name": d.class_name,
-                "confidence": float(d.confidence),
-                "bbox_norm": (
-                    max(0.0, min(1.0, d.x1 / frame_w)),
-                    max(0.0, min(1.0, d.y1 / frame_h)),
-                    max(0.0, min(1.0, d.x2 / frame_w)),
-                    max(0.0, min(1.0, d.y2 / frame_h)),
-                ),
-            }
-            for d in detections
-            if str(d.class_name).lower() != "person"
-        ],
+        "boxes": product_boxes,
     }
 
 
@@ -1096,20 +1103,25 @@ async def track_frame_detailed(
                     layout="scan",
                     roi_rect=roi_rect,
                 )
-                if not products:
-                    products = detect_products_from_regions(
-                        model_det,
-                        det_img,
-                        persons_now,
-                        roi_rect,
-                        conf_min=min(conf, 0.25),
-                    )
-                    if products:
-                        logger.warning(
-                            "DENSE DET fallback blobs: n=%d classes=%s",
-                            len(products),
-                            [d.class_name for d in products],
-                        )
+                blob_products = detect_products_from_regions(
+                    model_det,
+                    det_img,
+                    persons_now,
+                    roi_rect,
+                    conf_min=min(conf, 0.25),
+                )
+                yolo_n = len(products)
+                if blob_products:
+                    from app.services.det_nms import cluster_winner_take_all
+
+                    products = cluster_winner_take_all(products + blob_products)
+                logger.warning(
+                    "DENSE DET merge yolo=%d blobs=%d final=%d classes=%s",
+                    yolo_n,
+                    len(blob_products),
+                    len(products),
+                    [d.class_name for d in products],
+                )
                 out.extend(products)
             else:
                 out.extend(

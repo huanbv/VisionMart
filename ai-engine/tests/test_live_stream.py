@@ -66,6 +66,30 @@ def test_cached_product_boxes_scale_to_live_resolution(monkeypatch):
     }
 
 
+def test_empty_cache_write_does_not_wipe_recent_boxes(monkeypatch):
+    monkeypatch.setattr(person_tracker, "_LATEST_PRODUCT_BOXES", {})
+    product = person_tracker.TrackedObject(
+        track_id=7,
+        class_name="du_sti",
+        confidence=0.82,
+        x1=100,
+        y1=50,
+        x2=200,
+        y2=150,
+    )
+    person_tracker._cache_latest_product_boxes(
+        "camera-hold", [product], frame_w=400, frame_h=200
+    )
+    person_tracker._cache_latest_product_boxes(
+        "camera-hold", [], frame_w=400, frame_h=200
+    )
+    boxes = person_tracker.get_latest_product_boxes(
+        "camera-hold", frame_w=400, frame_h=200
+    )
+    assert len(boxes) == 1
+    assert boxes[0]["class_name"] == "du_sti"
+
+
 @pytest.mark.asyncio
 async def test_slow_inference_does_not_block_mjpeg_frames(monkeypatch):
     detector = _SlowDetector()
