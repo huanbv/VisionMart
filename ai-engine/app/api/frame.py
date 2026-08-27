@@ -49,6 +49,8 @@ from app.security import require_api_key
 from app.services import review_capture, sku_identifier, telemetry_client
 from app.services.det_nms import cluster_winner_take_all
 from app.services.face_recognizer import get_face_recognizer
+from app.services.lookalike import reset_slots as reset_lookalike_slots
+from app.services.lookalike import skus_are_lookalikes, stabilize_lookalikes
 from app.services.model_path import resolve_detection_weight
 from app.services.person_tracker import (
     TrackedObject,
@@ -817,7 +819,7 @@ def _find_bridge_match(
     for logical_id, pp in products.items():
         if logical_id in claimed_this_frame:
             continue
-        if pp["sku"] != sku:
+        if pp["sku"] != sku and not skus_are_lookalikes(pp["sku"], sku):
             continue
         # pp đang "sống" trong chính khung này (vừa cập nhật bởi track_id đã
         # biết) nằm trong claimed_this_frame nên đã bị loại ở trên — ở đây
@@ -865,6 +867,7 @@ async def reset_checkout_session(
                 _TRACK_ALIAS.pop(cam_key, None)
                 _PHYSICAL_PRODUCTS.pop(cam_key, None)
                 _CHECKOUT_PERSON_SESSIONS.pop(cam_key, None)
+                reset_lookalike_slots(cam_key)
         try:
             from app.services.person_tracker import reset_reid
             reset_reid(camera_id)
@@ -879,6 +882,7 @@ async def reset_checkout_session(
         _TRACK_ALIAS.clear()
         _PHYSICAL_PRODUCTS.clear()
         _CHECKOUT_PERSON_SESSIONS.clear()
+        reset_lookalike_slots()
         try:
             from app.services.person_tracker import reset_reid
             for cam_key in list(_CHECKOUT_SESSION.keys()):
@@ -976,6 +980,9 @@ async def process_frame(
             product_min_confidence=min_confidence,
         )
         detections = tracking.detections
+        detections = stabilize_lookalikes(
+            camera_key, detections, tracking.frame_bgr
+        )
         debug.add(
             "preprocess",
             tracking.frame_bgr,
@@ -1292,8 +1299,8 @@ async def process_frame(
                 claimed_this_frame.add(bridged_id)
                 seen_logical_ids.add(bridged_id)
                 logger.warning(
-                    "CHECKOUT BRIDGE: track=%s reconnected to physical=%s (sku=%s) — KHÔNG tăng quantity",
-                    product.track_id, bridged_id, sku,
+                    "CHECKOUT BRIDGE: track=%s reconnected to physical=%s (sku=%s yolo=%s) — KHÔNG tăng quantity",
+                    product.track_id, bridged_id, pp["sku"], sku,
                 )
                 continue
             # Bridge không match được ứng viên đáng tin -> sản phẩm vật lý mới.

@@ -827,7 +827,7 @@ def _get_det_model():
         from ultralytics import YOLO
         _SHARED_DET_MODEL = YOLO(want)
         _LOADED_DET_PATH = want
-        logger.info("YOLO Detection model loaded: %s", want)
+        logger.warning("YOLO Detection model loaded: %s", want)
     return _SHARED_DET_MODEL
 
 
