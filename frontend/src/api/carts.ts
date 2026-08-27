@@ -48,6 +48,7 @@ export interface Cart {
   has_scan_photo?: boolean;
   expires_at: string | null;
   converted_at: string | null;
+  checkout_requested_at?: string | null;
   created_at: string;
   updated_at: string;
 }

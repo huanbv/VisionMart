@@ -60,6 +60,7 @@ class CartResponse(BaseModel):
     has_scan_photo: bool = False
     expires_at: datetime | None
     converted_at: datetime | None
+    checkout_requested_at: datetime | None = None
     created_at: datetime
     updated_at: datetime
 

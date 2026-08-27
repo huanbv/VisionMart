@@ -106,6 +106,7 @@ def _cart_to_response(cart: ShoppingCart) -> CartResponse:
         has_scan_photo=bool(cart.scan_photo_key),
         expires_at=cart.expires_at,
         converted_at=cart.converted_at,
+        checkout_requested_at=getattr(cart, "checkout_requested_at", None),
         created_at=cart.created_at,
         updated_at=cart.updated_at,
     )

@@ -84,10 +84,12 @@ def test_cart_response_exposes_has_scan_photo_not_key():
         scan_photo_key="carts/scan-frames/org/cart.jpg",
         expires_at=None,
         converted_at=None,
+        checkout_requested_at=None,
         created_at="2026-08-27T00:00:00+00:00",
         updated_at="2026-08-27T00:00:00+00:00",
     )
     payload = _cart_to_response(cart)
     assert payload.has_scan_photo is True
+    assert payload.checkout_requested_at is None
     dumped = payload.model_dump()
     assert "scan_photo_key" not in dumped

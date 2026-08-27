@@ -23,8 +23,10 @@ import {
   message,
 } from "antd";
 import {
+  ArrowRightOutlined,
   CameraOutlined,
   CheckCircleOutlined,
+  ClockCircleOutlined,
   CloudUploadOutlined,
   DeleteOutlined,
   EyeOutlined,
@@ -190,6 +192,66 @@ function formatMoney(amount: string, currency: string): string {
   } catch {
     return `${value.toLocaleString("vi-VN")} ${currency}`;
   }
+}
+
+function parseIsoMs(iso: string | null | undefined): number | null {
+  if (!iso) return null;
+  const t = new Date(iso).getTime();
+  return Number.isFinite(t) ? t : null;
+}
+
+function formatClock(iso: string): string {
+  const d = new Date(iso);
+  if (!Number.isFinite(d.getTime())) return iso;
+  return d.toLocaleTimeString("vi-VN", {
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  });
+}
+
+function formatDuration(fromMs: number, toMs: number): string | null {
+  const sec = Math.max(0, Math.round((toMs - fromMs) / 1000));
+  if (sec < 1) return null;
+  if (sec < 60) return `${sec} giây`;
+  const m = Math.floor(sec / 60);
+  const s = sec % 60;
+  if (m < 60) return s ? `${m} phút ${s} giây` : `${m} phút`;
+  const h = Math.floor(m / 60);
+  const rm = m % 60;
+  return rm ? `${h} giờ ${rm} phút` : `${h} giờ`;
+}
+
+/** Khung thời gian nhận diện: SP đầu → SP cuối (hoặc lúc chờ thanh toán). */
+function cartRecognitionWindow(cart: Cart): { from: string; to: string; open: boolean } {
+  const lineTimes = cart.lines
+    .map((line) => line.added_at)
+    .filter((iso): iso is string => Boolean(iso))
+    .sort((a, b) => (parseIsoMs(a) ?? 0) - (parseIsoMs(b) ?? 0));
+  const from = lineTimes[0] ?? cart.created_at;
+  const lastLine = lineTimes[lineTimes.length - 1];
+  if (cart.status === "pending_checkout" && cart.checkout_requested_at) {
+    return { from, to: cart.checkout_requested_at, open: false };
+  }
+  if (cart.status === "converted" && cart.converted_at) {
+    return { from, to: cart.converted_at, open: false };
+  }
+  return { from, to: lastLine ?? cart.updated_at, open: cart.status === "active" };
+}
+
+function sortLiveCarts(pending: Cart[], active: Cart[]): Cart[] {
+  const byFrom = (a: Cart, b: Cart) => {
+    const fa = parseIsoMs(cartRecognitionWindow(a).from) ?? 0;
+    const fb = parseIsoMs(cartRecognitionWindow(b).from) ?? 0;
+    return fa - fb;
+  };
+  return [...pending].sort(byFrom).concat([...active].sort(byFrom));
+}
+
+function linesInRecognitionOrder(cart: Cart): Cart["lines"] {
+  return [...cart.lines].sort(
+    (a, b) => (parseIsoMs(a.added_at) ?? 0) - (parseIsoMs(b.added_at) ?? 0),
+  );
 }
 
 function getPersonInfoFromSessionId(sessionId?: string | null) {
@@ -562,8 +624,7 @@ export default function LiveCartPage() {
         listCarts({ branch_id: branchId, status: "active", limit: 100 }),
         listCarts({ branch_id: branchId, status: "pending_checkout", limit: 100 }),
       ]);
-      const allCarts = [...pendingRes.items, ...activeRes.items];
-      setCarts(allCarts);
+      setCarts(sortLiveCarts(pendingRes.items, activeRes.items));
     } catch (err) {
       console.error("[LiveCart] load error:", err);
       message.error("Không tải được danh sách giỏ hàng");
@@ -1215,6 +1276,41 @@ export default function LiveCartPage() {
                 }
               >
                 {(() => {
+                  const win = cartRecognitionWindow(cart);
+                  const fromMs = parseIsoMs(win.from);
+                  const toMs = parseIsoMs(win.to);
+                  const duration =
+                    fromMs != null && toMs != null ? formatDuration(fromMs, toMs) : null;
+                  return (
+                    <div
+                      style={{
+                        display: "flex",
+                        alignItems: "center",
+                        gap: 8,
+                        marginBottom: 12,
+                        padding: "6px 10px",
+                        background: "#fafafa",
+                        border: "1px solid #f0f0f0",
+                        borderRadius: 6,
+                      }}
+                    >
+                      <ClockCircleOutlined style={{ color: "#1677ff" }} />
+                      <Typography.Text style={{ fontSize: 12 }}>
+                        Nhận diện:{" "}
+                        <Typography.Text strong style={{ fontSize: 12 }}>
+                          {formatClock(win.from)}
+                        </Typography.Text>
+                        <ArrowRightOutlined style={{ margin: "0 6px", fontSize: 10, color: "#8c8c8c" }} />
+                        <Typography.Text strong style={{ fontSize: 12 }}>
+                          {formatClock(win.to)}
+                        </Typography.Text>
+                        {win.open ? " · đang mở" : ""}
+                        {duration ? ` · ${duration}` : ""}
+                      </Typography.Text>
+                    </div>
+                  );
+                })()}
+                {(() => {
                   const personInfo = getPersonInfoFromSessionId(cart.session_id);
                   const isCheckoutCart = cart.session_id?.includes(":track:checkout-");
                   if (cart.has_customer_photo) {
@@ -1319,7 +1415,7 @@ export default function LiveCartPage() {
                 )}
                 <List
                   size="small"
-                  dataSource={cart.lines}
+                  dataSource={linesInRecognitionOrder(cart)}
                   locale={{ emptyText: "Chưa có sản phẩm" }}
                   renderItem={(line) => (
                     <List.Item
@@ -1369,6 +1465,7 @@ export default function LiveCartPage() {
                         }
                         description={
                           <Space split="•">
+                            <span>{formatClock(line.added_at)}</span>
                             <span>SL: {line.quantity}</span>
                             <span>
                               Đơn giá: {formatMoney(line.unit_price, cart.currency)}
