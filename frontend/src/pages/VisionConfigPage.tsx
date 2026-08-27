@@ -130,7 +130,15 @@ const GROUPS: Group[] = [
         min: 50,
         max: 1000,
         step: 10,
-        hint: "Người xa sản phẩm hơn khoảng cách này (trên khung hình) sẽ không được gán là chủ sở hữu. Camera góc rộng/người đứng lùi khỏi quầy cần giá trị lớn hơn. Mặc định 220.",
+        hint: "Người xa sản phẩm hơn khoảng cách này (tâm bbox trên khung) không được gán là chủ, kể cả khi không thấy cổ tay. Camera góc rộng/người đứng lùi khỏi quầy cần giá trị lớn hơn. Mặc định 220.",
+      },
+      {
+        key: "CHECKOUT_HAND_REACH_PX",
+        label: "Bán kính cổ tay đặt hàng (px)",
+        min: 20,
+        max: 400,
+        step: 10,
+        hint: "Cổ tay phải nằm trong bán kính này so với tâm sản phẩm mới được ưu tiên là người đặt. Có nhiều khách thì cổ tay thắng quỹ đạo. Mặc định 100.",
       },
       {
         key: "CHECKOUT_UNASSIGNED_GRACE_SECONDS",
@@ -146,7 +154,7 @@ const GROUPS: Group[] = [
         min: 0,
         max: 30,
         step: 1,
-        hint: "Track sản phẩm mới xuất hiện trong khoảng thời gian này, gần vị trí cũ, được coi là CÙNG một sản phẩm vật lý (không đếm trùng). Mặc định 5.",
+        hint: "Track sản phẩm mới xuất hiện trong khoảng này, gần vị trí cũ, được coi là CÙNG một sản phẩm vật lý (không đếm trùng). Cửa sổ 2s dễ tách một chai thành 2 dòng nếu YOLO mất track lâu hơn. Mặc định 5.",
       },
       {
         key: "PRODUCT_REACQUIRE_MAX_DIST_PX",
@@ -162,7 +170,7 @@ const GROUPS: Group[] = [
         min: 1,
         max: 60,
         step: 1,
-        hint: "Chỉ tính người là chủ sở hữu nếu quỹ đạo của họ đi qua gần sản phẩm trong ngần này giây gần đây — không chỉ đứng gần lúc phát hiện. Mặc định 15.",
+        hint: "Chỉ tính người là chủ sở hữu nếu quỹ đạo của họ đi qua gần sản phẩm trong ngần này giây gần đây — không chỉ đứng gần lúc phát hiện. Hoạt động cả khi có nhiều khách. Mặc định 15.",
       },
       {
         key: "CHECKOUT_TRAJECTORY_REACH_DIST_PX",
@@ -170,7 +178,7 @@ const GROUPS: Group[] = [
         min: 20,
         max: 500,
         step: 10,
-        hint: "Khoảng cách tối đa để coi một điểm trong quỹ đạo là đã tới gần sản phẩm. Mặc định 300.",
+        hint: "Khoảng cách tối đa để coi một điểm trong quỹ đạo là đã tới gần sản phẩm. Mặc định 120.",
       },
     ],
   },

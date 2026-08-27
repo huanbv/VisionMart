@@ -692,8 +692,12 @@ def _person_overlap_is_legs_only(person: Any, product_cy: float) -> bool:
     A bystander whose legs enter the pay zone gets a huge bbox covering the
     counter; treating them as the payer is the usual mis-ID.
     """
-    height = max(1.0, float(person.y2) - float(person.y1))
-    rel_y = (product_cy - float(person.y1)) / height
+    y1 = getattr(person, "y1", None)
+    y2 = getattr(person, "y2", None)
+    if y1 is None or y2 is None:
+        return False
+    height = max(1.0, float(y2) - float(y1))
+    rel_y = (product_cy - float(y1)) / height
     return rel_y >= 0.62
 
 
@@ -701,21 +705,26 @@ def _closest_person_by_centroid(
     product_cx: float,
     product_cy: float,
     persons: list[TrackedObject],
+    max_dist: float | None = None,
 ) -> TrackedObject | None:
-    """Nearest shopper to a pay-zone SKU when wrists are not visible yet.
+    """Nearest shopper within the admin association radius.
 
-    Checkout must still put the item in a cart immediately; waiting for a
-    hand keypoint left bottles on the counter with an empty cart.
+    ``CHECKOUT_PERSON_ASSOC_MAX_DIST_PX`` is the ceiling — a wide-angle
+    camera needs a larger value, but we still must not assign a guest
+    standing across the aisle.
     """
+    if max_dist is None:
+        max_dist = _checkout_person_assoc_max_dist_px()
     best: TrackedObject | None = None
     best_d = float("inf")
     for person in persons:
         if _person_overlap_is_legs_only(person, product_cy):
             continue
         dist = math.hypot(person.cx - product_cx, person.cy - product_cy)
-        if dist < best_d:
-            best_d = dist
-            best = person
+        if dist > max_dist or dist >= best_d:
+            continue
+        best_d = dist
+        best = person
     return best
 
 
@@ -782,22 +791,18 @@ def _nearest_person_for_product(
     frame_w: float,
     frame_h: float,
 ) -> TrackedObject | None:
-    """Chủ sở hữu sản phẩm ở quầy — ưu tiên cổ tay, không đoán khi >= 2 người.
+    """Chủ sở hữu ở quầy: cổ tay → quỹ đạo (cửa sổ + bán kính admin) → một mình.
 
-    Quỹ đạo bbox (300px cũ) khiến khách đứng cạnh bị gán nhầm là người đặt
-    hàng. Khi nhiều người trong khung, chỉ ghép khi cổ tay chạm gần sản phẩm;
-    nếu chưa thấy tay thì trả None để grace chờ thêm khung. Một mình trong
-    khung vẫn dùng quỹ đạo / centroid để bắt người vừa đặt xong rồi bước sang.
+    Khi >= 2 người, không đoán theo tâm bbox nếu không có cổ tay/quỹ đạo —
+    khách đứng cạnh hay bị nhận nhầm. Fallback tâm có trần
+    ``CHECKOUT_PERSON_ASSOC_MAX_DIST_PX`` nằm ở vòng gọi
+    ``_closest_person_by_centroid``.
     """
     from app.services.person_tracker import get_recent_trajectory_person_ids
 
     by_hand = _person_by_hand_near_product(persons, product_cx, product_cy)
     if by_hand is not None:
         return by_hand
-
-    # >= 2 người: không suy từ quỹ đạo bbox — người đứng cạnh hay bị nhầm.
-    if len(persons) >= 2:
-        return None
 
     window = _trajectory_window_seconds()
     reach_radius = _trajectory_reach_dist_px()
@@ -1590,8 +1595,6 @@ async def process_frame(
             nearest = _nearest_person_for_product(
                 camera_key, pp["cx"], pp["cy"], persons_for_cart, now, _traj_fw, _traj_fh
             )
-            if nearest is None and len(persons_for_cart) == 1:
-                nearest = persons_for_cart[0]
             if nearest is None and persons_for_cart:
                 nearest = _closest_person_by_centroid(
                     pp["cx"], pp["cy"], persons_for_cart
