@@ -1,0 +1,224 @@
+{
+  "environment": {
+    "python": "3.10.12",
+    "platform": "Linux-6.8.0-124-generic-x86_64-with-glibc2.35",
+    "with_yolo": false,
+    "source": "synthetic generated frames (NOT real camera footage)",
+    "labels_used": null
+  },
+  "results": [
+    {
+      "config": "1. Baseline (no preprocessing)",
+      "env": {},
+      "yolo_available": false,
+      "frame_count": 150,
+      "opencv_stage_ms": {
+        "mean": 4.749,
+        "p95": 5.666
+      },
+      "yolo_bytetrack_stage_ms": null,
+      "total_stage_ms": {
+        "mean": 4.749,
+        "p95": 5.666
+      },
+      "wall_fps": 208.51,
+      "cpu_percent": 101.4,
+      "rss_mb": 91.1,
+      "low_quality_flagged": 0,
+      "avg_persons_per_frame": null,
+      "avg_products_per_frame": null,
+      "tracking_id_churn_proxy": null,
+      "precision": null,
+      "recall": null,
+      "false_positives": null,
+      "false_negatives": null
+    },
+    {
+      "config": "2. Brightness/Contrast only",
+      "env": {
+        "ENABLE_BRIGHTNESS_ADJUST": "true",
+        "BRIGHTNESS_DELTA": "15",
+        "ENABLE_CONTRAST_ADJUST": "true",
+        "CONTRAST_ALPHA": "1.2"
+      },
+      "yolo_available": false,
+      "frame_count": 150,
+      "opencv_stage_ms": {
+        "mean": 6.682,
+        "p95": 7.564
+      },
+      "yolo_bytetrack_stage_ms": null,
+      "total_stage_ms": {
+        "mean": 6.682,
+        "p95": 7.564
+      },
+      "wall_fps": 148.59,
+      "cpu_percent": 100.0,
+      "rss_mb": 96.6,
+      "low_quality_flagged": 0,
+      "avg_persons_per_frame": null,
+      "avg_products_per_frame": null,
+      "tracking_id_churn_proxy": null,
+      "precision": null,
+      "recall": null,
+      "false_positives": null,
+      "false_negatives": null
+    },
+    {
+      "config": "3. CLAHE only",
+      "env": {
+        "ENABLE_CLAHE": "true"
+      },
+      "yolo_available": false,
+      "frame_count": 150,
+      "opencv_stage_ms": {
+        "mean": 20.203,
+        "p95": 23.876
+      },
+      "yolo_bytetrack_stage_ms": null,
+      "total_stage_ms": {
+        "mean": 20.203,
+        "p95": 23.876
+      },
+      "wall_fps": 49.39,
+      "cpu_percent": 171.2,
+      "rss_mb": 109.0,
+      "low_quality_flagged": 0,
+      "avg_persons_per_frame": null,
+      "avg_products_per_frame": null,
+      "tracking_id_churn_proxy": null,
+      "precision": null,
+      "recall": null,
+      "false_positives": null,
+      "false_negatives": null
+    },
+    {
+      "config": "4. Histogram Equalization only",
+      "env": {
+        "ENABLE_HIST_EQ": "true"
+      },
+      "yolo_available": false,
+      "frame_count": 150,
+      "opencv_stage_ms": {
+        "mean": 16.951,
+        "p95": 19.599
+      },
+      "yolo_bytetrack_stage_ms": null,
+      "total_stage_ms": {
+        "mean": 16.951,
+        "p95": 19.599
+      },
+      "wall_fps": 58.84,
+      "cpu_percent": 171.4,
+      "rss_mb": 109.1,
+      "low_quality_flagged": 0,
+      "avg_persons_per_frame": null,
+      "avg_products_per_frame": null,
+      "tracking_id_churn_proxy": null,
+      "precision": null,
+      "recall": null,
+      "false_positives": null,
+      "false_negatives": null
+    },
+    {
+      "config": "5. Gamma Correction only",
+      "env": {
+        "ENABLE_GAMMA": "true",
+        "GAMMA_VALUE": "1.5"
+      },
+      "yolo_available": false,
+      "frame_count": 150,
+      "opencv_stage_ms": {
+        "mean": 5.888,
+        "p95": 7.111
+      },
+      "yolo_bytetrack_stage_ms": null,
+      "total_stage_ms": {
+        "mean": 5.888,
+        "p95": 7.111
+      },
+      "wall_fps": 168.43,
+      "cpu_percent": 126.9,
+      "rss_mb": 109.2,
+      "low_quality_flagged": 0,
+      "avg_persons_per_frame": null,
+      "avg_products_per_frame": null,
+      "tracking_id_churn_proxy": null,
+      "precision": null,
+      "recall": null,
+      "false_positives": null,
+      "false_negatives": null
+    },
+    {
+      "config": "6. CLAHE + Gamma",
+      "env": {
+        "ENABLE_CLAHE": "true",
+        "ENABLE_GAMMA": "true",
+        "GAMMA_VALUE": "1.5"
+      },
+      "yolo_available": false,
+      "frame_count": 150,
+      "opencv_stage_ms": {
+        "mean": 20.364,
+        "p95": 24.554
+      },
+      "yolo_bytetrack_stage_ms": null,
+      "total_stage_ms": {
+        "mean": 20.364,
+        "p95": 24.554
+      },
+      "wall_fps": 48.99,
+      "cpu_percent": 175.4,
+      "rss_mb": 111.8,
+      "low_quality_flagged": 0,
+      "avg_persons_per_frame": null,
+      "avg_products_per_frame": null,
+      "tracking_id_churn_proxy": null,
+      "precision": null,
+      "recall": null,
+      "false_positives": null,
+      "false_negatives": null
+    },
+    {
+      "config": "7. Full preprocessing pipeline",
+      "env": {
+        "ENABLE_ROI": "true",
+        "ENABLE_CLAHE": "true",
+        "ENABLE_HIST_EQ": "true",
+        "ENABLE_BRIGHTNESS_ADJUST": "true",
+        "BRIGHTNESS_DELTA": "15",
+        "ENABLE_CONTRAST_ADJUST": "true",
+        "CONTRAST_ALPHA": "1.2",
+        "ENABLE_GAMMA": "true",
+        "GAMMA_VALUE": "1.5",
+        "ENABLE_GAUSSIAN_BLUR": "true",
+        "ENABLE_MEDIAN_BLUR": "true",
+        "ENABLE_IMAGE_QUALITY": "true",
+        "ENABLE_BLUR_ANALYSIS": "true",
+        "ROI_CONFIG_PATH": "/tmp/sprint1_eval_roi.yaml"
+      },
+      "yolo_available": false,
+      "frame_count": 150,
+      "opencv_stage_ms": {
+        "mean": 61.033,
+        "p95": 69.506
+      },
+      "yolo_bytetrack_stage_ms": null,
+      "total_stage_ms": {
+        "mean": 61.033,
+        "p95": 69.506
+      },
+      "wall_fps": 16.38,
+      "cpu_percent": 151.5,
+      "rss_mb": 124.0,
+      "low_quality_flagged": 150,
+      "avg_persons_per_frame": null,
+      "avg_products_per_frame": null,
+      "tracking_id_churn_proxy": null,
+      "precision": null,
+      "recall": null,
+      "false_positives": null,
+      "false_negatives": null
+    }
+  ]
+}

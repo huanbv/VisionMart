@@ -1,0 +1,9 @@
+{
+  "_default": {
+    "bottle": "SKU-DEMO-BOTTLE",
+    "cup": "SKU-DEMO-CUP",
+    "book": "SKU-DEMO-BOOK",
+    "cell phone": "SKU-DEMO-PHONE"
+  },
+  "_comment": "Replace _default with real per-org/per-branch mappings. Format: {org_uuid: {branch_uuid: {yolo_class: SKU}}}."
+}

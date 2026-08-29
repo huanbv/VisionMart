@@ -1,0 +1,18 @@
+# Deps for the officially-documented baseline/smoke-test command
+# (`python -m evaluation.cli evaluate --synthetic-frames N`, see
+# docs/EVALUATION_FRAMEWORK.md) -- this is the whole main `evaluate` flow
+# (export_csv/export_xlsx/generate_all_charts run unconditionally), not
+# just the synthetic-frame path, so all of these are required even for
+# the smoke test. Deliberately does NOT include torch/ultralytics --
+# --with-yolo needs to run somewhere that has those (the ai-engine
+# image/container), not here.
+numpy==1.26.4
+opencv-python-headless==4.10.0.84
+pandas==2.2.3
+openpyxl==3.1.5
+matplotlib==3.9.2
+# app.vision.roi.zones (imported transitively via ai-engine/app/vision,
+# see the Dockerfile's COPY ai-engine/app step) lazily `import yaml` for
+# one of the 7 PREPROCESSING_CONFIGS (the "ENABLE_ROI" one) -- pin to
+# the exact version ai-engine/requirements.txt already uses.
+PyYAML==6.0.2

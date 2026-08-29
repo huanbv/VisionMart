@@ -1,0 +1,209 @@
+"""Spatial merge for tiled YOLO checkout detections.
+
+Custom weights trained on full-image labels fire once per *window*, so a
+3-product counter scanned with overlapping tiles yields many boxes of the
+same bottle. Class-aware IoU NMS alone is not enough: two boxes of the
+same 7up in neighbouring tiles often overlap < 0.45 IoU. Cluster by
+center / containment so one physical object becomes one box.
+"""
+
+from __future__ import annotations
+
+from typing import TypeVar, Protocol
+
+
+class HasBox(Protocol):
+    class_name: str
+    confidence: float
+    x1: float
+    y1: float
+    x2: float
+    y2: float
+
+
+T = TypeVar("T", bound=HasBox)
+
+
+def box_iou(a: HasBox, b: HasBox) -> float:
+    ix1, iy1 = max(a.x1, b.x1), max(a.y1, b.y1)
+    ix2, iy2 = min(a.x2, b.x2), min(a.y2, b.y2)
+    iw, ih = max(0.0, ix2 - ix1), max(0.0, iy2 - iy1)
+    inter = iw * ih
+    if inter <= 0:
+        return 0.0
+    area_a = max(1.0, (a.x2 - a.x1) * (a.y2 - a.y1))
+    area_b = max(1.0, (b.x2 - b.x1) * (b.y2 - b.y1))
+    return inter / (area_a + area_b - inter)
+
+
+def _center(d: HasBox) -> tuple[float, float]:
+    return (d.x1 + d.x2) / 2.0, (d.y1 + d.y2) / 2.0
+
+
+def _center_in_box(inner: HasBox, outer: HasBox) -> bool:
+    cx, cy = _center(inner)
+    return outer.x1 <= cx <= outer.x2 and outer.y1 <= cy <= outer.y2
+
+
+def drop_giant_scene_boxes(dets: list[T], width: int, height: int, max_frac: float = 0.42) -> list[T]:
+    """Full-image training labels produce one box covering the whole counter.
+
+    Always drop those — keeping the only giant box made empty shops look
+    like one SKU (dot in the middle of the aisle / on a jacket).
+    """
+    area = float(max(1, width) * max(1, height))
+    return [
+        d for d in dets if ((d.x2 - d.x1) * (d.y2 - d.y1) / area) < max_frac
+    ]
+
+
+def nms_same_class(dets: list[T], iou_thr: float = 0.45) -> list[T]:
+    """Suppress overlaps of the SAME class only — 7up next to Sting must both survive."""
+    by_cls: dict[str, list[T]] = {}
+    for d in dets:
+        by_cls.setdefault(d.class_name.lower(), []).append(d)
+    kept: list[T] = []
+    for group in by_cls.values():
+        group = sorted(group, key=lambda d: d.confidence, reverse=True)
+        selected: list[T] = []
+        for d in group:
+            if all(box_iou(d, s) < iou_thr for s in selected):
+                selected.append(d)
+        kept.extend(selected)
+    return kept
+
+
+def cluster_physical_objects(dets: list[T], width: int, height: int) -> list[T]:
+    """One box per physical object on the counter.
+
+    Same class: merge if IoU is modest, centers are close, or one center
+    sits inside the other box (typical of overlapping tiles). Different
+    classes are never merged — 7up next to Sting must both stay, even
+    when full-image training draws oversized overlapping boxes.
+    """
+    if not dets:
+        return []
+    diag = (float(width) ** 2 + float(height) ** 2) ** 0.5
+    ordered = sorted(dets, key=lambda d: d.confidence, reverse=True)
+    kept: list[T] = []
+    for d in ordered:
+        duplicate = False
+        for s in kept:
+            iou = box_iou(d, s)
+            same = d.class_name.lower() == s.class_name.lower()
+            min_side = min(
+                max(1.0, d.x2 - d.x1),
+                max(1.0, d.y2 - d.y1),
+                max(1.0, s.x2 - s.x1),
+                max(1.0, s.y2 - s.y1),
+            )
+            dcx, dcy = _center(d)
+            scx, scy = _center(s)
+            dist = ((dcx - scx) ** 2 + (dcy - scy) ** 2) ** 0.5
+            close = dist < max(28.0, 0.55 * min_side, 0.07 * diag)
+            contained = _center_in_box(d, s) or _center_in_box(s, d)
+            if same and (iou >= 0.18 or close or contained):
+                duplicate = True
+                break
+        if not duplicate:
+            kept.append(d)
+    return kept
+
+
+def cluster_winner_take_all(dets: list[T], iou_thr: float = 0.22) -> list[T]:
+    """One box per physical object regardless of class.
+
+    Tiles of a Sting bottle also fire ``du_7u``; class-aware merge kept both.
+    Heavy overlap / containment → keep the higher-confidence class only.
+    Side-by-side 7Up + Sting have low IoU and both survive.
+    Nearby dots on the same bottle (centers a few dozen pixels apart) also
+    collapse — live HUD otherwise paints 7Up + Sting on one object.
+    """
+    if not dets:
+        return []
+    ordered = sorted(dets, key=lambda d: d.confidence, reverse=True)
+    kept: list[T] = []
+    for d in ordered:
+        clash = False
+        dcx, dcy = _center(d)
+        dmin = min(max(1.0, d.x2 - d.x1), max(1.0, d.y2 - d.y1))
+        for s in kept:
+            scx, scy = _center(s)
+            smin = min(max(1.0, s.x2 - s.x1), max(1.0, s.y2 - s.y1))
+            dist = ((dcx - scx) ** 2 + (dcy - scy) ** 2) ** 0.5
+            close = dist < max(36.0, 0.55 * min(dmin, smin))
+            if (
+                box_iou(d, s) >= iou_thr
+                or _center_in_box(d, s)
+                or _center_in_box(s, d)
+                or close
+            ):
+                clash = True
+                break
+        if not clash:
+            kept.append(d)
+    return kept
+
+
+def merge_tiled_detections(dets: list[T], width: int, height: int) -> list[T]:
+    pruned = drop_giant_scene_boxes(dets, width, height)
+    nmsed = nms_same_class(pruned, iou_thr=0.25)
+    clustered = cluster_physical_objects(nmsed, width, height)
+    return cluster_winner_take_all(clustered)
+
+
+def _grid(
+    width: int,
+    height: int,
+    cols: int,
+    rows: int,
+    tw_frac: float,
+    th_frac: float,
+    include_center: bool,
+) -> list[tuple[int, int, int, int]]:
+    w, h = max(1, width), max(1, height)
+    tw, th = max(32, int(w * tw_frac)), max(32, int(h * th_frac))
+    tw, th = min(tw, w), min(th, h)
+    origins: list[tuple[int, int, int, int]] = []
+    for r in range(rows):
+        for c in range(cols):
+            ox = int(round(c * (w - tw) / max(1, cols - 1)))
+            oy = int(round(r * (h - th) / max(1, rows - 1)))
+            origins.append((max(0, ox), max(0, oy), tw, th))
+    if include_center:
+        origins.append((max(0, (w - tw) // 2), max(0, (h - th) // 2), tw, th))
+    return origins
+
+
+def dense_tile_origins(
+    width: int,
+    height: int,
+    *,
+    layout: str = "scan",
+    roi_rect: tuple[int, int, int, int] | None = None,
+) -> list[tuple[int, int, int, int]]:
+    """Return (ox, oy, tile_w, tile_h) windows covering the frame or ROI.
+
+    ``scan`` (Chụp & Quét): coarse 3×2 + fine 4×3 — drinks need a mid-size
+    window; instant-noodle packs (Hảo Hảo / Gấu Đỏ) are much smaller and
+    disappear inside a tile that also contains a bottle.
+
+    ``overlay`` (live MJPEG): 3×2 of ~40% ROI so the HUD can show each
+    product without 19 extra predicts per refresh.
+
+    ``roi_rect`` (x1, y1, x2, y2) confines tiles to the pay zone so a
+    statue beside the counter is never given its own window.
+    """
+    if roi_rect is not None:
+        x1, y1, x2, y2 = roi_rect
+        x1, y1 = max(0, x1), max(0, y1)
+        x2, y2 = max(x1 + 1, x2), max(y1 + 1, y2)
+        local = dense_tile_origins(max(1, x2 - x1), max(1, y2 - y1), layout=layout)
+        return [(x1 + ox, y1 + oy, tw, th) for ox, oy, tw, th in local]
+
+    w, h = max(1, width), max(1, height)
+    if layout == "overlay":
+        return _grid(w, h, 3, 2, 0.40, 0.52, include_center=True)
+    coarse = _grid(w, h, 3, 2, 0.42, 0.58, include_center=True)
+    fine = _grid(w, h, 4, 3, 0.30, 0.40, include_center=False)
+    return coarse + fine

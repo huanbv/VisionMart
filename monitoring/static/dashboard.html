@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>VisionMart — System Health</title>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<style>
+  :root {
+    --bg: #0f1115; --card: #1a1d24; --border: #2a2e37; --text: #e6e8eb; --muted: #8b90a0;
+    --ok: #2ecc71; --warn: #f1c40f; --crit: #e74c3c; --accent: #4c8bf5;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: -apple-system, Segoe UI, Roboto, sans-serif; background: var(--bg); color: var(--text); }
+  header { padding: 16px 24px; border-bottom: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between; }
+  header h1 { font-size: 16px; font-weight: 600; margin: 0; }
+  #token-bar { display: flex; gap: 8px; align-items: center; font-size: 12px; color: var(--muted); }
+  #token-bar input { background: var(--card); border: 1px solid var(--border); color: var(--text); padding: 4px 8px; border-radius: 4px; width: 220px; }
+  main { padding: 20px 24px; display: grid; gap: 16px; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); }
+  .card { background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 14px 16px; }
+  .card h2 { font-size: 13px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); margin: 0 0 10px; }
+  .metric { display: flex; justify-content: space-between; font-size: 13px; padding: 3px 0; border-bottom: 1px dashed var(--border); }
+  .metric:last-child { border-bottom: none; }
+  .metric .v { font-weight: 600; }
+  .badge { display: inline-block; padding: 1px 8px; border-radius: 10px; font-size: 11px; font-weight: 600; }
+  .badge.ok { background: rgba(46,204,113,0.15); color: var(--ok); }
+  .badge.warn { background: rgba(241,196,15,0.15); color: var(--warn); }
+  .badge.crit { background: rgba(231,76,60,0.15); color: var(--crit); }
+  #alerts .alert { padding: 8px; margin-bottom: 6px; border-radius: 6px; font-size: 12px; border-left: 3px solid var(--crit); background: rgba(231,76,60,0.08); }
+  #alerts .alert.warning { border-left-color: var(--warn); background: rgba(241,196,15,0.08); }
+  #alerts .empty, .empty-row { color: var(--muted); font-size: 12px; }
+  table { width: 100%; border-collapse: collapse; font-size: 12px; }
+  th, td { text-align: left; padding: 5px 4px; border-bottom: 1px solid var(--border); }
+  th { color: var(--muted); font-weight: 500; }
+  #status-line { font-size: 12px; color: var(--muted); margin-top: 2px; }
+  .wide { grid-column: 1 / -1; }
+</style>
+</head>
+<body>
+<header>
+  <div>
+    <h1>VisionMart — System Health</h1>
+    <div id="status-line">Not connected</div>
+  </div>
+  <div id="token-bar">
+    <span>API token</span>
+    <input id="token-input" type="password" placeholder="MONITORING_API_TOKEN" />
+    <button id="connect-btn">Connect</button>
+  </div>
+</header>
+<main id="main"></main>
+
+<script>
+const API_BASE = '';
+let TOKEN = localStorage.getItem('monitoring_token') || '';
+document.getElementById('token-input').value = TOKEN;
+
+function fmtBool(ok) {
+  return ok
+    ? '<span class="badge ok">OK</span>'
+    : '<span class="badge crit">DOWN</span>';
+}
+function fmtNum(v, unit) {
+  if (v === null || v === undefined) return '<span class="empty-row">n/a</span>';
+  return `${Number(v).toFixed(1)}${unit || ''}`;
+}
+
+async function apiGet(path) {
+  const resp = await fetch(API_BASE + path, { headers: { Authorization: 'Bearer ' + TOKEN } });
+  if (!resp.ok) throw new Error('HTTP ' + resp.status);
+  return resp.json();
+}
+
+function renderOverview(o) {
+  const svc = o.service_health || {};
+  const backend = svc.backend || {};
+  const aiEngine = svc.ai_engine || {};
+  const sys = o.system || {};
+  const host = sys.host || {};
+  const pipe = o.ai_pipeline || {};
+
+  return `
+    <div class="card">
+      <h2>Services</h2>
+      <div class="metric"><span>Backend</span><span class="v">${fmtBool(backend.ok)}</span></div>
+      <div class="metric"><span>AI Engine</span><span class="v">${fmtBool(aiEngine.ok)}</span></div>
+      <div class="metric"><span>PostgreSQL</span><span class="v">${fmtBool((sys.postgres||{}).reachable)}</span></div>
+      <div class="metric"><span>Redis</span><span class="v">${fmtBool((sys.redis||{}).reachable)}</span></div>
+      <div class="metric"><span>Celery workers</span><span class="v">${(sys.celery||{}).worker_count ?? 'n/a'}</span></div>
+      <div class="metric"><span>Cameras online</span><span class="v">${o.camera_summary.online}/${o.camera_summary.total}</span></div>
+    </div>
+    <div class="card">
+      <h2>Host resources</h2>
+      <div class="metric"><span>CPU</span><span class="v">${fmtNum(host.cpu_percent, '%')}</span></div>
+      <div class="metric"><span>RAM</span><span class="v">${fmtNum(host.ram_percent, '%')}</span></div>
+      <div class="metric"><span>Disk</span><span class="v">${fmtNum(host.disk_percent, '%')}</span></div>
+      <div class="metric"><span>GPU</span><span class="v">${host.gpu_available ? fmtNum(host.gpu_util_percent, '%') : 'not available'}</span></div>
+    </div>
+    <div class="card">
+      <h2>AI pipeline</h2>
+      <div class="metric"><span>Inference latency</span><span class="v">${fmtNum(pipe.inference_latency_ms, 'ms')}</span></div>
+      <div class="metric"><span>OpenCV stage</span><span class="v">${fmtNum(pipe.opencv_stage_ms, 'ms')}</span></div>
+      <div class="metric"><span>YOLO+ByteTrack stage</span><span class="v">${fmtNum(pipe.yolo_bytetrack_stage_ms, 'ms')}</span></div>
+      <div class="metric"><span>Total pipeline</span><span class="v">${fmtNum(pipe.pipeline_total_ms, 'ms')}</span></div>
+      <div class="metric"><span>Active tracks</span><span class="v">${pipe.active_tracks || 'not_available'}</span></div>
+    </div>
+    <div class="card wide">
+      <h2>Active alerts (${o.active_alert_count})</h2>
+      <div id="alerts">
+        ${o.active_alerts.length === 0
+          ? '<div class="empty">No active alerts.</div>'
+          : o.active_alerts.map(a => `<div class="alert ${a.severity}"><b>${a.rule_id}</b> — ${a.message}</div>`).join('')}
+      </div>
+    </div>
+  `;
+}
+
+function renderCameras(c) {
+  const rows = (c.cameras || []).map(cam => `
+    <tr>
+      <td>${cam.name} (${cam.code})</td>
+      <td>${fmtBool(cam.is_online_db)}</td>
+      <td>${cam.fps !== null ? cam.fps.toFixed(1) : (cam.fps_reason ? '<span class="empty-row" title="'+cam.fps_reason+'">n/a</span>' : 'n/a')}</td>
+      <td>${cam.dropped_frames_total ?? 'n/a'}</td>
+      <td>${cam.avg_pipeline_latency_ms !== null ? cam.avg_pipeline_latency_ms.toFixed(1) + 'ms' : 'n/a'}</td>
+      <td>${cam.reconnect_count_since_monitoring_start}</td>
+    </tr>
+  `).join('') || `<tr><td colspan="6" class="empty-row">No cameras or no poll yet.</td></tr>`;
+  return `
+    <div class="card wide">
+      <h2>Cameras ${c.db_reachable === false ? '<span class="badge crit">DB unreachable</span>' : ''}</h2>
+      <table>
+        <thead><tr><th>Camera</th><th>Online</th><th>FPS</th><th>Dropped</th><th>Latency</th><th>Reconnects*</th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+      <div class="empty-row" style="margin-top:6px">*Reconnect count is observed since this monitoring service started — see docs/MONITORING.md.</div>
+    </div>
+  `;
+}
+
+async function refresh() {
+  const statusLine = document.getElementById('status-line');
+  const main = document.getElementById('main');
+  try {
+    const [overview, cameras] = await Promise.all([apiGet('/api/overview'), apiGet('/api/cameras')]);
+    main.innerHTML = renderOverview(overview) + renderCameras(cameras);
+    statusLine.textContent = 'Connected — last update ' + new Date().toLocaleTimeString();
+  } catch (e) {
+    statusLine.textContent = 'Connection error: ' + e.message;
+  }
+}
+
+document.getElementById('connect-btn').addEventListener('click', () => {
+  TOKEN = document.getElementById('token-input').value.trim();
+  localStorage.setItem('monitoring_token', TOKEN);
+  refresh();
+});
+
+if (TOKEN) refresh();
+setInterval(() => { if (TOKEN) refresh(); }, 15000);
+</script>
+</body>
+</html>

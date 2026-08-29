@@ -1,0 +1,55 @@
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-yaml
+      - id: check-toml
+      - id: check-json
+      - id: check-merge-conflict
+      - id: check-added-large-files
+        args: ["--maxkb=2048"]
+      - id: mixed-line-ending
+        args: ["--fix=lf"]
+      - id: detect-private-key
+
+  - repo: https://github.com/psf/black
+    rev: 24.10.0
+    hooks:
+      - id: black
+        files: ^(backend|ai-engine)/
+        language_version: python3.12
+
+  - repo: https://github.com/pycqa/isort
+    rev: 5.13.2
+    hooks:
+      - id: isort
+        files: ^(backend|ai-engine)/
+        args: ["--profile=black"]
+
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.7.0
+    hooks:
+      - id: ruff
+        files: ^(backend|ai-engine)/
+        args: ["--fix"]
+
+  # Frontend tooling is run as local hooks so we always use the version pinned
+  # in frontend/package.json. The deprecated mirrors-eslint/mirrors-prettier
+  # repos drift out of sync with project deps.
+  - repo: local
+    hooks:
+      - id: prettier
+        name: prettier (frontend)
+        language: system
+        entry: bash -c 'cd frontend && npx --no-install prettier --check "$@"' --
+        files: ^frontend/.*\.(ts|tsx|js|jsx|json|css|md|yml|yaml)$
+        pass_filenames: true
+
+      - id: eslint
+        name: eslint (frontend)
+        language: system
+        entry: bash -c 'cd frontend && npx --no-install eslint "$@"' --
+        files: ^frontend/.*\.(ts|tsx|js|jsx)$
+        pass_filenames: true

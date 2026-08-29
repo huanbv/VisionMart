@@ -1,0 +1,38 @@
+# Example ROI zone configuration for the OpenCV vision/ pipeline
+# (ai-engine/app/vision/roi/zones.py).
+#
+# Copy this file, adjust zones per real camera, and point ROI_CONFIG_PATH
+# at it. Has NO effect unless ENABLE_ROI=true is also set — both are off
+# by default, so the system behaves exactly as before this Sprint until an
+# operator explicitly turns this on.
+#
+# Points are fractional (0.0-1.0), relative to frame width/height, so the
+# same config works regardless of the camera's actual resolution.
+# `type` must be one of: entrance | shelf | checkout | exit
+
+cameras:
+  # Key must match the camera_key used elsewhere in this project — either
+  # the camera's UUID (as sent in /ai/frame's camera_id form field) or the
+  # "<organization_id>:<branch_id>" fallback used when no camera_id is given.
+  "00000000-0000-0000-0000-000000000000":
+    zones:
+      - name: checkout_lane_1
+        type: checkout
+        points:
+          - [0.55, 0.0]
+          - [1.0, 0.0]
+          - [1.0, 1.0]
+          - [0.55, 1.0]
+      - name: shelf_aisle_3
+        type: shelf
+        points:
+          - [0.0, 0.0]
+          - [0.55, 0.0]
+          - [0.55, 1.0]
+          - [0.0, 1.0]
+
+# Optional fallback used when a camera has no entry of its own above.
+# Leave zones empty (or omit "default" entirely) to make ROI a no-op for
+# any camera not explicitly listed.
+default:
+  zones: []

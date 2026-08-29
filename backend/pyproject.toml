@@ -1,0 +1,44 @@
+[tool.black]
+line-length = 100
+target-version = ["py312"]
+extend-exclude = '''
+/(
+  | \.venv
+  | alembic/versions
+)/
+'''
+
+[tool.isort]
+profile = "black"
+line_length = 100
+known_first_party = ["app"]
+skip = ["alembic/versions"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+extend-exclude = ["alembic/versions"]
+
+[tool.ruff.lint]
+select = [
+  "E", "F", "W",   # pycodestyle / pyflakes
+  "I",             # isort
+  "B",             # bugbear
+  "UP",            # pyupgrade
+  "SIM",           # simplify
+  "C4",            # comprehensions
+  "RUF",           # ruff-specific
+]
+ignore = ["E501"]  # line length handled by black
+
+[tool.pytest.ini_options]
+addopts = "-ra -q"
+asyncio_mode = "auto"
+testpaths = ["tests"]
+
+[tool.mypy]
+python_version = "3.12"
+plugins = []
+ignore_missing_imports = true
+strict_optional = true
+warn_unused_ignores = true

@@ -1,0 +1,46 @@
+# ---- Runtime ----
+fastapi==0.115.4
+uvicorn[standard]==0.32.0
+pydantic==2.9.2
+pydantic-settings==2.6.0
+httpx==0.27.2
+python-json-logger==2.0.7
+python-multipart==0.0.12
+Pillow==10.4.0
+minio==7.2.9
+PyYAML==6.0.2
+
+# ---- Computer Vision / ML ----
+# NOTE: torch and torchvision are installed separately in the Dockerfile
+# from the PyTorch CPU-only wheel index to keep the image size small.
+numpy==1.26.4
+opencv-python-headless==4.10.0.84
+ultralytics==8.3.30
+lapx==0.9.4
+
+# ---- Observability ----
+prometheus-client==0.21.0
+
+# ---- Suy luận classifier SKU (tầng 2) ----
+# Bắt buộc khi ENABLE_SKU_CLASSIFIER=true. Thiếu gói này thì classifier
+# không nạp được và pipeline TỰ RƠI VỀ class_map mà không báo lỗi — bật
+# cờ lên rồi tưởng đã chạy trong khi thực tế không có gì thay đổi. Đây
+# đúng là kiểu hỏng im lặng khó lần ra nhất.
+onnxruntime==1.19.2
+# `onnx` KHÁC `onnxruntime`: onnxruntime chỉ CHẠY model đã có, còn việc
+# XUẤT từ PyTorch sang .onnx cần định dạng do gói `onnx` cung cấp. Thiếu
+# nó thì train xong không tạo được file để phục vụ — torch.onnx.export
+# ném OnnxExporterError ngay ở dòng cuối, sau khi đã huấn luyện xong.
+onnx==1.17.0
+
+# ---- Script bảo trì ngoại tuyến (KHÔNG dùng bởi dịch vụ đang chạy) ----
+# build_classifier_dataset.py đọc nhãn người duyệt từ cơ sở dữ liệu để
+# dựng tập huấn luyện. Chỉ chạy thủ công, không nằm trên đường xử lý
+# khung hình.
+#
+# Thêm thư viện KHÔNG có nghĩa là ai-engine được cấp quyền vào cơ sở dữ
+# liệu: ranh giới nằm ở thông tin đăng nhập, mà docker-compose vẫn không
+# cấp DATABASE_URL cho dịch vụ này. Người vận hành phải truyền vào tay
+# khi chạy script.
+SQLAlchemy==2.0.36
+psycopg2-binary==2.9.10

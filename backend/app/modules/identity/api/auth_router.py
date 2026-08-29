@@ -1,0 +1,247 @@
+"""Auth router: /auth/login, /auth/refresh, /auth/logout, /auth/me."""
+
+from __future__ import annotations
+
+import uuid
+
+from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.config.settings import Settings, get_settings
+from app.core.exceptions import NotFoundError, UnauthorizedError
+from app.core.rate_limit import enforce as enforce_rate_limit
+from app.database.session import get_session
+from app.dependencies.auth import CurrentUser, get_current_user
+from app.modules.identity.application.auth_service import AuthService
+from app.modules.identity.application.jwt_service import get_jwt_service
+from app.modules.identity.application.password_hasher import PasswordHasher
+from app.modules.identity.infrastructure.repositories import (
+    SqlAlchemyRefreshTokenRepository,
+    SqlAlchemyUserRepository,
+)
+from app.modules.identity.schemas.auth import (
+    ChangePasswordRequest,
+    CurrentUserResponse,
+    LoginRequest,
+    RefreshRequest,
+    SessionListResponse,
+    SessionResponse,
+    TokenResponse,
+    UpdateProfileRequest,
+)
+
+router = APIRouter(prefix="/auth", tags=["auth"])
+
+
+def _build_service(
+    session: AsyncSession,
+    settings: Settings,
+) -> AuthService:
+    return AuthService(
+        settings=settings,
+        users=SqlAlchemyUserRepository(session),
+        refresh_tokens=SqlAlchemyRefreshTokenRepository(session),
+        password_hasher=PasswordHasher(),
+        jwt_service=get_jwt_service(),
+    )
+
+
+@router.post("/login", response_model=TokenResponse)
+async def login(
+    payload: LoginRequest,
+    request: Request,
+    session: AsyncSession = Depends(get_session),
+    settings: Settings = Depends(get_settings),
+) -> TokenResponse:
+    await enforce_rate_limit(
+        request,
+        bucket="auth:login",
+        limit=settings.AUTH_LOGIN_RATE_LIMIT,
+        window_seconds=settings.AUTH_LOGIN_RATE_WINDOW_SECONDS,
+        settings=settings,
+    )
+    service = _build_service(session, settings)
+    try:
+        _, tokens = await service.authenticate(
+            email=payload.email,
+            password=payload.password,
+            user_agent=request.headers.get("user-agent"),
+            ip_address=request.client.host if request.client else None,
+        )
+    except UnauthorizedError as exc:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail=str(exc)) from exc
+    return TokenResponse(
+        access_token=tokens.access_token,
+        refresh_token=tokens.refresh_token,
+        expires_in=tokens.access_token_expires_in,
+        refresh_expires_in=tokens.refresh_token_expires_in,
+    )
+
+
+@router.post("/refresh", response_model=TokenResponse)
+async def refresh(
+    payload: RefreshRequest,
+    request: Request,
+    session: AsyncSession = Depends(get_session),
+    settings: Settings = Depends(get_settings),
+) -> TokenResponse:
+    await enforce_rate_limit(
+        request,
+        bucket="auth:refresh",
+        limit=settings.AUTH_REFRESH_RATE_LIMIT,
+        window_seconds=settings.AUTH_REFRESH_RATE_WINDOW_SECONDS,
+        settings=settings,
+    )
+    service = _build_service(session, settings)
+    try:
+        tokens = await service.refresh(
+            refresh_token=payload.refresh_token,
+            user_agent=request.headers.get("user-agent"),
+            ip_address=request.client.host if request.client else None,
+        )
+    except UnauthorizedError as exc:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail=str(exc)) from exc
+    return TokenResponse(
+        access_token=tokens.access_token,
+        refresh_token=tokens.refresh_token,
+        expires_in=tokens.access_token_expires_in,
+        refresh_expires_in=tokens.refresh_token_expires_in,
+    )
+
+
+@router.post("/logout", status_code=status.HTTP_204_NO_CONTENT, response_class=Response)
+async def logout(
+    payload: RefreshRequest,
+    session: AsyncSession = Depends(get_session),
+    settings: Settings = Depends(get_settings),
+) -> Response:
+    service = _build_service(session, settings)
+    await service.logout(refresh_token=payload.refresh_token)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.get("/me", response_model=CurrentUserResponse)
+async def me(
+    current: CurrentUser = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+    settings: Settings = Depends(get_settings),
+) -> CurrentUserResponse:
+    service = _build_service(session, settings)
+    try:
+        user, roles = await service.get_current_user(current.user_id)
+    except NotFoundError as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    return CurrentUserResponse(
+        id=user.id,
+        organization_id=user.organization_id,
+        email=user.email,
+        username=user.username,
+        full_name=user.full_name,
+        is_active=user.is_active,
+        is_superuser=user.is_superuser,
+        roles=roles,
+        last_login_at=user.last_login_at,
+    )
+
+
+@router.patch("/me", response_model=CurrentUserResponse)
+async def update_me(
+    payload: UpdateProfileRequest,
+    current: CurrentUser = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+    settings: Settings = Depends(get_settings),
+) -> CurrentUserResponse:
+    users = SqlAlchemyUserRepository(session)
+    user = await users.get_by_id(current.user_id)
+    if user is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="User not found")
+    full_name = (payload.full_name or "").strip() or None
+    user.full_name = full_name
+    await users.save(user)
+    service = _build_service(session, settings)
+    refreshed, roles = await service.get_current_user(current.user_id)
+    return CurrentUserResponse(
+        id=refreshed.id,
+        organization_id=refreshed.organization_id,
+        email=refreshed.email,
+        username=refreshed.username,
+        full_name=refreshed.full_name,
+        is_active=refreshed.is_active,
+        is_superuser=refreshed.is_superuser,
+        roles=roles,
+        last_login_at=refreshed.last_login_at,
+    )
+
+
+@router.post(
+    "/change-password",
+    status_code=status.HTTP_204_NO_CONTENT,
+    response_class=Response,
+)
+async def change_password(
+    payload: ChangePasswordRequest,
+    current: CurrentUser = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> Response:
+    users = SqlAlchemyUserRepository(session)
+    user = await users.get_by_id(current.user_id)
+    if user is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="User not found")
+    hasher = PasswordHasher()
+    if not hasher.verify(user.hashed_password, payload.current_password):
+        raise HTTPException(
+            status.HTTP_401_UNAUTHORIZED, detail="Current password is incorrect"
+        )
+    if payload.new_password == payload.current_password:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            detail="New password must differ from the current password",
+        )
+    user.hashed_password = hasher.hash(payload.new_password)
+    await users.save(user)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.post(
+    "/logout-all",
+    status_code=status.HTTP_204_NO_CONTENT,
+    response_class=Response,
+)
+async def logout_all(
+    current: CurrentUser = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> Response:
+    tokens = SqlAlchemyRefreshTokenRepository(session)
+    await tokens.revoke_all_for_user(current.user_id)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.get("/sessions", response_model=SessionListResponse)
+async def list_sessions(
+    current: CurrentUser = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> SessionListResponse:
+    tokens = SqlAlchemyRefreshTokenRepository(session)
+    items = await tokens.list_active_for_user(current.user_id)
+    return SessionListResponse(
+        items=[SessionResponse.model_validate(t) for t in items]
+    )
+
+
+@router.delete(
+    "/sessions/{session_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    response_class=Response,
+)
+async def revoke_session(
+    session_id: uuid.UUID,
+    current: CurrentUser = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> Response:
+    tokens = SqlAlchemyRefreshTokenRepository(session)
+    stored = await tokens.get_by_id(session_id)
+    if stored is None or stored.user_id != current.user_id:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Session not found")
+    if stored.revoked_at is None:
+        await tokens.revoke(session_id)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)

@@ -1,0 +1,87 @@
+{
+  "environment": {
+    "python": "3.10.12",
+    "platform": "Linux-6.8.0-124-generic-x86_64-with-glibc2.35",
+    "with_yolo": false,
+    "source": "synthetic generated frames (not real camera footage)"
+  },
+  "before": {
+    "label": "before (all vision ENABLE_* off \u2014 pre-Sprint equivalent)",
+    "env_overrides": {},
+    "frame_count": 150,
+    "wall_elapsed_s": 0.677,
+    "wall_fps": 221.54,
+    "opencv_stage": {
+      "label": "opencv",
+      "count": 150,
+      "mean_ms": 4.473,
+      "p50_ms": 4.272,
+      "p95_ms": 5.049,
+      "max_ms": 7.399,
+      "fps_from_mean": 223.58
+    },
+    "yolo_bytetrack_stage": null,
+    "total_stage": {
+      "label": "total",
+      "count": 150,
+      "mean_ms": 4.473,
+      "p50_ms": 4.272,
+      "p95_ms": 5.049,
+      "max_ms": 7.399,
+      "fps_from_mean": 223.58
+    },
+    "low_quality_frames": 0,
+    "resources": {
+      "before": {
+        "cpu_percent": 0.0,
+        "rss_mb": 80.0
+      },
+      "after": {
+        "cpu_percent": 98.9,
+        "rss_mb": 88.0
+      }
+    }
+  },
+  "after": {
+    "label": "after (ENABLE_CLAHE=true,ENABLE_GAMMA=true,ENABLE_IMAGE_QUALITY=true,ENABLE_BLUR_ANALYSIS=true)",
+    "env_overrides": {
+      "ENABLE_CLAHE": "true",
+      "ENABLE_GAMMA": "true",
+      "ENABLE_IMAGE_QUALITY": "true",
+      "ENABLE_BLUR_ANALYSIS": "true"
+    },
+    "frame_count": 150,
+    "wall_elapsed_s": 5.154,
+    "wall_fps": 29.11,
+    "opencv_stage": {
+      "label": "opencv",
+      "count": 150,
+      "mean_ms": 34.332,
+      "p50_ms": 32.866,
+      "p95_ms": 37.525,
+      "max_ms": 162.816,
+      "fps_from_mean": 29.13
+    },
+    "yolo_bytetrack_stage": null,
+    "total_stage": {
+      "label": "total",
+      "count": 150,
+      "mean_ms": 34.332,
+      "p50_ms": 32.866,
+      "p95_ms": 37.525,
+      "max_ms": 162.816,
+      "fps_from_mean": 29.13
+    },
+    "low_quality_frames": 0,
+    "resources": {
+      "before": {
+        "cpu_percent": 0.0,
+        "rss_mb": 88.0
+      },
+      "after": {
+        "cpu_percent": 146.3,
+        "rss_mb": 117.0
+      }
+    }
+  }
+}
